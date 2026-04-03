@@ -1,24 +1,21 @@
-module ALU (out, zero, in_a, in_b, op);
-    output reg [31:0] out;
-    output reg zero;
+`include "constants.vh"
 
-    input [31:0] in_a;
-    input [31:0] in_b;
-    input [3:0] op;
+module ALU (
+    input [31:0] i_operand_a,
+    input [31:0] i_operand_b,
+    input [1:0] i_alu_op,
+    output reg [31:0] o_alu_out,
+    output reg o_alu_zero
+);
 
-    localparam ALU_ADD = 4'b0000;
-    localparam ALU_SUB = 4'b0001;
-    localparam ALU_MUL = 4'b0010;
-    localparam ALU_DIV = 4'b0011;
-
-    always @(op, in_a, in_b) begin
-        case (op)
-            ALU_ADD: out = in_a + in_b;
-            ALU_SUB: out = in_a - in_b;
-            ALU_MUL: out = in_a * in_b;
-            ALU_DIV: out = in_a / in_b;
-            default: out = 32'b0;
+    always @(i_alu_op, i_operand_a, i_operand_b) begin
+        case (i_alu_op)
+            `ALU_ADD: o_alu_out = i_operand_a + i_operand_b;
+            `ALU_SUB: o_alu_out = i_operand_a - i_operand_b;
+            `ALU_MUL: o_alu_out = i_operand_a * i_operand_b;
+            `ALU_DIV: o_alu_out = i_operand_a / i_operand_b;
+            default: o_alu_out = 32'b0;
         endcase
-        zero = out == 0;
+        o_alu_zero = o_alu_out == 0;
     end
 endmodule

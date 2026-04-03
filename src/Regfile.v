@@ -1,35 +1,35 @@
-module Regfile (clk, rst, addr_a, addr_b, wen, waddr, wdata, out_a, out_b);
-    output [31:0] out_a, out_b;
-    input clk, rst;
-    input [4:0] addr_a, addr_b, waddr;
-    input wen;
-    input [31:0] wdata;
+module Regfile (
+    input clk, rst, i_reg_wen;
+    input [31:0] i_reg_wdata;
+    input [4:0] i_reg_addr_a, i_reg_addr_b, i_reg_waddr;
+    output [31:0] o_reg_a, o_reg_b;
+);
     reg [31:0] data [31:0];
 
-    // Read
+    //! Read
     always @(posedge clk or negedge rst) begin
         if (!rst) begin
-            out_a <= 32'b0;
-            out_b <= 32'b0;
-        end else if (!wen) begin
-            // Output the data when write is disabled
-            out_a <= data[addr_a];
-            out_b <= data[addr_b];
+            o_reg_a <= 32'b0;
+            o_reg_b <= 32'b0;
+        end else if (!i_reg_wen) begin
+            //! Output the data when write is disabled
+            o_reg_a <= data[i_reg_addr_a];
+            o_reg_b <= data[i_reg_addr_b];
         end else begin
-            // Read the same address you want to write, forward the data
-            out_a <= (addr_a == waddr) ? wdata : data[addr_a];
-            out_b <= (addr_b == waddr) ? wdata : data[addr_b];
+            //! Read the same address you want to write, forward the data
+            o_reg_a <= (i_reg_addr_a == i_reg_waddr) ? i_reg_wdata : data[i_reg_addr_a];
+            o_reg_b <= (i_reg_addr_b == i_reg_waddr) ? i_reg_wdata : data[i_reg_addr_b];
         end
     end
 
-    // Write
+    //! Write
     always @(posedge clk or negedge rst) begin
-        if (wen) begin
-            data[waddr] <= wdata;
+        if (i_reg_wen) begin
+            data[i_reg_waddr] <= i_reg_wdata;
         end
     end
 
-    // Reset regfile to all zeros
+    //! Reset regfile to all zeros
     always @(posedge clk or negedge rst) begin
         if (!rst) begin
             for (integer i = 0; i < 32; i = i + 1) begin
