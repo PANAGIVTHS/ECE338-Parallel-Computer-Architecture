@@ -10,6 +10,7 @@ module StreamingProcessor (
     wire [31:0] mem_out;
     wire [31:0] alu_out;
     wire [6:0] imm_31_25, opcode;
+    wire [31:0] wb_wdata;
     wire [11:0] imm_31_20;
     wire [1:0] aluop, instr_type;
     wire [4:0] rs1, rs2, rd;

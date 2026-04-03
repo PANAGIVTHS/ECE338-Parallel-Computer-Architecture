@@ -11,11 +11,11 @@
 `define FUNCT7_SUB 7'b0100000
 `define FUNCT7_MULDIV 7'b0000001
 
-`define ALU_ADD 2'b00;
-`define ALU_SUB 2'b01;
-`define ALU_MUL 2'b10;
-`define ALU_DIV 2'b11;
+`define ALU_ADD 2'b00
+`define ALU_SUB 2'b01
+`define ALU_MUL 2'b10
+`define ALU_DIV 2'b11
 
-`define INSTR_TYPE_R 2'b00;
-`define INSTR_TYPE_I 2'b01;
-`define INSTR_TYPE_S 2'b10;
+`define INSTR_TYPE_R 2'b00
+`define INSTR_TYPE_I 2'b01
+`define INSTR_TYPE_S 2'b10
