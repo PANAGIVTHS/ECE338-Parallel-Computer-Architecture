@@ -6,6 +6,7 @@ module StreamingProcessor (
     wire [31:0] instruction, program_counter;
     wire [29:0] instr_idx;
     wire [31:0] alu_in_a, alu_in_b;
+    wire [31:0] o_reg_a;
     wire [31:0] o_reg_b;
     wire [31:0] mem_out;
     wire [31:0] alu_out;
@@ -22,6 +23,10 @@ module StreamingProcessor (
         program_counter_inst (.clk(clk), .i_set_reset({rst, 1'b0}), .i_count_enable(1'b1), .i_count_set(30'b0), .o_count_cur(instr_idx));
     
     assign program_counter = {instr_idx, 2'b00};
+
+    //! Temporary until we use BRAMs
+    Memory instructionMemory (.clk(clk), .rst(rst), .i_read_addr(program_counter[11:2]), .i_read_enable(1'b1), .i_write_addr(10'b0),
+                              .i_write_enable(1'b0), .i_write_data(32'b0), .o_out(instruction));
 
     // TODO: add instruction fetch module to get instruction from memory 
     InstrFetch instr_fetch_inst (.clk(clk), .rst(rst), .i_program_counter(program_counter), .o_fetched_instr(instruction));
