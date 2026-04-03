@@ -1,45 +1,114 @@
+`include "constants.vh"
+
 module StreamingProcessor (
     input clk,
     input rst
 );
 
-    wire [31:0] instruction, program_counter;
-    wire [29:0] instr_idx;
-    wire [31:0] alu_in_a, alu_in_b;
-    wire [31:0] o_reg_b;
-    wire [31:0] mem_out;
-    wire [31:0] alu_out;
-    wire [6:0] imm_31_25, opcode;
-    wire [11:0] imm_31_20;
-    wire [1:0] aluop, instr_type;
-    wire [4:0] rs1, rs2, rd;
-    wire zero, wen;
+    //! =========================================================================
+    //! STAGE 1: FETCH & DECODE
+    //! =========================================================================
+    wire [31:0] fd_instruction, fd_program_counter;
+    wire [29:0] fd_instr_idx;
+    wire [6:0] fd_imm_31_25, fd_opcode;
+    wire [11:0] fd_imm_31_20;
+    wire [1:0] fd_aluop, fd_instr_type;
+    wire [4:0] fd_rs1, fd_rs2, fd_rd;
 
     // TODO: set values when we implement branching and jumping
     //! Counter returns instruction index not address!
     GUCounter #(.BITS(30)) 
-        program_counter_inst (.clk(clk), .i_set_reset({rst, 1'b0}), .i_count_enable(1'b1), .i_count_set(30'b0), .o_count_cur(instr_idx));
+        program_counter_inst (.clk(clk), .i_set_reset({rst, 1'b0}), .i_count_enable(1'b1), .i_count_set(30'b0), .o_count_cur(fd_instr_idx));
     
-    assign program_counter = {instr_idx, 2'b00};
+    assign fd_program_counter = {fd_instr_idx, 2'b00};
 
-    // TODO: add instruction fetch module to get instruction from memory 
-    InstrFetch instr_fetch_inst (.clk(clk), .rst(rst), .i_program_counter(program_counter), .o_fetched_instr(instruction));
-    Decoder decoder_inst (.i_instr(instruction), .o_rs1(rs1), .o_rs2(rs2), .o_rd(rd), .o_imm_31_25(imm_31_25), .o_imm_31_20(imm_31_20), .o_aluop(aluop), .o_instr_type(instr_type), .opcode(opcode));
-    Regfile regfile_inst (.clk(clk), .rst(rst), .i_wen(wen), .i_wdata(wb_wdata), .i_addr_a(rs1), .i_addr_b(rs2), .i_waddr(rd), .o_reg_a(o_reg_a), .o_reg_b(o_reg_b));
-    assign alu_in_b = (instr_type == `INSTR_TYPE_I) ? {{20{imm_31_20[11]}}, imm_31_20} : o_reg_b;
-
-    ALU alu_inst (.i_operand_a(o_reg_a), .i_operand_b(alu_in_b), .i_alu_op(aluop), .o_alu_out(alu_out), .o_alu_zero(zero));
+    InstrFetch instr_fetch_inst (.clk(clk), .rst(rst), .i_program_counter(fd_program_counter), .o_fetched_instr(fd_instruction));
     
-    assign is_load = (opcode == `OP_LW);
-    assign is_store = (opcode == `OP_SW);
+    Decoder decoder_inst (.i_instr(fd_instruction), .o_rs1(fd_rs1), .o_rs2(fd_rs2), .o_rd(fd_rd), .o_imm_31_25(fd_imm_31_25), .o_imm_31_20(fd_imm_31_20), .o_aluop(fd_aluop), .o_instr_type(fd_instr_type), .opcode(fd_opcode));
 
-    LoadStoreUnit load_store_unit_inst (.clk(clk), .rst(rst), .i_write_enable(is_store), .i_read_enable(is_load), .i_addr(alu_out), .i_wdata(o_reg_b), .o_rdata(mem_out));
+    //* =========================================================================
+    //* PIPELINE REGISTER 1: DECODE -> REG/ALU 
+    //* =========================================================================
+    reg [4:0] ra_rs1, ra_rs2, ra_rd;
+    reg [11:0] ra_imm_31_20;
+    reg [1:0] ra_aluop, ra_instr_type;
+    reg [6:0] ra_opcode;
 
-    // TODO: add logic to determine when to write back to regfile
+    always @(posedge clk or posedge rst) begin
+        if (rst) begin
+            ra_rs1 <= 5'b0;
+            ra_rs2 <= 5'b0;
+            ra_rd <= 5'b0;
+            ra_imm_31_20 <= 12'b0;
+            ra_aluop <= 2'b0;
+            ra_instr_type <= 2'b0;
+            ra_opcode <= 7'b0;
+        end else begin
+            ra_rs1 <= fd_rs1;
+            ra_rs2 <= fd_rs2;
+            ra_rd <= fd_rd;
+            ra_imm_31_20 <= fd_imm_31_20;
+            ra_aluop <= fd_aluop;
+            ra_instr_type <= fd_instr_type;
+            ra_opcode <= fd_opcode;
+        end
+    end
 
-    // TODO: and determine the data to write back Load vs ALU output
-    //! wb_wdata is set 1 cycle after mem_out
-    assign wb_wdata = is_load ? mem_out : alu_out;
+    //! =========================================================================
+    //! STAGE 2: REGFILE & ALU 
+    //! =========================================================================
+    wire [31:0] ra_o_reg_a, ra_o_reg_b, ra_alu_in_b, ra_alu_out;
+    wire ra_zero;
+
+    Regfile regfile_inst (.clk(clk), .rst(rst), .i_wen(wb_wen), .i_wdata(wb_wdata), .i_addr_a(ra_rs1), .i_addr_b(ra_rs2), .i_waddr(mw_rd), .o_reg_a(ra_o_reg_a), .o_reg_b(ra_o_reg_b));
+
+    assign ra_alu_in_b = (ra_instr_type == `INSTR_TYPE_I) ? {{20{ra_imm_31_20[11]}}, ra_imm_31_20} : ra_o_reg_b;
+
+    ALU alu_inst (.i_operand_a(ra_o_reg_a), .i_operand_b(ra_alu_in_b), .i_alu_op(ra_aluop), .o_alu_out(ra_alu_out), .o_alu_zero(ra_zero));
+
+    //* =========================================================================
+    //* PIPELINE REGISTER 2: REGFILE & ALU -> LSU
+    //* =========================================================================
+    reg [31:0] mw_alu_out, mw_reg_b;
+    reg [4:0] mw_rd;
+    reg [6:0] mw_opcode;
+    reg [1:0] mw_instr_type;
+
+    always @(posedge clk or posedge rst) begin
+        if (rst) begin
+            mw_alu_out <= 32'b0;
+            mw_reg_b <= 32'b0;
+            mw_rd <= 5'b0;
+            mw_opcode <= 7'b0;
+            mw_instr_type <= 2'b0;
+        end else begin
+            mw_alu_out <= ra_alu_out;
+            mw_reg_b <= ra_o_reg_b;
+            mw_rd <= ra_rd;
+            mw_opcode <= ra_opcode;
+            mw_instr_type <= ra_instr_type;
+        end
+    end
+
+    //! =========================================================================
+    //! STAGE 3: MEMORY & WB
+    //! =========================================================================
+    
+    //! Notice mw same cycle as wb, but this might change.
+    wire mw_is_load, mw_is_store;
+    wire [31:0] mw_mem_out;
+    wire [31:0] wb_wdata;
+    wire wb_wen;
+
+    assign mw_is_load = (mw_opcode == `OP_LW);
+    assign mw_is_store = (mw_opcode == `OP_SW);
+
+    LoadStoreUnit load_store_unit_inst (.clk(clk), .rst(rst), .i_write_enable(mw_is_store), .i_read_enable(mw_is_load), .i_addr(mw_alu_out), .i_wdata(mw_reg_b), .o_rdata(mw_mem_out));
+
+    // Determine what to write back to Regfile
+    //! wb_wdata is set 1 cycle after mem_out ? if not delete this
+    assign wb_wdata = mw_is_load ? mw_mem_out : mw_alu_out;
+    assign wb_wen = (mw_instr_type == `INSTR_TYPE_R) || (mw_instr_type == `INSTR_TYPE_I);
 
     // TODO: add memory module
 endmodule
