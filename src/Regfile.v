@@ -1,8 +1,8 @@
 module Regfile (
-    input clk, rst, i_reg_wen;
-    input [31:0] i_reg_wdata;
-    input [4:0] i_reg_addr_a, i_reg_addr_b, i_reg_waddr;
-    output [31:0] o_reg_a, o_reg_b;
+    input clk, rst, i_reg_wen,
+    input [31:0] i_reg_wdata,
+    input [4:0] i_reg_addr_a, i_reg_addr_b, i_reg_waddr,
+    output [31:0] o_reg_a, o_reg_b
 );
     reg [31:0] data [31:0];
 
@@ -24,17 +24,12 @@ module Regfile (
 
     //! Write
     always @(posedge clk or negedge rst) begin
-        if (i_reg_wen) begin
-            data[i_reg_waddr] <= i_reg_wdata;
-        end
-    end
-
-    //! Reset regfile to all zeros
-    always @(posedge clk or negedge rst) begin
         if (!rst) begin
             for (integer i = 0; i < 32; i = i + 1) begin
                 data[i] = 32'b0;
             end
+        end else if (i_reg_wen) begin
+            data[i_reg_waddr] <= i_reg_wdata;
         end
     end
-endmodule;
+endmodule

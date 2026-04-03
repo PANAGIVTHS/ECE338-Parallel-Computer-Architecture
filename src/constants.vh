@@ -15,3 +15,7 @@
 `define ALU_SUB 2'b01;
 `define ALU_MUL 2'b10;
 `define ALU_DIV 2'b11;
+
+`define INSTR_TYPE_R 2'b00;
+`define INSTR_TYPE_I 2'b01;
+`define INSTR_TYPE_S 2'b10;
