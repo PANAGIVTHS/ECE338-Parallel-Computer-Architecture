@@ -38,6 +38,10 @@ module Decoder (
                 endcase
                 o_instr_type = `INSTR_TYPE_R;
             end
+            `OP_ADDI: begin
+                o_aluop = `ALU_ADD;
+                o_instr_type = `INSTR_TYPE_I;
+            end
             `OP_LW: begin 
                 o_aluop = `ALU_ADD;
                 o_instr_type = `INSTR_TYPE_I;

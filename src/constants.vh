@@ -2,6 +2,7 @@
 `define OP_LW     7'b0000011
 `define OP_SW     7'b0100011
 `define OP_BEQ    7'b1100011
+`define OP_ADDI   7'b0010011
 
 `define FUNCT3_ADD_SUB_MUL 3'b000
 `define FUNCT3_MEM 3'b010
