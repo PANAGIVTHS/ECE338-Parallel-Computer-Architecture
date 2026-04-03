@@ -14,18 +14,23 @@ module StreamingProcessor (
     wire [11:0] fd_imm_31_20;
     wire [1:0] fd_aluop, fd_instr_type;
     wire [4:0] fd_rs1, fd_rs2, fd_rd;
+    wire fd_is_beq, fd_o_fetched_instr;
 
     // TODO: set values when we implement branching and jumping
     //! Counter returns instruction index not address!
     GUCounter #(.BITS(30)) 
-        program_counter_inst (.clk(clk), .i_set_reset({rst, 1'b0}), .i_count_enable(1'b1), .i_count_set(30'b0), .o_count_cur(fd_instr_idx));
+        program_counter_inst (.clk(clk), .i_set_reset({rst, ra_branch_taken}), .i_count_enable(!ra_branch_taken), .i_count_set(ra_beq_target_idx), .o_count_cur(fd_instr_idx));
     
     assign fd_program_counter = {fd_instr_idx, 2'b00};
 
-    InstrFetch instr_fetch_inst (.clk(clk), .rst(rst), .i_program_counter(fd_program_counter), .o_fetched_instr(fd_instruction));
+    InstrFetch instr_fetch_inst (.clk(clk), .rst(rst), .i_program_counter(fd_program_counter), .o_fetched_instr(fd_o_fetched_instr));
     
+    //! If program counter is stalled due to a taken branch insert NOP. This may have timing violation.
+    assign fd_instruction = (ra_branch_taken) ? 32'b0 : fd_o_fetched_instr;
+
     Decoder decoder_inst (.i_instr(fd_instruction), .o_rs1(fd_rs1), .o_rs2(fd_rs2), .o_rd(fd_rd), .o_imm_31_25(fd_imm_31_25), .o_imm_31_20(fd_imm_31_20), .o_aluop(fd_aluop), .o_instr_type(fd_instr_type), .opcode(fd_opcode));
 
+    assign fd_is_beq = fd_opcode == `OP_BEQ;
     //* =========================================================================
     //* PIPELINE REGISTER 1: DECODE -> REG/ALU 
     //* =========================================================================
@@ -33,6 +38,8 @@ module StreamingProcessor (
     reg [11:0] ra_imm_31_20;
     reg [1:0] ra_aluop, ra_instr_type;
     reg [6:0] ra_opcode;
+    reg [6:0] ra_imm_31_25;
+    reg [31:0] ra_program_counter;
 
     always @(posedge clk or posedge rst) begin
         if (rst) begin
@@ -43,14 +50,18 @@ module StreamingProcessor (
             ra_aluop <= 2'b0;
             ra_instr_type <= 2'b0;
             ra_opcode <= 7'b0;
+            ra_imm_31_25 <= 7'b0;
+            ra_program_counter <= 32'b0;
         end else begin
             ra_rs1 <= fd_rs1;
             ra_rs2 <= fd_rs2;
             ra_rd <= fd_rd;
             ra_imm_31_20 <= fd_imm_31_20;
+            ra_imm_31_25 <= fd_imm_31_25;
             ra_aluop <= fd_aluop;
             ra_instr_type <= fd_instr_type;
             ra_opcode <= fd_opcode;
+            ra_program_counter <= fd_program_counter;
         end
     end
 
@@ -58,13 +69,21 @@ module StreamingProcessor (
     //! STAGE 2: REGFILE & ALU 
     //! =========================================================================
     wire [31:0] ra_o_reg_a, ra_o_reg_b, ra_alu_in_b, ra_alu_out;
-    wire ra_zero;
+    wire ra_zero, ra_branch_taken, ra_is_beq;
+    wire [31:0] ra_beq_offset, ra_beq_target_idx;
 
     Regfile regfile_inst (.clk(clk), .rst(rst), .i_wen(wb_wen), .i_wdata(wb_wdata), .i_addr_a(ra_rs1), .i_addr_b(ra_rs2), .i_waddr(mw_rd), .o_reg_a(ra_o_reg_a), .o_reg_b(ra_o_reg_b));
 
     assign ra_alu_in_b = (ra_instr_type == `INSTR_TYPE_I) ? {{20{ra_imm_31_20[11]}}, ra_imm_31_20} : ra_o_reg_b;
 
     ALU alu_inst (.i_operand_a(ra_o_reg_a), .i_operand_b(ra_alu_in_b), .i_alu_op(ra_aluop), .o_alu_out(ra_alu_out), .o_alu_zero(ra_zero));
+
+    assign ra_is_beq = (ra_opcode == `OP_BEQ);
+    assign ra_branch_taken = ra_is_beq && ra_zero;
+
+    //! Notice idk too cooked to understand if this is right.
+    assign [31:0] ra_beq_offset = {{20{ra_imm_31_25[6]}}, ra_rd[0], ra_imm_31_25[5:0], ra_rd[4:1], 1'b0};
+    assign [29:0] ra_beq_target_idx = ra_program_counter[31:2] + ra_beq_offset[31:2];
 
     //* =========================================================================
     //* PIPELINE REGISTER 2: REGFILE & ALU -> LSU
