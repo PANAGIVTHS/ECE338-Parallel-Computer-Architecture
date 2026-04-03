@@ -10,19 +10,11 @@ module Memory (
 );
     reg [31:0] data [1023:0]; //! 1024 entries of 32-bit words
 
-    //! Reset
+    //! Read
     always @(posedge clk or negedge rst) begin
         if (!rst) begin
             o_out <= 32'b0;
-            // for (integer i = 0; i < 1024; i = i + 1) begin
-            //     data[i] <= 32'b0; //! Set memory to zero
-            // end
-        end
-    end
-
-    //! Read
-    always @(posedge clk or negedge rst) begin
-        if (i_read_enable && !i_write_enable) begin
+        end else if (i_read_enable && !i_write_enable) begin
             o_out <= data[i_read_addr]; //! Normal read
         end else if (i_read_enable && i_write_enable) begin
             if (i_read_addr == i_write_addr) begin
@@ -33,7 +25,9 @@ module Memory (
 
     //! Write
     always @(posedge clk or negedge rst) begin
-        if (i_write_enable) begin
+        if (!rst) begin
+            data[i_write_addr] <= 32'b0;
+        end else if (i_write_enable) begin
             data[i_write_addr] <= i_write_data;
         end
     end
