@@ -22,8 +22,9 @@ module StreamingProcessor (
     
     assign program_counter = {instr_idx, 2'b00};
 
-    // TODO: add instruction fetch module to get instruction from memory 
-    assign instruction = /* instruction fetched from memory */;
+    //! Temporary until we use BRAMs
+    Memory instructionMemory (.clk(clk), .rst(rst), .i_read_addr(program_counter[11:2]), .i_read_enable(1'b1), .i_write_addr(10'b0),
+                              .i_write_enable(1'b0), .i_write_data(32'b0), .o_out(instruction));
 
     Decoder decoder_inst (.i_instr(instruction), .o_rs1(rs1), .o_rs2(rs2), .o_rd(rd), .o_imm_31_25(imm_31_25), .o_imm_31_20(imm_31_20), .o_aluop(aluop), .o_instr_type(instr_type));
     Regfile regfile_inst (.clk(clk), .rst(rst), .i_wen(wen), .i_wdata(wb_wdata), .i_addr_a(rs1), .i_addr_b(rs2), .i_waddr(rd), .o_reg_a(alu_in_a), .o_reg_b(o_reg_b));
