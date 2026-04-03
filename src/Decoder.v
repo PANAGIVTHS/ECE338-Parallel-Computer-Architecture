@@ -8,9 +8,9 @@ module Decoder (
     output [6:0] o_imm_31_25,
     output [11:0] o_imm_31_20,
     output [1:0] o_aluop,
-    output [1:0] o_instr_type
+    output [1:0] o_instr_type,
+    output [6:0] opcode
 );
-    wire [6:0] opcode;
     wire [2:0] funct3;
     wire [6:0] funct7;
 
