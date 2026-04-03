@@ -8,6 +8,7 @@ module StreamingProcessor (
     wire [31:0] alu_in_a, alu_in_b;
     wire [31:0] o_reg_b;
     wire [31:0] alu_out;
+    wire [31:0] wb_wdata;
     wire [6:0] imm_31_25;
     wire [11:0] imm_31_20;
     wire [1:0] aluop, instr_type;

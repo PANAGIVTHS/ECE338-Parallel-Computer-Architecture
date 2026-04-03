@@ -2,7 +2,7 @@ module Regfile (
     input clk, rst, i_wen,
     input [31:0] i_wdata,
     input [4:0] i_addr_a, i_addr_b, i_waddr,
-    output [31:0] o_reg_a, o_reg_b
+    output reg [31:0] o_reg_a, o_reg_b
 );
     reg [31:0] data [31:0];
 
