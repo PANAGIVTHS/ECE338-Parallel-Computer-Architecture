@@ -46,11 +46,13 @@ def compile_all_tests():
             # Retrieve the captured text from the buffer
             hex_result = f_buffer.getvalue()
 
+            clean_hex = hex_result.replace("0x", "")
+
             # Write the captured text to the actual .mem file
             with open(mem_path, 'w', encoding='utf-8') as f_out:
                 # Strip leading/trailing whitespaces or newlines printed by the library,
                 # and append a single newline at the end for clean formatting
-                f_out.write(hex_result.strip() + '\n')
+                f_out.write(clean_hex.strip() + '\n')
 
         except Exception as e:
             print(f"  [Error] Failed to convert {asm_path}: {e}")
