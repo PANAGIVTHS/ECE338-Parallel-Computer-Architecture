@@ -7,12 +7,21 @@ module ALU (
     output reg [31:0] o_alu_out,
     output reg o_alu_zero
 );
+    (* use_dsp = "yes" *) reg [31:0] mul_stage1;
+    (* use_dsp = "yes" *) reg [31:0] mul_stage2;
+    (* use_dsp = "yes" *) reg [31:0] mul_stage3;
 
+    always @(posedge clk) begin
+        mul_stage1 <= i_operand_a * i_operand_b;
+        mul_stage2 <= mul_stage1;
+        mul_stage3 <= mul_stage2;
+    end
+    
     always @(i_alu_op, i_operand_a, i_operand_b) begin
         case (i_alu_op)
             `ALU_ADD: o_alu_out = i_operand_a + i_operand_b;
             `ALU_SUB: o_alu_out = i_operand_a - i_operand_b;
-            `ALU_MUL: o_alu_out = i_operand_a * i_operand_b;
+            `ALU_MUL: o_alu_out = mul_stage3;
             `ALU_DIV: o_alu_out = i_operand_a / i_operand_b;
             default: o_alu_out = 32'b0;
         endcase
