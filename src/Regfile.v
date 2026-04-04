@@ -23,12 +23,8 @@ module Regfile (
     end
 
     //! Write
-    always @(posedge clk or negedge rst) begin
-        if (!rst) begin
-            for (integer i = 0; i < 32; i = i + 1) begin
-                data[i] = 32'b0;
-            end
-        end else if (i_wen) begin
+    always @(posedge clk) begin
+        if (i_wen) begin
             data[i_waddr] <= i_wdata;
         end
     end
