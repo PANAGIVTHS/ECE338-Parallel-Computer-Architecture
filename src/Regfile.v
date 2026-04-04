@@ -24,7 +24,7 @@ module Regfile (
 
     //! Write
     always @(posedge clk) begin
-        if (i_wen) begin
+        if (rst && i_wen) begin
             data[i_waddr] <= i_wdata;
         end
     end
