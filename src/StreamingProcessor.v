@@ -57,6 +57,7 @@ module StreamingProcessor (
     // TODO: and determine the data to write back Load vs ALU output
     //! wb_wdata is set 1 cycle after mem_out
     assign wb_wdata = is_load ? mem_out : alu_out;
+    assign mem_out = 32'b0;
 
     // TODO: add memory module
 endmodule
