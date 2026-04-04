@@ -1,15 +1,17 @@
 module StreamingProcessor (
     input clk,
-    input rst
+    input rst,
+    output [7:0] o_leds,
+    input i_dummy_wen
 );
 
-    wire [31:0] instruction, program_counter;
+    (* dont_touch = "yes" *) wire [31:0] instruction, program_counter;
     wire [29:0] instr_idx;
     wire [31:0] alu_in_a, alu_in_b;
     wire [31:0] o_reg_a;
     wire [31:0] o_reg_b;
     wire [31:0] mem_out;
-    wire [31:0] alu_out;
+    (* dont_touch = "yes" *) wire [31:0] alu_out;
     wire [6:0] imm_31_25, opcode;
     wire [31:0] wb_wdata;
     wire [11:0] imm_31_20;
@@ -18,6 +20,15 @@ module StreamingProcessor (
     wire zero, wen;
     wire is_load, is_store;
 
+    wire [31:0] debug_signals = program_counter ^ alu_out ^ instruction;
+
+    assign o_leds = debug_signals[31:24] ^ 
+                    debug_signals[23:16] ^ 
+                    debug_signals[15:8]  ^ 
+                    debug_signals[7:0];
+
+    assign wen = (instr_type == `INSTR_TYPE_R) || (instr_type == `INSTR_TYPE_I);
+
     // TODO: set values when we implement branching and jumping
     //! Counter returns instruction index not address!
     GUCounter #(.BITS(30)) 
@@ -25,9 +36,8 @@ module StreamingProcessor (
     
     assign program_counter = {instr_idx, 2'b00};
 
-    //! Temporary until we use BRAMs
     Memory instructionMemory (.clk(clk), .rst(rst), .i_read_addr(program_counter[11:2]), .i_read_enable(1'b1), .i_write_addr(10'b0),
-                              .i_write_enable(1'b0), .i_write_data(32'b0), .o_out(instruction));
+                              .i_write_enable(i_dummy_wen), .i_write_data(32'b0), .o_out(instruction));
 
     // TODO: add instruction fetch module to get instruction from memory 
     // InstrFetch instr_fetch_inst (.clk(clk), .rst(rst), .i_program_counter(program_counter), .o_fetched_instr(instruction));
