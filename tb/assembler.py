@@ -52,7 +52,7 @@ def compile_all_tests():
             with open(mem_path, 'w', encoding='utf-8') as f_out:
                 # Strip leading/trailing whitespaces or newlines printed by the library,
                 # and append a single newline at the end for clean formatting
-                f_out.write(clean_hex.strip() + '\n')
+                f_out.write(clean_hex.strip() + '\n00000000\n')  # Add a NOP
 
         except Exception as e:
             print(f"  [Error] Failed to convert {asm_path}: {e}")
