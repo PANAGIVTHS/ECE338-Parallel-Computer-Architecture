@@ -1,4 +1,7 @@
-module Memory (
+module Memory #(
+    parameter DEPTH = 1024,
+    parameter INIT_FILE = "program.mem"
+) (
     input clk,
     input rst,
     input [9:0] i_read_addr,
@@ -8,27 +11,24 @@ module Memory (
     input [31:0] i_write_data,
     output reg [31:0] o_out
 );
-    reg [31:0] data [1023:0]; //! 1024 entries of 32-bit words
+    (* ram_style = "block" *) reg [31:0] data [0:DEPTH-1];
 
-    //! Read
-    always @(posedge clk or negedge rst) begin
-        if (!rst) begin
-            o_out <= 32'b0;
-        end else if (i_read_enable && !i_write_enable) begin
-            o_out <= data[i_read_addr]; //! Normal read
-        end else if (i_read_enable && i_write_enable) begin
-            if (i_read_addr == i_write_addr) begin
-                o_out <= i_write_data; //! Write on the same memory we try to read
-            end
-        end
+    initial begin
+        $readmemh(INIT_FILE, data);
     end
 
-    //! Write
-    always @(posedge clk or negedge rst) begin
-        if (!rst) begin
-            data[i_write_addr] <= 32'b0;
-        end else if (i_write_enable) begin
+    // Write
+    always @(posedge clk) begin
+        if (i_write_enable) begin
             data[i_write_addr] <= i_write_data;
         end
     end
+
+    // Read
+    always @(posedge clk) begin
+        if (i_read_enable) begin
+            o_out <= data[i_read_addr]; 
+        end
+    end
+
 endmodule
