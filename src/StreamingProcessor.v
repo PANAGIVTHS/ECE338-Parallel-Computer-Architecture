@@ -36,8 +36,8 @@ module StreamingProcessor (
     
     assign program_counter = {instr_idx, 2'b00};
 
-    Memory instructionMemory (.clk(clk), .rst(rst), .i_read_addr(program_counter[11:2]), .i_read_enable(1'b1), .i_write_addr(10'b0),
-                              .i_write_enable(i_dummy_wen), .i_write_data(32'b0), .o_out(instruction));
+    Memory instructionMemory (.clk(clk), .rst(rst), .i_read_addr(program_counter[11:2]), .i_read_enable(1'b1), .i_write_addr(program_counter[11:2]),
+                              .i_write_enable(i_dummy_wen), .i_write_data(alu_out), .o_out(instruction));
 
     // TODO: add instruction fetch module to get instruction from memory 
     // InstrFetch instr_fetch_inst (.clk(clk), .rst(rst), .i_program_counter(program_counter), .o_fetched_instr(instruction));
