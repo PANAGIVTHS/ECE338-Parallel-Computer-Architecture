@@ -1,30 +1,121 @@
 `timescale 1ns/1ps
 
 `define CLOCK_PERIOD 10
+`define TEST_TIMEOUT_CYCLES 20 
 
 module tb_StreamingProcessor ();
     reg clk, rst;
+    reg dummy_wen;
+    wire [7:0] o_leds;
+    
+    // Expected results arrays
+    reg [31:0] expected_data [0:1023];
+    reg [31:0] expected_regfile [0:31];
+
     integer i;
+    integer test_idx;
+    integer fd;
+    integer data_errors, reg_errors;
+    integer cycle_count;
+
+    reg [8*255:0] prog_file;
+    reg [8*255:0] data_file;
+    reg [8*255:0] reg_file;
+
+    StreamingProcessor UUT (
+        .clk(clk), 
+        .rst(rst), 
+        .o_leds(o_leds), 
+        .i_dummy_wen(dummy_wen)
+    );
+
+    // Clock
+    always #(`CLOCK_PERIOD / 2) clk = ~clk;
 
     initial begin
         clk = 0;
         rst = 0;
-        #(`CLOCK_PERIOD * 2.75) rst = 1; //! Reset for 2.75 cycles
-        #(`CLOCK_PERIOD * 10) $finish;
-    end
+        dummy_wen = 0;
+        test_idx = 1;
 
-    always #`CLOCK_PERIOD clk = ~clk;
+        $display("=================================================");
+        $display(" Starting the test suite");
+        $display("=================================================");
 
-    StreamingProcessor UUT (.clk(clk), .rst(rst));
+        forever begin
+            // 1. Find the path of the tests dynamically
+            $sformat(prog_file, "test%0d/program.mem", test_idx);
+            $sformat(data_file, "test%0d/data.mem", test_idx);
+            $sformat(reg_file, "test%0d/regfile.mem", test_idx);
 
-    //! Initialize instruction memory
-    initial begin
-        $readmemh("program.hex", UUT.instructionMemory.data);
-    end
+            // 2. If the test doesn't exist, break the loop
+            fd = $fopen(prog_file, "r");
+            if (fd == 0) begin
+                if (test_idx == 1) 
+                    $display("[ERROR] No tests were found");
+                else 
+                    $display("\nSimulation finished!");
+                $finish;
+            end
+            $fclose(fd);
 
-    //! Program Counter
-    always @(posedge clk) begin
-        $display("PC: %4d", UUT.program_counter);
+            $display("\n---> Starting the tests %0d...", test_idx);
+
+            // 3. Clear the memories
+            for (i=0; i<1024; i=i+1) UUT.dataMemory.data[i] = 32'b0;
+            for (i=0; i<1024; i=i+1) expected_data[i] = 32'b0;
+            for (i=0; i<32; i=i+1) expected_regfile[i] = 32'b0;
+            for (i=0; i<32; i=i+1) UUT.regfile_inst.data[i] = 32'b0; 
+
+            // 4. Load memories
+            $readmemh(prog_file, UUT.instructionMemory.data);
+            $readmemh(data_file, expected_data);
+            $readmemh(reg_file, expected_regfile);
+
+            // 5. Reset
+            rst = 0;
+            #(`CLOCK_PERIOD * 2);
+            rst = 1;
+
+            // 6. Timeout mechanism
+            cycle_count = 0;
+            while (UUT.instruction !== 32'h00000000 && cycle_count < `TEST_TIMEOUT_CYCLES) begin
+                #(`CLOCK_PERIOD);
+                cycle_count = cycle_count + 1;
+            end
+
+            if (cycle_count >= `TEST_TIMEOUT_CYCLES) 
+                $display("  [WARNING] Test %0d timed out!", test_idx);
+
+            // 7. Compare the regfile
+            reg_errors = 0;
+            for (i = 0; i < 32; i = i + 1) begin
+                if (UUT.regfile_inst.data[i] !== expected_regfile[i]) begin
+                    $display("  [Error] Reg %0d: Expected %h, Found %h", 
+                             i, expected_regfile[i], UUT.regfile_inst.data[i]);
+                    reg_errors = reg_errors + 1;
+                end
+            end
+
+            // 8. Compare Data Memory
+            data_errors = 0;
+            for (i = 0; i < 1024; i = i + 1) begin
+                if (UUT.dataMemory.data[i] !== expected_data[i]) begin
+                    $display("  [Error] Data memory Address %0d: Expected %h, Found %h", 
+                             i, expected_data[i], UUT.dataMemory.data[i]);
+                    data_errors = data_errors + 1;
+                end
+            end
+
+            // 9. Test result
+            if (reg_errors == 0 && data_errors == 0)
+                $display("  [PASS] Test %0d is correct!", test_idx);
+            else
+                $display("  [FAIL] Test %0d failed. (Reg errors: %0d, Data errors: %0d)", 
+                    test_idx, reg_errors, data_errors);
+
+            test_idx = test_idx + 1;
+        end
     end
 
     //! Waveform
@@ -32,9 +123,18 @@ module tb_StreamingProcessor ();
         $dumpfile("dumpfile.vcd");
         $dumpvars(1, tb_StreamingProcessor);
         $dumpvars(1, tb_StreamingProcessor.UUT);
+        $dumpvars(1, tb_StreamingProcessor.UUT.alu_inst);
         $dumpvars(1, tb_StreamingProcessor.UUT.instructionMemory);
-        for (i = 0; i < 32; i = i + 1) begin
+        for (i = 0; i < 16; i = i + 1) begin
             $dumpvars(1, tb_StreamingProcessor.UUT.instructionMemory.data[i]);
+        end
+        $dumpvars(1, tb_StreamingProcessor.UUT.dataMemory);
+        for (i = 0; i < 16; i = i + 1) begin
+            $dumpvars(1, tb_StreamingProcessor.UUT.dataMemory.data[i]);
+        end
+        $dumpvars(1, tb_StreamingProcessor.UUT.regfile_inst);
+        for (i = 0; i < 16; i = i + 1) begin
+            $dumpvars(1, tb_StreamingProcessor.UUT.regfile_inst.data[i]);
         end
     end
 endmodule
