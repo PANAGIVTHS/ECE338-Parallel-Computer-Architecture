@@ -34,7 +34,7 @@ module GUCounter #(
     
     //! Counter logic
     always @(posedge clk) begin
-        if (reset) begin
+        if (!reset) begin
             o_count_cur <= 0; 
         end else if (count_set) begin 
             o_count_cur <= i_count_set; 
