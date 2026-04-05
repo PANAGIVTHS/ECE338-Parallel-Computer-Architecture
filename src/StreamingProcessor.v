@@ -6,12 +6,42 @@ module StreamingProcessor (
     output [2:0] o_leds
 );
 
+    wire ra_branch_taken;
+    wire [29:0] ra_beq_target_idx;
+    wire data_hazard;
+    reg [4:0] ra_rd;
+    wire wb_wen;
+    wire [31:0] wb_wdata;
+    reg [4:0] mw_rd;
+
     //! =========================================================================
-    //! STAGE 1: FETCH & DECODE
+    //! STAGE 1: INSTRUCTION FETCH
     //! =========================================================================
-    wire [31:0] fd_instruction, fd_program_counter;
-    (* dont_touch = "true" *) wire [31:0] fd_o_fetched_instr;
-    wire [29:0] fd_instr_idx;
+    (* dont_touch = "true" *) wire [31:0] program_counter;
+    wire [29:0] instr_idx;
+    reg [31:0] if_program_counter;
+
+    //! Counter returns instruction index not address!
+    GUCounter #(.BITS(30)) 
+        program_counter_inst (.clk(clk), .i_set_reset({rst, ra_branch_taken}), .i_count_enable(!data_hazard), .i_count_set(ra_beq_target_idx), .o_count_cur(instr_idx));
+
+    assign program_counter = {instr_idx, 2'b00};
+
+    //* =========================================================================
+    //* PIPELINE REGISTER 1: INSTRUCTION FETCH -> DECODE
+    //* =========================================================================
+    always @(posedge clk) begin
+        if (!rst) begin
+            if_program_counter <= 32'b0;
+        end else begin
+            if_program_counter <= program_counter;
+        end
+    end
+
+    //! =========================================================================
+    //! STAGE 2: DECODE
+    //! =========================================================================
+    wire [31:0] fd_instruction;
     wire [6:0] fd_imm_31_25, fd_opcode;
     wire [11:0] fd_imm_31_20;
     wire [1:0] fd_aluop, fd_instr_type;
@@ -22,16 +52,11 @@ module StreamingProcessor (
     //! Generate write-enable for WAW tracking
     wire fd_wen = ((fd_instr_type == `INSTR_TYPE_R) || (fd_instr_type == `INSTR_TYPE_I) || fd_is_mul) && (fd_rd != 5'b0);
 
-    //! Counter returns instruction index not address!
-    GUCounter #(.BITS(30)) 
-        program_counter_inst (.clk(clk), .i_set_reset({rst, ra_branch_taken}), .i_count_enable(!data_hazard), .i_count_set(ra_beq_target_idx), .o_count_cur(fd_instr_idx));
-    
-    assign fd_program_counter = {fd_instr_idx, 2'b00};
+    Memory instructionMemory (.clk(clk), .rst(rst), .i_read_addr(if_program_counter[11:2]), .i_read_enable(1'b1), .i_write_addr(10'b0),
+                              .i_write_enable(1'b0), .i_write_data(32'b0), .o_out(fd_instruction));
 
-    InstrFetch instr_fetch_inst (.clk(clk), .rst(rst), .i_program_counter(fd_program_counter), .o_fetched_instr(fd_o_fetched_instr));
-    
     Decoder decoder_inst (
-        .i_instr(fd_o_fetched_instr),
+        .i_instr(fd_instruction),
         .o_rs1(fd_rs1), 
         .o_rs2(fd_rs2),
         .o_rd(fd_rd),
@@ -42,21 +67,21 @@ module StreamingProcessor (
         .opcode(fd_opcode)
     );
 
-    assign fd_is_mul = (fd_opcode == `OP_MUL);
+    assign fd_is_mul = (fd_opcode == `OP_R_TYPE);
     assign mux_fd_rs1 = data_hazard ? 5'b0 : fd_rs1;
-    assign mux_fd_rs2 = data_hazard ? 5'b0 : fd_rs2
+    assign mux_fd_rs2 = data_hazard ? 5'b0 : fd_rs2;
 
     //* =========================================================================
-    //* PIPELINE REGISTER 1: DECODE -> REG/ALU 
+    //* PIPELINE REGISTER 2: DECODE -> REG/ALU 
     //* =========================================================================
-    reg [4:0] ra_rs1, ra_rs2, ra_rd;
+    reg [4:0] ra_rs1, ra_rs2;
     reg [11:0] ra_imm_31_20;
     reg [1:0] ra_aluop, ra_instr_type;
     reg [6:0] ra_opcode, ra_imm_31_25;
     reg [31:0] ra_program_counter;
 
     always @(posedge clk) begin
-        if (rst) begin
+        if (!rst) begin
             ra_rs1 <= 5'b0;
             ra_rs2 <= 5'b0;
             ra_rd <= 5'b0;
@@ -76,7 +101,7 @@ module StreamingProcessor (
             ra_instr_type <= `INSTR_TYPE_R;
             ra_opcode <= 7'b0;
             ra_imm_31_25 <= 7'b0;
-            ra_program_counter <= fd_program_counter;
+            ra_program_counter <= if_program_counter;
         end else begin
             ra_rs1 <= fd_rs1;
             ra_rs2 <= fd_rs2;
@@ -86,21 +111,20 @@ module StreamingProcessor (
             ra_aluop <= fd_aluop;
             ra_instr_type <= fd_instr_type;
             ra_opcode <= fd_opcode;
-            ra_program_counter <= fd_program_counter;
+            ra_program_counter <= if_program_counter;
         end
     end
 
     //! =========================================================================
-    //! STAGE 2: REGFILE & ALU 
+    //! STAGE 3: REGFILE & ALU 
     //! =========================================================================
     wire [31:0] ra_o_reg_a, ra_o_reg_b, ra_alu_in_b, ra_alu_in_a, ra_alu_out, alu_mul_out;
-    wire ra_zero, ra_branch_taken, ra_is_beq;
+    wire ra_zero, ra_is_beq;
     wire [31:0] ra_beq_offset;
-    wire [29:0] ra_beq_target_idx;
     wire [31:0] ra_imm_i_type, ra_imm_s_type;
-    wire ra_is_mul, data_hazard;
+    wire ra_is_mul;
 
-    assign ra_is_mul = (ra_opcode == `OP_MUL);
+    assign ra_is_mul = (ra_opcode == `OP_R_TYPE);
     wire ra_wen = ((ra_instr_type == `INSTR_TYPE_R) || (ra_instr_type == `INSTR_TYPE_I) || ra_is_mul) && (ra_rd != 5'b0);
     
     //! To use a synchronous Regfile, read addresses must be supplied from the Decode stage
@@ -120,6 +144,7 @@ module StreamingProcessor (
         .i_operand_a(ra_o_reg_a), 
         .i_operand_b(ra_alu_in_b), 
         .i_alu_op(ra_aluop), 
+        .i_mul_valid(1'b0), //! Temporarily zero.
         .o_alu_out(ra_alu_out), 
         .o_alu_zero(ra_zero),
         .o_mul_out(alu_mul_out)
@@ -132,7 +157,7 @@ module StreamingProcessor (
     reg mul1_valid, mul2_valid, mul3_valid;
 
     always @(posedge clk) begin
-        if (rst) begin
+        if (!rst) begin
             mul1_rd <= 0; mul2_rd <= 0; mul3_rd <= 0;
             mul1_valid <= 0; mul2_valid <= 0; mul3_valid <= 0;
         end else begin
@@ -149,7 +174,7 @@ module StreamingProcessor (
     assign ra_is_beq = (ra_opcode == `OP_BEQ);
     assign ra_branch_taken = ra_is_beq && ra_zero;
 
-    DataHazardUnit hazard_unit_inst (
+    HazardUnit hazard_unit_inst (
         .i_fd_rs1(fd_rs1),
         .i_fd_rs2(fd_rs2),
         .i_ra_wen(ra_wen),
@@ -166,17 +191,16 @@ module StreamingProcessor (
     assign ra_beq_target_idx = ra_program_counter[31:2] + ra_beq_offset[31:2];
 
     //* =========================================================================
-    //* PIPELINE REGISTER 2: REGFILE & ALU -> LSU
+    //* PIPELINE REGISTER 3: REGFILE & ALU -> LSU
     //* =========================================================================
     reg [31:0] mw_alu_out, mw_reg_b;
-    reg [4:0] mw_rd;
     reg [6:0] mw_opcode;
     reg [1:0] mw_instr_type;
     wire mw_is_mul;
     reg mw_mul3_valid;
 
     always @(posedge clk) begin
-        if (rst) begin
+        if (!rst) begin
             mw_alu_out <= 32'b0;
             mw_reg_b <= 32'b0;
             mw_rd <= 5'b0;
@@ -194,17 +218,17 @@ module StreamingProcessor (
     end
 
     //! =========================================================================
-    //! STAGE 3: MEMORY & WB
+    //! STAGE 4: MEMORY & WB
     //! =========================================================================
     (* dont_touch = "true" *) wire mw_is_load, mw_is_store;
     (* dont_touch = "true" *) wire [31:0] mw_mem_out;
-    wire [31:0] wb_wdata;
-    wire wb_wen; 
 
     assign mw_is_load = (mw_opcode == `OP_LW);
     assign mw_is_store = (mw_opcode == `OP_SW);
 
-    LoadStoreUnit load_store_unit_inst (.clk(clk), .rst(rst), .i_write_enable(mw_is_store), .i_read_enable(mw_is_load), .i_addr(mw_alu_out), .i_wdata(mw_reg_b), .o_rdata(mw_mem_out));
+    Memory dataMemory (.clk(clk), .rst(rst), .i_read_addr(mw_alu_out[11:2]), .i_read_enable(mw_is_load),
+                       .i_write_addr(mw_alu_out[11:2]), .i_write_enable(mw_is_store), .i_write_data(mw_reg_b),
+                       .o_out(mw_mem_out));
 
     assign mw_is_mul = mw_mul3_valid;
     
