@@ -6,29 +6,30 @@ module Regfile (
 );
     reg [31:0] data [31:0];
     integer i;
+
     //! Read
-    always @(posedge clk or negedge rst) begin
-        if (!rst) begin
+    always @(posedge clk) begin
+        if (rst) begin
             o_reg_a <= 32'b0;
             o_reg_b <= 32'b0;
         end else if (!i_wen) begin
             //! Output the data when write is disabled
-            o_reg_a <= data[i_addr_a];
-            o_reg_b <= data[i_addr_b];
+            o_reg_a <= (i_addr_a == 5'b0) ? 32'b0 : data[i_addr_a];
+            o_reg_b <= (i_addr_b == 5'b0) ? 32'b0 : data[i_addr_b];
         end else begin
             //! Read the same address you want to write, forward the data
-            o_reg_a <= (i_addr_a == i_waddr) ? i_wdata : data[i_addr_a];
-            o_reg_b <= (i_addr_b == i_waddr) ? i_wdata : data[i_addr_b];
+            o_reg_a <= (i_addr_a == 5'b0) ? 32'b0 : ((i_addr_a == i_waddr) ? i_wdata : data[i_addr_a]);
+            o_reg_b <= (i_addr_b == 5'b0) ? 32'b0 : ((i_addr_b == i_waddr) ? i_wdata : data[i_addr_b]);
         end
     end
     
     //! Write
-    always @(posedge clk or negedge rst) begin
-        if (!rst) begin
+    always @(posedge clk) begin
+        if (rst) begin
             for (i = 0; i < 32; i = i + 1) begin
-                data[i] = 32'b0;
+                data[i] <= 32'b0;
             end
-        end else if (i_wen) begin
+        end else if (i_wen && (i_waddr != 5'b0)) begin
             data[i_waddr] <= i_wdata;
         end
     end
