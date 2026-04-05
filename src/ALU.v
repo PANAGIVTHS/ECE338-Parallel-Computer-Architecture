@@ -7,7 +7,8 @@ module ALU (
     input [1:0] i_alu_op,
     input i_mul_valid,
     output reg [31:0] o_alu_out,
-    output reg o_alu_zero
+    output reg o_alu_zero,
+    output reg [31:0] o_mul_out
 );
     (* use_dsp = "yes" *) reg [31:0] mul_stage1;
     (* use_dsp = "yes" *) reg [31:0] mul_stage2;
@@ -31,5 +32,6 @@ module ALU (
             endcase
         end
         o_alu_zero = o_alu_out == 0;
+        o_mul_out = 32'b0;
     end
 endmodule
