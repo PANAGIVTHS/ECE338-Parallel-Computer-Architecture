@@ -9,7 +9,7 @@ module Regfile (
 
     //! Read
     always @(posedge clk) begin
-        if (rst) begin
+        if (!rst) begin
             o_reg_a <= 32'b0;
             o_reg_b <= 32'b0;
         end else if (!i_wen) begin
@@ -25,7 +25,7 @@ module Regfile (
     
     //! Write
     always @(posedge clk) begin
-        if (rst) begin
+        if (!rst) begin
             for (i = 0; i < 32; i = i + 1) begin
                 data[i] <= 32'b0;
             end
