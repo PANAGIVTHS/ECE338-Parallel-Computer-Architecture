@@ -64,7 +64,7 @@ module tb_StreamingProcessor ();
             for (i=0; i<1024; i=i+1) UUT.dataMemory.data[i] = 32'b0;
             for (i=0; i<1024; i=i+1) expected_data[i] = 32'b0;
             for (i=0; i<32; i=i+1) expected_regfile[i] = 32'b0;
-            for (i=0; i<32; i=i+1) UUT.regfile_inst.data[i] = 32'b0; 
+            for (i=0; i<32; i=i+1) UUT.regfile.data[i] = 32'b0; 
 
             // 4. Load memories
             $readmemh(prog_file, UUT.instructionMemory.data);
@@ -89,9 +89,9 @@ module tb_StreamingProcessor ();
             // 7. Compare the regfile
             reg_errors = 0;
             for (i = 0; i < 32; i = i + 1) begin
-                if (UUT.regfile_inst.data[i] !== expected_regfile[i]) begin
+                if (UUT.regfile.data[i] !== expected_regfile[i]) begin
                     $display("  [Error] Reg %0d: Expected %h, Found %h", 
-                             i, expected_regfile[i], UUT.regfile_inst.data[i]);
+                             i, expected_regfile[i], UUT.regfile.data[i]);
                     reg_errors = reg_errors + 1;
                 end
             end
@@ -122,9 +122,9 @@ module tb_StreamingProcessor ();
         $dumpfile("dumpfile.vcd");
         $dumpvars(1, tb_StreamingProcessor);
         $dumpvars(1, tb_StreamingProcessor.UUT);
-        $dumpvars(1, tb_StreamingProcessor.UUT.alu_inst);
+        $dumpvars(1, tb_StreamingProcessor.UUT.alu);
         $dumpvars(1, tb_StreamingProcessor.UUT.instructionMemory);
-        $dumpvars(1, tb_StreamingProcessor.UUT.decoder_inst);
+        $dumpvars(1, tb_StreamingProcessor.UUT.decoder);
         for (i = 0; i < 16; i = i + 1) begin
             $dumpvars(1, tb_StreamingProcessor.UUT.instructionMemory.data[i]);
         end
@@ -132,9 +132,9 @@ module tb_StreamingProcessor ();
         for (i = 0; i < 16; i = i + 1) begin
             $dumpvars(1, tb_StreamingProcessor.UUT.dataMemory.data[i]);
         end
-        $dumpvars(1, tb_StreamingProcessor.UUT.regfile_inst);
+        $dumpvars(1, tb_StreamingProcessor.UUT.regfile);
         for (i = 0; i < 16; i = i + 1) begin
-            $dumpvars(1, tb_StreamingProcessor.UUT.regfile_inst.data[i]);
+            $dumpvars(1, tb_StreamingProcessor.UUT.regfile.data[i]);
         end
     end
 endmodule
