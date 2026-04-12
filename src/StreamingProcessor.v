@@ -19,21 +19,29 @@ module StreamingProcessor (
     //! =========================================================================
     (* dont_touch = "true" *) wire [31:0] program_counter;
     wire [29:0] instr_idx;
-    reg [31:0] ifid_program_counter;
+    wire [31:0] if_instruction;
 
     //! Counter returns instruction index not address!
     GUCounter #(.BITS(30)) 
-        program_counter_inst (.clk(clk), .i_set_reset({rst, ra_branch_taken}), .i_count_enable(!data_hazard), .i_count_set(ra_beq_target_idx), .o_count_cur(instr_idx));
+        programCounter (.clk(clk), .i_set_reset({rst, ra_branch_taken}), .i_count_enable(!data_hazard), .i_count_set(ra_beq_target_idx), .o_count_cur(instr_idx));
 
     assign program_counter = {instr_idx, 2'b00};
+
+    Memory instructionMemory (.clk(clk), .rst(rst), .i_read_addr(program_counter[11:2]), .i_read_enable(1'b1), .i_write_addr(10'b0),
+                              .i_write_enable(1'b0), .i_write_data(32'b0), .o_out(if_instruction));
 
     //* =========================================================================
     //* PIPELINE REGISTER 1: INSTRUCTION FETCH -> INSTRUCTION DECODE
     //* =========================================================================
+    reg [31:0] ifid_instruction;
+    reg [31:0] ifid_program_counter;
+
     always @(posedge clk) begin
         if (!rst) begin
+            ifid_instruction <= 32'b0;
             ifid_program_counter <= 32'b0;
         end else begin
+            ifid_instruction <= if_instruction;
             ifid_program_counter <= program_counter;
         end
     end
@@ -41,7 +49,6 @@ module StreamingProcessor (
     //! =========================================================================
     //! STAGE 2: INSTRUCTION DECODE
     //! =========================================================================
-    wire [31:0] fd_instruction;
     wire [6:0] fd_imm_31_25, fd_opcode;
     wire [11:0] fd_imm_31_20;
     wire [1:0] fd_aluop, fd_instr_type;
@@ -52,11 +59,8 @@ module StreamingProcessor (
     //! Generate write-enable for WAW tracking
     wire fd_wen = ((fd_instr_type == `INSTR_TYPE_R) || (fd_instr_type == `INSTR_TYPE_I) || fd_is_mul) && (fd_rd != 5'b0);
 
-    Memory instructionMemory (.clk(clk), .rst(rst), .i_read_addr(ifid_program_counter[11:2]), .i_read_enable(1'b1), .i_write_addr(10'b0),
-                              .i_write_enable(1'b0), .i_write_data(32'b0), .o_out(fd_instruction));
-
     Decoder decoder_inst (
-        .i_instr(fd_instruction),
+        .i_instr(ifid_instruction),
         .o_rs1(fd_rs1), 
         .o_rs2(fd_rs2),
         .o_rd(fd_rd),
