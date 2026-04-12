@@ -19,7 +19,7 @@ module StreamingProcessor (
     //! =========================================================================
     (* dont_touch = "true" *) wire [31:0] program_counter;
     wire [29:0] instr_idx;
-    reg [31:0] if_program_counter;
+    reg [31:0] ifid_program_counter;
 
     //! Counter returns instruction index not address!
     GUCounter #(.BITS(30)) 
@@ -28,18 +28,18 @@ module StreamingProcessor (
     assign program_counter = {instr_idx, 2'b00};
 
     //* =========================================================================
-    //* PIPELINE REGISTER 1: INSTRUCTION FETCH -> DECODE
+    //* PIPELINE REGISTER 1: INSTRUCTION FETCH -> INSTRUCTION DECODE
     //* =========================================================================
     always @(posedge clk) begin
         if (!rst) begin
-            if_program_counter <= 32'b0;
+            ifid_program_counter <= 32'b0;
         end else begin
-            if_program_counter <= program_counter;
+            ifid_program_counter <= program_counter;
         end
     end
 
     //! =========================================================================
-    //! STAGE 2: DECODE
+    //! STAGE 2: INSTRUCTION DECODE
     //! =========================================================================
     wire [31:0] fd_instruction;
     wire [6:0] fd_imm_31_25, fd_opcode;
@@ -52,7 +52,7 @@ module StreamingProcessor (
     //! Generate write-enable for WAW tracking
     wire fd_wen = ((fd_instr_type == `INSTR_TYPE_R) || (fd_instr_type == `INSTR_TYPE_I) || fd_is_mul) && (fd_rd != 5'b0);
 
-    Memory instructionMemory (.clk(clk), .rst(rst), .i_read_addr(if_program_counter[11:2]), .i_read_enable(1'b1), .i_write_addr(10'b0),
+    Memory instructionMemory (.clk(clk), .rst(rst), .i_read_addr(ifid_program_counter[11:2]), .i_read_enable(1'b1), .i_write_addr(10'b0),
                               .i_write_enable(1'b0), .i_write_data(32'b0), .o_out(fd_instruction));
 
     Decoder decoder_inst (
@@ -101,7 +101,7 @@ module StreamingProcessor (
             ra_instr_type <= `INSTR_TYPE_R;
             ra_opcode <= 7'b0;
             ra_imm_31_25 <= 7'b0;
-            ra_program_counter <= if_program_counter;
+            ra_program_counter <= ifid_program_counter;
         end else begin
             ra_rs1 <= fd_rs1;
             ra_rs2 <= fd_rs2;
@@ -111,7 +111,7 @@ module StreamingProcessor (
             ra_aluop <= fd_aluop;
             ra_instr_type <= fd_instr_type;
             ra_opcode <= fd_opcode;
-            ra_program_counter <= if_program_counter;
+            ra_program_counter <= ifid_program_counter;
         end
     end
 
