@@ -1,12 +1,12 @@
 module Memory #(
     parameter DEPTH = 1024,
     parameter INIT_FILE = "program.mem"
-) (
+)(
     input clk,
     input rst,
-    input [9:0] i_read_addr,
+    input [$clog2(DEPTH)-1:0] i_read_addr,
     input i_read_enable,
-    input [9:0] i_write_addr,
+    input [$clog2(DEPTH)-1:0] i_write_addr,
     input i_write_enable,
     input [31:0] i_write_data,
     output reg [31:0] o_out
