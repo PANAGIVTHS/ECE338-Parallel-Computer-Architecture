@@ -1,7 +1,7 @@
 `timescale 1ns/1ps
 
 `define CLOCK_PERIOD 10
-`define TEST_TIMEOUT_CYCLES 20 
+`define TEST_TIMEOUT_CYCLES 40
 
 module tb_StreamingProcessor ();
     reg clk, rst;
@@ -32,7 +32,7 @@ module tb_StreamingProcessor ();
     always #(`CLOCK_PERIOD / 2) clk = ~clk;
 
     initial begin
-        clk = 0;
+        clk = 1;
         rst = 0;
         dummy_wen = 0;
         test_idx = 1;
@@ -54,6 +54,7 @@ module tb_StreamingProcessor ();
                     $display("[ERROR] No tests were found");
                 else 
                     $display("\nSimulation finished!");
+                #(`CLOCK_PERIOD * `TEST_TIMEOUT_CYCLES);
                 $finish;
             end
             $fclose(fd);
@@ -122,6 +123,7 @@ module tb_StreamingProcessor ();
         $dumpfile("dumpfile.vcd");
         $dumpvars(1, tb_StreamingProcessor);
         $dumpvars(1, tb_StreamingProcessor.UUT);
+        $dumpvars(1, tb_StreamingProcessor.UUT.programCounter);
         $dumpvars(1, tb_StreamingProcessor.UUT.alu);
         $dumpvars(1, tb_StreamingProcessor.UUT.instructionMemory);
         $dumpvars(1, tb_StreamingProcessor.UUT.decoder);

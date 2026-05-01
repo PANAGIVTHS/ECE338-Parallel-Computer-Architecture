@@ -33,15 +33,12 @@ module StreamingProcessor (
     //* =========================================================================
     //* PIPELINE REGISTER 1: INSTRUCTION FETCH -> INSTRUCTION DECODE
     //* =========================================================================
-    reg [31:0] ifid_instruction;
     reg [31:0] ifid_program_counter;
 
     always @(posedge clk) begin
         if (!rst) begin
-            ifid_instruction <= 32'b0;
             ifid_program_counter <= 32'b0;
         end else begin
-            ifid_instruction <= if_instruction;
             ifid_program_counter <= program_counter;
         end
     end
@@ -61,7 +58,7 @@ module StreamingProcessor (
     wire id_wen = ((id_instr_type == `INSTR_TYPE_R) || (id_instr_type == `INSTR_TYPE_I) || id_is_mul) && (id_rd != 5'b0);
 
     Decoder decoder (
-        .i_instr(ifid_instruction),
+        .i_instr(!rst ? 32'b0 : if_instruction),
         .o_rs1(id_rs1), 
         .o_rs2(id_rs2),
         .o_rd(id_rd),

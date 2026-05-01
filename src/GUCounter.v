@@ -31,7 +31,11 @@ module GUCounter #(
 );
     wire reset = i_set_reset[1]; 
     wire count_set = i_set_reset[0]; 
-    
+
+    initial begin
+        o_count_cur <= 0;
+    end
+
     //! Counter logic
     always @(posedge clk) begin
         if (!reset) begin
