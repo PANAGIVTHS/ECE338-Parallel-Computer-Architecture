@@ -37,22 +37,36 @@ def compile_all_tests():
 
             # Create an in-memory string buffer
             f_buffer = io.StringIO()
-            
+
             # Redirect standard output (stdout) into our buffer
             # This captures all the print() statements executed by the library
             with contextlib.redirect_stdout(f_buffer):
                 convert(asm_code)
-            
+
             # Retrieve the captured text from the buffer
             hex_result = f_buffer.getvalue()
 
             clean_hex = hex_result.replace("0x", "")
 
+            # ===================== FIX START =====================
+            lines = clean_hex.strip().splitlines()
+
+            # clean empty lines
+            lines = [line.strip() for line in lines if line.strip()]
+
+            DEPTH = 1024  # memory size requirement
+
+            # pad missing instructions with zeros
+            while len(lines) < DEPTH:
+                lines.append("00000000")
+
+            # truncate if overflow
+            lines = lines[:DEPTH]
+            # ===================== FIX END =====================
+
             # Write the captured text to the actual .mem file
             with open(mem_path, 'w', encoding='utf-8') as f_out:
-                # Strip leading/trailing whitespaces or newlines printed by the library,
-                # and append a single newline at the end for clean formatting
-                f_out.write(clean_hex.strip() + '\n00000000\n')  # Add a NOP
+                f_out.write("\n".join(lines) + "\n")
 
         except Exception as e:
             print(f"  [Error] Failed to convert {asm_path}: {e}")

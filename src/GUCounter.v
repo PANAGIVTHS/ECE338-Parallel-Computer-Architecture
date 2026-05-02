@@ -39,7 +39,7 @@ module GUCounter #(
     //! Counter logic
     always @(posedge clk) begin
         if (!reset) begin
-            o_count_cur <= 0; 
+            o_count_cur <= {BITS{1'b1}};
         end else if (count_set) begin 
             o_count_cur <= i_count_set; 
         end else if (i_count_enable) begin
