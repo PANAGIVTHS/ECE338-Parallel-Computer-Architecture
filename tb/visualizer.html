@@ -16,6 +16,7 @@
             --stage-mem: #cba6f7;
             --stage-wb: #89dceb;
             --border-color: #313244;
+            --surface-color: #11111b;
         }
 
         body {
@@ -54,7 +55,6 @@
             cursor: pointer;
             outline: none;
         }
-        .controls select:focus { border-color: var(--stage-if); }
 
         .drop-container {
             display: flex;
@@ -82,19 +82,55 @@
             background-color: rgba(166, 227, 161, 0.1);
         }
 
-        .drop-zone.dragover {
-            transform: scale(1.02);
-            border-color: var(--accent-color);
-        }
-
         .drop-zone span { font-size: 0.9em; margin-top: 5px; color: #bac2de;}
         .file-input { display: none; }
+
+        .main-layout {
+            display: flex;
+            gap: 20px;
+            width: 100%;
+            align-items: flex-start;
+        }
+
+        .asm-panel {
+            flex: 0 0 350px;
+            background-color: var(--surface-color);
+            border-radius: 8px;
+            padding: 15px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+            border: 1px solid var(--border-color);
+            overflow-y: auto;
+            max-height: 70vh;
+            display: none;
+        }
+
+        .asm-panel h3 { margin-top: 0; color: var(--accent-green); text-transform: uppercase; font-size: 1em; border-bottom: 1px solid var(--border-color); padding-bottom: 10px;}
+        
+        .asm-code-line {
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 0.95em;
+            padding: 4px 0;
+            white-space: nowrap;
+        }
+        
+        .asm-pc {
+            color: #6c7086;
+            margin-right: 15px;
+            user-select: none;
+        }
+
+        .table-panel {
+            flex: 1;
+            overflow-x: auto;
+            min-width: 0;
+            display: none;
+        }
 
         table {
             border-collapse: collapse;
             width: 100%;
             box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
-            background-color: #11111b;
+            background-color: var(--surface-color);
             border-radius: 8px;
             overflow: hidden;
         }
@@ -126,16 +162,7 @@
         td:nth-child(5) { color: var(--stage-mem); }
         td:nth-child(6) { color: var(--stage-wb); }
 
-        .bubble {
-            color: #585b70 !important;
-            font-style: italic;
-            text-align: center;
-        }
-
-        .container {
-            width: 100%;
-            overflow-x: auto;
-        }
+        .bubble { color: #585b70 !important; font-style: italic; text-align: center; }
     </style>
 </head>
 <body>
@@ -169,25 +196,33 @@
         </div>
     </div>
 
-    <div class="container" id="table-container" style="display: none;">
-        <table id="pipeline-table">
-            <thead>
-                <tr>
-                    <th>Cycle</th>
-                    <th>IF</th>
-                    <th>ID</th>
-                    <th>EX</th>
-                    <th>MEM</th>
-                    <th>WB</th>
-                </tr>
-            </thead>
-            <tbody id="table-body">
-                <!-- Data will be populated here -->
-            </tbody>
-        </table>
+    <div class="main-layout" id="main-content">
+        <div class="asm-panel" id="asm-panel">
+            <h3>Original Source Code</h3>
+            <div id="asm-display"></div>
+        </div>
+
+        <div class="table-panel" id="table-panel">
+            <table id="pipeline-table">
+                <thead>
+                    <tr>
+                        <th>Cycle</th>
+                        <th>IF</th>
+                        <th>ID</th>
+                        <th>EX</th>
+                        <th>MEM</th>
+                        <th>WB</th>
+                    </tr>
+                </thead>
+                <tbody id="table-body">
+                    <!-- Data will be populated here -->
+                </tbody>
+            </table>
+        </div>
+
     </div>
 
-    <script>
+<script>
     let asmLines = []; 
     let csvData = "";  
 
@@ -195,33 +230,30 @@
     const dropCsv = document.getElementById('drop-csv');
     const inputAsm = document.getElementById('input-asm');
     const inputCsv = document.getElementById('input-csv');
-    const tableContainer = document.getElementById('table-container');
     const tableBody = document.getElementById('table-body');
     const asmStatus = document.getElementById('asm-status');
     const csvStatus = document.getElementById('csv-status');
     const testSelect = document.getElementById('test-select');
+    
+    // UI Elements
+    const asmPanel = document.getElementById('asm-panel');
+    const tablePanel = document.getElementById('table-panel');
+    const asmDisplay = document.getElementById('asm-display');
 
     testSelect.addEventListener('change', async (e) => {
         const folderName = e.target.value;
         
         try {
             const asmResponse = await fetch(`${folderName}/program.asm`);
-            if (!asmResponse.ok) throw new Error(`Could not read ${folderName}/program.asm`);
+            if (!asmResponse.ok) throw new Error(`Could not read ASM`);
             const asmText = await asmResponse.text();
             
-            const rawLines = asmText.split('\n');
-            asmLines = rawLines
-                .map(line => line.trim())
-                .filter(line => line.length > 0)
-                .filter(line => !line.startsWith('.'))
-                .filter(line => !line.endsWith(':'))
-                .filter(line => !line.startsWith('#') && !line.startsWith('//'));
-
+            processAsmText(asmText);
             asmStatus.textContent = `Auto-loaded from ${folderName}!`;
             dropAsm.classList.add('active');
 
             const csvResponse = await fetch(`${folderName}/trace.csv`);
-            if (!csvResponse.ok) throw new Error(`Could not read ${folderName}/trace.csv`);
+            if (!csvResponse.ok) throw new Error(`Could not read CSV`);
             csvData = await csvResponse.text();
 
             csvStatus.textContent = `Auto-loaded from ${folderName}!`;
@@ -231,17 +263,21 @@
 
         } catch (error) {
             console.error(error);
-            alert(`Error loading files for ${folderName}!\n\nRemember: Auto-load only works if you run a local web server (e.g. python -m http.server). Check terminal output.`);
-
-            csvData = "";
-            asmLines = [];
-            dropAsm.classList.remove('active');
-            dropCsv.classList.remove('active');
-            asmStatus.textContent = "Waiting for file...";
-            csvStatus.textContent = "Waiting for file...";
-            tableContainer.style.display = 'none';
+            alert(`Error loading files for ${folderName}!\nEnsure you are running a local server.`);
+            resetUI();
         }
     });
+
+    function resetUI() {
+        csvData = "";
+        asmLines = [];
+        dropAsm.classList.remove('active');
+        dropCsv.classList.remove('active');
+        asmStatus.textContent = "Waiting for file...";
+        csvStatus.textContent = "Waiting for file...";
+        asmPanel.style.display = 'none';
+        tablePanel.style.display = 'none';
+    }
 
     function setupDropZone(dropZoneElement, inputElement, processCallback) {
         dropZoneElement.addEventListener('click', () => inputElement.click());
@@ -260,22 +296,39 @@
         });
     }
 
+    function processAsmText(text) {
+        const rawLines = text.split('\n');
+        asmLines = rawLines
+            .map(line => line.trim())
+            .filter(line => line.length > 0)
+            .filter(line => !line.startsWith('.'))
+            .filter(line => !line.endsWith(':'))
+            .filter(line => !line.startsWith('#') && !line.startsWith('//'));
+        
+        renderAsmPanel();
+    }
+
+    function renderAsmPanel() {
+        asmDisplay.innerHTML = '';
+        asmLines.forEach((line, index) => {
+            const pcDec = index * 4;
+            const pcHex = pcDec.toString(16).padStart(8, '0');
+            
+            const lineDiv = document.createElement('div');
+            lineDiv.className = 'asm-code-line';
+            lineDiv.innerHTML = `<span class="asm-pc">${pcHex}:</span><span style="color:#cdd6f4;">${line}</span>`;
+            asmDisplay.appendChild(lineDiv);
+        });
+        asmPanel.style.display = 'block';
+        if(csvData) buildTable();
+    }
+
     setupDropZone(dropAsm, inputAsm, (file) => {
         const reader = new FileReader();
         reader.onload = function(e) {
-            const rawLines = e.target.result.split('\n');
-
-            asmLines = rawLines
-                .map(line => line.trim())
-                .filter(line => line.length > 0)
-                .filter(line => !line.startsWith('.'))
-                .filter(line => !line.endsWith(':'))
-                .filter(line => !line.startsWith('#') && !line.startsWith('//'));
-
+            processAsmText(e.target.result);
             dropAsm.classList.add('active');
             asmStatus.textContent = `Cleaned & Loaded ${asmLines.length} instructions!`;
-            
-            if(csvData) buildTable(); 
         };
         reader.readAsText(file);
     });
@@ -293,16 +346,12 @@
 
     function getInstructionFromPC(pcHex) {
         if (pcHex === "x" || pcHex === "xxxxxxxx" || pcHex === "ffffffff") return null;
-
         const pcDec = parseInt(pcHex, 16);
         const index = Math.floor(pcDec / 4);
 
         if (asmLines.length > 0) {
-            if (index < asmLines.length) {
-                return asmLines[index];
-            } else {
-                return `(no instruction @ 0x${pcHex})`;
-            }
+            if (index < asmLines.length) return asmLines[index];
+            else return `(no instruction @ 0x${pcHex})`;
         } else {
             return `PC: 0x${pcHex}`;
         }
@@ -341,7 +390,7 @@
                 tableBody.appendChild(tr);
             }
         });
-        tableContainer.style.display = 'block';
+        tablePanel.style.display = 'block';
     }
 </script>
 </body>
