@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RISC-V Pipeline Visualizer</title>
+    <style>
+        :root {
+            --bg-color: #1e1e2e;
+            --text-color: #cdd6f4;
+            --accent-color: #89b4fa;
+            --accent-green: #a6e3a1;
+            --stage-if: #f9e2af;
+            --stage-id: #a6e3a1;
+            --stage-ex: #f38ba8;
+            --stage-mem: #cba6f7;
+            --stage-wb: #89dceb;
+            --border-color: #313244;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        h1 { color: var(--accent-color); margin-bottom: 5px; text-align: center; }
+        p.subtitle { color: #a6adc8; margin-top: 0; margin-bottom: 20px; text-align: center; }
+
+        .controls {
+            background-color: #181825;
+            padding: 15px 30px;
+            border-radius: 10px;
+            border: 1px solid var(--border-color);
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .controls label { font-weight: bold; font-size: 1.1em; color: var(--accent-green); }
+        .controls select {
+            padding: 8px 15px;
+            background-color: #313244;
+            color: white;
+            border: 1px solid var(--accent-color);
+            border-radius: 5px;
+            font-size: 1.1em;
+            cursor: pointer;
+            outline: none;
+        }
+        .controls select:focus { border-color: var(--stage-if); }
+
+        .drop-container {
+            display: flex;
+            gap: 20px;
+            width: 100%;
+            margin-bottom: 20px;
+        }
+
+        .drop-zone {
+            flex: 1;
+            height: 80px;
+            border: 2px dashed var(--border-color);
+            border-radius: 10px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            background-color: rgba(49, 50, 68, 0.3);
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .drop-zone.active {
+            border-color: var(--accent-green);
+            background-color: rgba(166, 227, 161, 0.1);
+        }
+
+        .drop-zone.dragover {
+            transform: scale(1.02);
+            border-color: var(--accent-color);
+        }
+
+        .drop-zone span { font-size: 0.9em; margin-top: 5px; color: #bac2de;}
+        .file-input { display: none; }
+
+        table {
+            border-collapse: collapse;
+            width: 100%;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+            background-color: #11111b;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+
+        th, td {
+            padding: 10px 12px;
+            text-align: left;
+            border: 1px solid var(--border-color);
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 0.95em;
+            white-space: nowrap;
+        }
+
+        td:first-child, th:first-child { text-align: center; width: 60px;}
+
+        th {
+            background-color: #181825;
+            color: var(--accent-color);
+            text-transform: uppercase;
+            font-weight: bold;
+            text-align: center;
+        }
+
+        tr:hover { background-color: #313244; }
+
+        td:nth-child(2) { color: var(--stage-if); }
+        td:nth-child(3) { color: var(--stage-id); }
+        td:nth-child(4) { color: var(--stage-ex); }
+        td:nth-child(5) { color: var(--stage-mem); }
+        td:nth-child(6) { color: var(--stage-wb); }
+
+        .bubble {
+            color: #585b70 !important;
+            font-style: italic;
+            text-align: center;
+        }
+
+        .container {
+            width: 100%;
+            overflow-x: auto;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>Pipeline Visualizer</h1>
+    <p class="subtitle">Run python server to use Auto-Load, or fallback to Drag & Drop</p>
+
+    <div class="controls">
+        <label for="test-select">Auto-Load Test:</label>
+        <select id="test-select">
+            <option value="" disabled selected>-- Select a test from the folder --</option>
+            <option value="test1">Test 1</option>
+            <option value="test2">Test 2</option>
+            <option value="test3">Test 3</option>
+            <option value="test4">Test 4</option>
+            <option value="test5">Test 5</option>
+        </select>
+    </div>
+
+    <div class="drop-container">
+        <div id="drop-asm" class="drop-zone">
+            <b>Or Drop program.asm</b>
+            <span id="asm-status">Waiting for file...</span>
+            <input type="file" id="input-asm" class="file-input" accept=".asm,.txt">
+        </div>
+
+        <div id="drop-csv" class="drop-zone">
+            <b>Or Drop trace.csv</b>
+            <span id="csv-status">Waiting for file...</span>
+            <input type="file" id="input-csv" class="file-input" accept=".csv">
+        </div>
+    </div>
+
+    <div class="container" id="table-container" style="display: none;">
+        <table id="pipeline-table">
+            <thead>
+                <tr>
+                    <th>Cycle</th>
+                    <th>IF</th>
+                    <th>ID</th>
+                    <th>EX</th>
+                    <th>MEM</th>
+                    <th>WB</th>
+                </tr>
+            </thead>
+            <tbody id="table-body">
+                <!-- Data will be populated here -->
+            </tbody>
+        </table>
+    </div>
+
+    <script>
+    let asmLines = []; 
+    let csvData = "";  
+
+    const dropAsm = document.getElementById('drop-asm');
+    const dropCsv = document.getElementById('drop-csv');
+    const inputAsm = document.getElementById('input-asm');
+    const inputCsv = document.getElementById('input-csv');
+    const tableContainer = document.getElementById('table-container');
+    const tableBody = document.getElementById('table-body');
+    const asmStatus = document.getElementById('asm-status');
+    const csvStatus = document.getElementById('csv-status');
+    const testSelect = document.getElementById('test-select');
+
+    testSelect.addEventListener('change', async (e) => {
+        const folderName = e.target.value;
+        
+        try {
+            const asmResponse = await fetch(`${folderName}/program.asm`);
+            if (!asmResponse.ok) throw new Error(`Could not read ${folderName}/program.asm`);
+            const asmText = await asmResponse.text();
+            
+            const rawLines = asmText.split('\n');
+            asmLines = rawLines
+                .map(line => line.trim())
+                .filter(line => line.length > 0)
+                .filter(line => !line.startsWith('.'))
+                .filter(line => !line.endsWith(':'))
+                .filter(line => !line.startsWith('#') && !line.startsWith('//'));
+
+            asmStatus.textContent = `Auto-loaded from ${folderName}!`;
+            dropAsm.classList.add('active');
+
+            const csvResponse = await fetch(`${folderName}/trace.csv`);
+            if (!csvResponse.ok) throw new Error(`Could not read ${folderName}/trace.csv`);
+            csvData = await csvResponse.text();
+
+            csvStatus.textContent = `Auto-loaded from ${folderName}!`;
+            dropCsv.classList.add('active');
+
+            buildTable();
+
+        } catch (error) {
+            console.error(error);
+            alert(`Error loading files for ${folderName}!\n\nRemember: Auto-load only works if you run a local web server (e.g. python -m http.server). Check terminal output.`);
+
+            csvData = "";
+            asmLines = [];
+            dropAsm.classList.remove('active');
+            dropCsv.classList.remove('active');
+            asmStatus.textContent = "Waiting for file...";
+            csvStatus.textContent = "Waiting for file...";
+            tableContainer.style.display = 'none';
+        }
+    });
+
+    function setupDropZone(dropZoneElement, inputElement, processCallback) {
+        dropZoneElement.addEventListener('click', () => inputElement.click());
+        dropZoneElement.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropZoneElement.classList.add('dragover');
+        });
+        dropZoneElement.addEventListener('dragleave', () => dropZoneElement.classList.remove('dragover'));
+        dropZoneElement.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZoneElement.classList.remove('dragover');
+            if (e.dataTransfer.files.length) processCallback(e.dataTransfer.files[0]);
+        });
+        inputElement.addEventListener('change', (e) => {
+            if (e.target.files.length) processCallback(e.target.files[0]);
+        });
+    }
+
+    setupDropZone(dropAsm, inputAsm, (file) => {
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            const rawLines = e.target.result.split('\n');
+
+            asmLines = rawLines
+                .map(line => line.trim())
+                .filter(line => line.length > 0)
+                .filter(line => !line.startsWith('.'))
+                .filter(line => !line.endsWith(':'))
+                .filter(line => !line.startsWith('#') && !line.startsWith('//'));
+
+            dropAsm.classList.add('active');
+            asmStatus.textContent = `Cleaned & Loaded ${asmLines.length} instructions!`;
+            
+            if(csvData) buildTable(); 
+        };
+        reader.readAsText(file);
+    });
+
+    setupDropZone(dropCsv, inputCsv, (file) => {
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            csvData = e.target.result;
+            dropCsv.classList.add('active');
+            csvStatus.textContent = "CSV Loaded!";
+            buildTable();
+        };
+        reader.readAsText(file);
+    });
+
+    function getInstructionFromPC(pcHex) {
+        if (pcHex === "x" || pcHex === "xxxxxxxx" || pcHex === "ffffffff") return null;
+
+        const pcDec = parseInt(pcHex, 16);
+        const index = Math.floor(pcDec / 4);
+
+        if (asmLines.length > 0) {
+            if (index < asmLines.length) {
+                return asmLines[index];
+            } else {
+                return `(no instruction @ 0x${pcHex})`;
+            }
+        } else {
+            return `PC: 0x${pcHex}`;
+        }
+    }
+
+    function buildTable() {
+        if (!csvData) return;
+
+        tableBody.innerHTML = '';
+        const rows = csvData.split('\n').filter(row => row.trim().length > 0);
+
+        rows.forEach(row => {
+            const columns = row.split(',').map(col => col.trim());
+            
+            if (columns.length === 6) {
+                const tr = document.createElement('tr');
+                columns.forEach((col, index) => {
+                    const td = document.createElement('td');
+                    if (index === 0) {
+                        td.textContent = col;
+                    } else {
+                        const instruction = getInstructionFromPC(col);
+                        if (instruction === null) {
+                            td.classList.add('bubble');
+                            td.textContent = "-";
+                        } else if (instruction.startsWith("(no instruction")) {
+                            td.style.color = "#7f849c"; 
+                            td.style.fontStyle = "italic";
+                            td.textContent = instruction;
+                        } else {
+                            td.textContent = instruction;
+                        }
+                    }
+                    tr.appendChild(td);
+                });
+                tableBody.appendChild(tr);
+            }
+        });
+        tableContainer.style.display = 'block';
+    }
+</script>
+</body>
+</html>

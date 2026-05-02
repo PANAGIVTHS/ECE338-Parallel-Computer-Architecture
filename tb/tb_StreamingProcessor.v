@@ -17,10 +17,12 @@ module tb_StreamingProcessor ();
     integer fd;
     integer data_errors, reg_errors;
     integer cycle_count;
+    integer fd_trace;
 
     reg [8*255:0] prog_file;
     reg [8*255:0] data_file;
     reg [8*255:0] reg_file;
+    reg [8*255:0] trace_file;
 
     StreamingProcessor UUT (
         .clk(clk), 
@@ -72,17 +74,37 @@ module tb_StreamingProcessor ();
             $readmemh(data_file, expected_data);
             $readmemh(reg_file, expected_regfile);
 
+            $sformat(trace_file, "test%0d/trace.csv", test_idx);
+
+            fd_trace = $fopen(trace_file, "w");
+            if (fd_trace == 0) begin
+                $display("  [ERROR] Could not create trace file: %s", trace_file);
+            end
+
             // 5. Reset
             rst = 0;
             #(`CLOCK_PERIOD * 1.75);
             rst = 1;
 
-            // 6. Timeout mechanism
+            // 6. Timeout mechanism and output to csv
             cycle_count = 0;
             while (cycle_count < `TEST_TIMEOUT_CYCLES) begin
                 #(`CLOCK_PERIOD);
                 cycle_count = cycle_count + 1;
+
+                if (rst == 1) begin
+                    $fdisplay(fd_trace, "%5d,%8h,%8h,%8h,%8h,%8h", 
+                        cycle_count,
+                        UUT.program_counter,          // IF
+                        UUT.ifid_program_counter,     // ID
+                        UUT.idex_program_counter,     // EX
+                        UUT.exmem_program_counter,    // MEM
+                        UUT.memwb_program_counter     // WB
+                    );
+                end
             end
+
+            $fclose(fd_trace);
 
             if (cycle_count >= `TEST_TIMEOUT_CYCLES) 
                 $display("  [WARNING] Test %0d timed out!", test_idx);

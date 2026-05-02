@@ -199,6 +199,7 @@ module StreamingProcessor (
     //* PIPELINE REGISTER 3: EXECUTE -> MEMORY
     //* =========================================================================
     reg [31:0] exmem_alu_out, exmem_alu_mul_out, exmem_reg_b;
+    reg [31:0] exmem_program_counter;
     reg [6:0] exmem_opcode;
     reg [1:0] exmem_instr_type;
     reg [4:0] exmem_rd;
@@ -213,6 +214,7 @@ module StreamingProcessor (
             exmem_instr_type <= 2'b0;
             exmem_mul3_valid <= 1'b0;
             exmem_alu_mul_out <= 32'b0;
+            exmem_program_counter <= 32'b0;
         end else begin
             exmem_alu_out <= ex_alu_out;
             exmem_reg_b <= ex_reg_b;
@@ -221,6 +223,7 @@ module StreamingProcessor (
             exmem_opcode <= idex_opcode;
             exmem_instr_type <= idex_instr_type;
             exmem_alu_mul_out <= ex_alu_mul_out;
+            exmem_program_counter <= idex_program_counter;
         end
     end
 
@@ -242,6 +245,7 @@ module StreamingProcessor (
     //! =========================================================================
     reg memwb_is_mul, memwb_is_load;
     reg [31:0] memwb_alu_out, memwb_alu_mul_out, memwb_dmem_out;
+    reg [31:0] memwb_program_counter;
 
     always @(posedge clk) begin
         if (!rst) begin
@@ -251,6 +255,7 @@ module StreamingProcessor (
             memwb_alu_out <= 32'b0;
             memwb_alu_mul_out <= 32'b0;
             memwb_dmem_out <= 32'b0;
+            memwb_program_counter <= 32'b0;
         end else begin
             memwb_rd <= exmem_rd;
             memwb_is_mul <= exmem_mul3_valid;
@@ -258,6 +263,7 @@ module StreamingProcessor (
             memwb_alu_out <= exmem_alu_out;
             memwb_alu_mul_out <= exmem_alu_mul_out;
             memwb_dmem_out <= mem_dmem_out;
+            memwb_program_counter <= exmem_program_counter;
         end
     end
 
