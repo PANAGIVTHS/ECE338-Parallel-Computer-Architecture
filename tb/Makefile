@@ -10,5 +10,9 @@ compile:
 assemble:
 	python3 assembler.py
 
+visualize:
+	open http://0.0.0.0:8000/visualizer.html
+	python3 -m http.server
+
 clean:
 	rm ./main
