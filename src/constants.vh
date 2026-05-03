@@ -24,3 +24,5 @@
 `define EXALU_MEMALU_DEP 2'b10
 `define MEMWB_EXALU_DEP 2'b01
 `define NO_DEP 2'b00
+
+`define INITIAL_PC 32'hFFFFFFFC

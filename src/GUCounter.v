@@ -33,7 +33,7 @@ module GUCounter #(
     wire count_set = i_set_reset[0]; 
 
     initial begin
-        o_count_cur <= 0;
+        o_count_cur <= {BITS{1'b1}};
     end
 
     //! Counter logic

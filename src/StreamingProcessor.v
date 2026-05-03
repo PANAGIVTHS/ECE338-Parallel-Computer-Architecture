@@ -42,7 +42,7 @@ module StreamingProcessor (
 
     always @(posedge clk) begin
         if (!rst) begin
-            ifid_program_counter <= 32'b0;
+            ifid_program_counter <= `INITIAL_PC;
         end else if (!data_hazard) begin
             ifid_program_counter <= program_counter;
         end
@@ -97,7 +97,7 @@ module StreamingProcessor (
             idex_instr_type <= 2'b0;
             idex_opcode <= 7'b0;
             idex_imm_31_25 <= 7'b0;
-            idex_program_counter <= 32'b0;
+            idex_program_counter <= `INITIAL_PC;
             idex_wen <= 1'b0;
         end else if (data_hazard) begin
             //! Mux for NOP insertion on hazard
@@ -237,7 +237,7 @@ module StreamingProcessor (
             exmem_wen <= 1'b0;
             exmem_mul3_valid <= 1'b0;
             exmem_alu_mul_out <= 32'b0;
-            exmem_program_counter <= 32'b0;
+            exmem_program_counter <= `INITIAL_PC;
         end else begin
             exmem_alu_out <= ex_alu_out;
             exmem_reg_b <= forwarded_rs2;
@@ -278,7 +278,7 @@ module StreamingProcessor (
             memwb_alu_out <= 32'b0;
             memwb_alu_mul_out <= 32'b0;
             memwb_wen <= 1'b0;
-            memwb_program_counter <= 32'b0;
+            memwb_program_counter <= `INITIAL_PC;
         end else begin
             memwb_rd <= exmem_rd;
             memwb_is_mul <= exmem_mul3_valid;
