@@ -143,23 +143,11 @@ module tb_StreamingProcessor ();
     //! Waveform
     initial begin
         $dumpfile("dumpfile.vcd");
-        $dumpvars(1, tb_StreamingProcessor);
-        $dumpvars(1, tb_StreamingProcessor.UUT);
-        $dumpvars(1, tb_StreamingProcessor.UUT.programCounter);
-        $dumpvars(1, tb_StreamingProcessor.UUT.alu);
-        $dumpvars(1, tb_StreamingProcessor.UUT.instructionMemory);
-        $dumpvars(1, tb_StreamingProcessor.UUT.decoder);
-        $dumpvars(1, tb_StreamingProcessor.UUT.forwardingUnit);
+        $dumpvars(0, tb_StreamingProcessor.UUT);
         for (i = 0; i < 16; i = i + 1) begin
-            $dumpvars(1, tb_StreamingProcessor.UUT.instructionMemory.data[i]);
-        end
-        $dumpvars(1, tb_StreamingProcessor.UUT.dataMemory);
-        for (i = 0; i < 16; i = i + 1) begin
-            $dumpvars(1, tb_StreamingProcessor.UUT.dataMemory.data[i]);
-        end
-        $dumpvars(1, tb_StreamingProcessor.UUT.regfile);
-        for (i = 0; i < 16; i = i + 1) begin
-            $dumpvars(1, tb_StreamingProcessor.UUT.regfile.data[i]);
+            $dumpvars(0, tb_StreamingProcessor.UUT.instructionMemory.data[i]);
+            $dumpvars(0, tb_StreamingProcessor.UUT.dataMemory.data[i]);
+            $dumpvars(0, tb_StreamingProcessor.UUT.regfile.data[i]);
         end
     end
 endmodule
