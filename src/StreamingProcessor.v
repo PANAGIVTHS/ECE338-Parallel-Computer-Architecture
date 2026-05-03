@@ -6,10 +6,18 @@
 */
 
 module StreamingProcessor (
-    input clk,
+    input i_clk,
     input rst,
+    input i_dummy_wen,
     output [2:0] o_leds
 );
+
+    wire clk;
+
+    clk_wiz_0 clockDivider (
+        .clk_in1(i_clk),
+        .clk_out1(clk)
+    );
 
     wire idex_branch_taken;
     wire [29:0] idex_beq_target_idx;
@@ -27,12 +35,14 @@ module StreamingProcessor (
     wire [31:0] if_instruction;
 
     //! Counter returns instruction index not address!
+    (* dont_touch = "true" *)
     GUCounter #(.BITS(30)) 
         programCounter (.clk(clk), .i_set_reset({rst, idex_branch_taken}), .i_count_enable(!data_hazard), .i_count_set(idex_beq_target_idx), .o_count_cur(instr_idx));
 
     assign program_counter = {instr_idx, 2'b00};
 
-    Memory instructionMemory (.clk(clk), .rst(rst), .i_read_addr(instr_idx), .i_read_enable(1'b1), .i_write_addr(10'b0),
+    (* dont_touch = "true" *)
+    Memory #(.INIT_FILE("program.mem")) instructionMemory (.clk(clk), .rst(rst), .i_read_addr(instr_idx), .i_read_enable(1'b1), .i_write_addr(10'b0),
                               .i_write_enable(1'b0), .i_write_data(32'b0), .o_out(ifid_instruction));
 
     //* =========================================================================
@@ -60,6 +70,7 @@ module StreamingProcessor (
 
     wire id_wen = !({`INSTR_TYPE_S == id_instr_type && `OP_SW == id_opcode} || {`INSTR_TYPE_S == id_instr_type && `OP_BEQ == id_opcode} || (id_rd == 5'b0));
 
+    (* dont_touch = "true" *)
     Decoder decoder (
         .i_instr(ifid_instruction),
         .o_rs1(id_rs1), 
@@ -145,6 +156,7 @@ module StreamingProcessor (
     assign ex_imm_i_type = {{20{idex_imm_31_20[11]}}, idex_imm_31_20};
     assign ex_imm_s_type = {{20{idex_imm_31_25[6]}}, idex_imm_31_25, idex_rd};
 
+    (* dont_touch = "true" *)
     Regfile regfile (
         .clk(clk), .rst(rst), .i_wen(memwb_wen), .i_wdata(wb_wdata), 
         .i_addr_a(id_mux_rs1), .i_addr_b(id_mux_rs2), .i_waddr(memwb_rd), 
@@ -165,6 +177,7 @@ module StreamingProcessor (
                                 (idex_opcode == `OP_SW) ? ex_imm_s_type : 
                                 forwarded_rs2;
 
+    (* dont_touch = "true" *)
     ALU alu (
         .clk(clk),
         .i_operand_a(ex_actual_alu_in_a), 
@@ -200,6 +213,7 @@ module StreamingProcessor (
     assign ex_is_beq = (idex_opcode == `OP_BEQ);
     assign idex_branch_taken = ex_is_beq && ex_zero;
 
+    (* dont_touch = "true" *)
     HazardUnit hazardUnit (
         .i_id_rs1(id_rs1),
         .i_id_rs2(id_rs2),
@@ -259,6 +273,7 @@ module StreamingProcessor (
     assign mem_is_load = (exmem_opcode == `OP_LW);
     assign mem_is_store = (exmem_opcode == `OP_SW);
 
+    (* dont_touch = "true" *)
     Memory dataMemory (.clk(clk), .rst(rst), .i_read_addr(exmem_alu_out[11:2]), .i_read_enable(mem_is_load),
                        .i_write_addr(exmem_alu_out[11:2]), .i_write_enable(mem_is_store), .i_write_data(exmem_reg_b),
                        .o_out(mem_dmem_out));
@@ -296,12 +311,14 @@ module StreamingProcessor (
 
     assign wb_wdata = memwb_is_mul ? memwb_alu_mul_out : (memwb_is_load ? mem_dmem_out : memwb_alu_out);
 
+    assign o_leds[0] = i_dummy_wen;
     assign o_leds[1] = ^memwb_alu_out;
     assign o_leds[2] = ^exmem_reg_b;
 
     //& ===============
     //& FORWARDING
     //& ===============
+    (* dont_touch = "true" *)
     ForwardingUnit forwardingUnit (
         .i_idex_rs1(idex_rs1),
         .i_idex_rs2(idex_rs2),

@@ -1,6 +1,6 @@
 module Memory #(
     parameter DEPTH = 1024,
-    parameter INIT_FILE = "program.mem"
+    parameter INIT_FILE = ""
 )(
     input clk,
     input rst,
@@ -13,9 +13,9 @@ module Memory #(
 );
     (* ram_style = "block" *) reg [31:0] data [0:DEPTH-1];
 
-    // initial begin
-    //     $readmemh(INIT_FILE, data);
-    // end
+    initial begin
+        $readmemh(INIT_FILE, data);
+    end
 
     // Write
     always @(posedge clk) begin

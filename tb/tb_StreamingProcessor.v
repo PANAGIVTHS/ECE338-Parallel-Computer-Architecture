@@ -25,7 +25,7 @@ module tb_StreamingProcessor ();
     reg [8*255:0] trace_file;
 
     StreamingProcessor UUT (
-        .clk(clk), 
+        .i_clk(clk), 
         .rst(rst), 
         .o_leds(o_leds)
     );
