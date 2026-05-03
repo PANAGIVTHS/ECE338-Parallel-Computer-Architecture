@@ -75,24 +75,35 @@ def compile_all_tests():
 
 def generate_random_instructions() -> str:
     program = ""
-
-    # Define registers (x0, ..., x31)
     registers = [f"x{i}" for i in range(4)]
-
+    
     immediates = list(range(-10, 11)) + [-2048, 2047]
+    mem_offsets = [-8, -4, 0, 4, 8]
+    branch_offsets = [-8, -4, 4, 8]
 
-    # addi
     for rd, rs1 in itertools.product(registers, repeat=2):
         for imm in immediates:
             program += f"addi {rd}, {rs1}, {imm}\n"
 
-    # add
     for rd, rs1, rs2 in itertools.product(registers, repeat=3):
         program += f"add {rd}, {rs1}, {rs2}\n"
 
-    # sub
     for rd, rs1, rs2 in itertools.product(registers, repeat=3):
         program += f"sub {rd}, {rs1}, {rs2}\n"
+
+    for rd, rs1 in itertools.product(registers, repeat=2):
+        for imm in mem_offsets:
+            program += f"lw {rd}, {imm}({rs1})\n"
+
+    for rs2, rs1 in itertools.product(registers, repeat=2):
+        for imm in mem_offsets:
+            program += f"sw {rs2}, {imm}({rs1})\n"
+
+    for rs1, rs2 in itertools.product(registers, repeat=2):
+        for imm in branch_offsets:
+            program += f"beq {rs1}, {rs2}, {imm}\n"
+
+    program += "nop\n"
 
     return program
 

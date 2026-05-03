@@ -9,18 +9,23 @@ module HazardUnit (
     input i_mul1_valid,
     input [4:0] i_mul2_rd,
     input i_mul2_valid,
-    
+    input [1:0] i_id_instr_type,
     input i_branch_taken,
     output reg o_data_hazard
 );
 
     always @(*) begin
+        o_data_hazard = 1'b0;
+
         //! Standard ALU RAW Hazard
-        if (i_is_load && (i_idex_rd != 5'b0) && (i_id_rs1 == i_idex_rd || i_id_rs2 == i_idex_rd)) begin
-            o_data_hazard = 1'b1;
-        //! Multiplier RAW Hazards
-        end else begin 
-            o_data_hazard = 1'b0;
+        if (i_is_load && (i_idex_rd != 5'b0)) begin
+            if (i_id_rs1 == i_idex_rd) begin
+                o_data_hazard = 1'b1;
+            end else if ((i_id_instr_type != `INSTR_TYPE_I) && (i_id_rs2 == i_idex_rd)) begin
+                o_data_hazard = 1'b1;
+            end else begin
+                o_data_hazard = 1'b0;
+            end
         end
         //  else if (i_mul1_valid && (i_mul1_rd != 5'b0) && (i_id_rs1 == i_mul1_rd || i_id_rs2 == i_mul1_rd)) begin
         //     o_data_hazard = 1'b1;

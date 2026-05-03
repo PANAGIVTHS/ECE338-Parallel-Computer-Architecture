@@ -1,5 +1,4 @@
 `include "constants.vh"
-`define ENABLE_FORWARDING
 
 /*
  ! Reset HAS to be held for at least pipelines * clock cycles to ensure all pipeline registers are cleared and the processor starts in a known state.
@@ -129,16 +128,20 @@ module StreamingProcessor (
     //! =========================================================================
     //! STAGE 3: EXECUTE
     //! =========================================================================
-    wire [31:0] ex_alu_out, ex_alu_mul_out, ex_alu_in_b;
+    wire [31:0] ex_alu_out, ex_alu_mul_out;
     wire ex_zero, ex_is_beq;
     wire [31:0] ex_beq_offset;
     wire [31:0] ex_imm_i_type, ex_imm_s_type;
     wire [31:0] ex_reg_a, ex_reg_b;
+    wire [31:0] forwarded_rs2;
+    wire [31:0] ex_actual_alu_in_a;
+    wire [31:0] ex_actual_alu_in_b;
+    wire [1:0] forward_alu_a, forward_alu_b;
     wire ex_is_mul;
     
     reg memwb_wen;
 
-    assign ex_is_mul = (idex_opcode == `OP_R_TYPE);
+    assign ex_is_mul = (idex_opcode == `OP_R_TYPE) && (idex_imm_31_25 == `FUNCT7_MULDIV);
     assign ex_imm_i_type = {{20{idex_imm_31_20[11]}}, idex_imm_31_20};
     assign ex_imm_s_type = {{20{idex_imm_31_25[6]}}, idex_imm_31_25, idex_rd};
 
@@ -148,14 +151,9 @@ module StreamingProcessor (
         .o_reg_a(ex_reg_a), .o_reg_b(ex_reg_b)
     );
 
-    assign ex_alu_in_b = (idex_opcode == `OP_LW || idex_instr_type == `INSTR_TYPE_I) ? ex_imm_i_type :
-                         (idex_opcode == `OP_SW) ? ex_imm_s_type : ex_reg_b;
-    
-`ifdef ENABLE_FORWARDING
-
-    wire [31:0] ex_actual_alu_in_a;
-    wire [31:0] ex_actual_alu_in_b;
-    wire [1:0] forward_alu_a, forward_alu_b;
+    assign forwarded_rs2 = (forward_alu_b == `EXALU_MEMALU_DEP) ? exmem_alu_out :
+                        (forward_alu_b == `MEMWB_EXALU_DEP)  ? wb_wdata : 
+                        ex_reg_b;
 
     //? --- Forwarding Multiplexer A ---
     assign ex_actual_alu_in_a = (forward_alu_a == `EXALU_MEMALU_DEP) ? exmem_alu_out :
@@ -163,9 +161,9 @@ module StreamingProcessor (
                                 ex_reg_a;
     
     //? --- Forwarding Multiplexer B ---
-    assign ex_actual_alu_in_b = (forward_alu_b == `EXALU_MEMALU_DEP) ? exmem_alu_out :
-                             (forward_alu_b == `MEMWB_EXALU_DEP)  ? wb_wdata : 
-                             ex_alu_in_b;
+    assign ex_actual_alu_in_b = (idex_opcode == `OP_LW || idex_instr_type == `INSTR_TYPE_I) ? ex_imm_i_type :
+                                (idex_opcode == `OP_SW) ? ex_imm_s_type : 
+                                forwarded_rs2;
 
     ALU alu (
         .clk(clk),
@@ -178,20 +176,6 @@ module StreamingProcessor (
         .o_mul_out(ex_alu_mul_out)
     );
 
-`else
-
-    ALU alu (
-        .clk(clk),
-        .i_operand_a(ex_reg_a),       
-        .i_operand_b(ex_alu_in_b),    
-        .i_alu_op(idex_aluop), 
-        .i_mul_valid(1'b0), //! Temporarily zero.
-        .o_alu_out(ex_alu_out), 
-        .o_alu_zero(ex_zero),
-        .o_mul_out(ex_alu_mul_out)
-    );
-
-`endif
 
     //? =========================
     //? MUL PIPELINE TRACKING
@@ -223,6 +207,7 @@ module StreamingProcessor (
         .i_idex_rd(idex_rd),
         .i_is_load(idex_opcode == `OP_LW && idex_instr_type == `INSTR_TYPE_I),
         .i_mul1_valid(mul1_valid),
+        .i_id_instr_type(id_instr_type),
         .i_mul1_rd(mul1_rd),
         .i_mul2_valid(mul2_valid),
         .i_mul2_rd(mul2_rd),
@@ -255,7 +240,7 @@ module StreamingProcessor (
             exmem_program_counter <= 32'b0;
         end else begin
             exmem_alu_out <= ex_alu_out;
-            exmem_reg_b <= ex_reg_b;
+            exmem_reg_b <= forwarded_rs2;
             exmem_mul3_valid <= mul3_valid;
             exmem_rd <= mul3_valid ? mul3_rd : idex_rd;
             exmem_opcode <= idex_opcode;
@@ -282,7 +267,7 @@ module StreamingProcessor (
     //! PIPELINE REGISTER 4: MEMORY -> WRITE BACK
     //! =========================================================================
     reg memwb_is_mul, memwb_is_load;
-    reg [31:0] memwb_alu_out, memwb_alu_mul_out, memwb_dmem_out;
+    reg [31:0] memwb_alu_out, memwb_alu_mul_out;
     reg [31:0] memwb_program_counter;
 
     always @(posedge clk) begin
@@ -293,7 +278,6 @@ module StreamingProcessor (
             memwb_alu_out <= 32'b0;
             memwb_alu_mul_out <= 32'b0;
             memwb_wen <= 1'b0;
-            memwb_dmem_out <= 32'b0;
             memwb_program_counter <= 32'b0;
         end else begin
             memwb_rd <= exmem_rd;
@@ -301,7 +285,6 @@ module StreamingProcessor (
             memwb_is_load <= mem_is_load;
             memwb_alu_out <= exmem_alu_out;
             memwb_alu_mul_out <= exmem_alu_mul_out;
-            memwb_dmem_out <= mem_dmem_out;
             memwb_wen <= exmem_wen;
             memwb_program_counter <= exmem_program_counter;
         end
@@ -311,13 +294,11 @@ module StreamingProcessor (
     //! STAGE 5: WRITE BACK
     //! =========================================================================
 
-    assign wb_wdata = memwb_is_mul ? memwb_alu_mul_out : (memwb_is_load ? memwb_dmem_out : memwb_alu_out);
+    assign wb_wdata = memwb_is_mul ? memwb_alu_mul_out : (memwb_is_load ? mem_dmem_out : memwb_alu_out);
 
-    assign o_leds[0] = ^memwb_dmem_out;
     assign o_leds[1] = ^memwb_alu_out;
     assign o_leds[2] = ^exmem_reg_b;
 
-`ifdef ENABLE_FORWARDING
     //& ===============
     //& FORWARDING
     //& ===============
@@ -326,10 +307,10 @@ module StreamingProcessor (
         .i_idex_rs2(idex_rs2),
         .i_exmem_rd(exmem_rd),
         .i_exmem_wen(exmem_wen),
+        .i_idex_instr_type(idex_instr_type),
         .i_memwb_rd(memwb_rd),
         .i_memwb_wen(memwb_wen),
         .o_forward_alu_a(forward_alu_a),
         .o_forward_alu_b(forward_alu_b)
     );
-`endif
 endmodule

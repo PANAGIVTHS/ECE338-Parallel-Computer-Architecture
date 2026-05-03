@@ -1,7 +1,7 @@
 `timescale 1ns/1ps
 
 `define CLOCK_PERIOD 10
-`define TEST_TIMEOUT_CYCLES 40
+`define TEST_TIMEOUT_CYCLES 200
 
 module tb_StreamingProcessor ();
     reg clk, rst;
@@ -83,7 +83,7 @@ module tb_StreamingProcessor ();
 
             // 5. Reset
             rst = 0;
-            #(`CLOCK_PERIOD * 1.75);
+            #(`CLOCK_PERIOD * 5.75);
             rst = 1;
 
             // 6. Timeout mechanism and output to csv
@@ -149,6 +149,7 @@ module tb_StreamingProcessor ();
         $dumpvars(1, tb_StreamingProcessor.UUT.alu);
         $dumpvars(1, tb_StreamingProcessor.UUT.instructionMemory);
         $dumpvars(1, tb_StreamingProcessor.UUT.decoder);
+        $dumpvars(1, tb_StreamingProcessor.UUT.forwardingUnit);
         for (i = 0; i < 16; i = i + 1) begin
             $dumpvars(1, tb_StreamingProcessor.UUT.instructionMemory.data[i]);
         end
