@@ -44,7 +44,7 @@ module StreamingProcessor (
     (* dont_touch = "true" *)
     MemorySinglePort #(
         .DEPTH(`IMEM_ENTRIES),
-        .INIT_FILE("")
+        .INIT_FILE("program.mem")
     ) instructionMemory (
         .clk(clk),
         .i_addr_a(instr_idx),
