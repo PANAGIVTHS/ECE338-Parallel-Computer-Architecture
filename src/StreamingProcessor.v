@@ -289,7 +289,7 @@ module StreamingProcessor (
     ) dataMemory (
         .clk(clk),
         .i_addr_a(exmem_alu_out[11:2]),
-        .i_ren_a(mem_is_load),
+        .i_ren_a(mem_is_load | mem_is_store),
         .i_wen_a(mem_is_store),
         .i_data_a(exmem_reg_b),
         .o_out_a(mem_dmem_out),
