@@ -3,14 +3,11 @@ module MemorySinglePort #(
     parameter INIT_FILE = ""
 )(
     input clk,
-
-    // Port A
-    input [$clog2(DEPTH)-1:0] i_addr_a, // Read or write address
-    input i_ren_a,                      // Read enable
-    input i_wen_a,                      // Write enable
-    input [31:0] i_data_a,              // Write data
-
-    output reg [31:0] o_out_a           // Read data
+    input [$clog2(DEPTH)-1:0] i_addr_a,
+    input i_ren_a,
+    input i_wen_a,
+    input [31:0] i_data_a,
+    output reg [31:0] o_out_a
 );
 
     (* ram_style = "block" *) reg [31:0] data [0:DEPTH-1];
@@ -21,11 +18,14 @@ module MemorySinglePort #(
         end
     end
 
-    // Port A
+    //! Port A
     always @(posedge clk) begin
+        if (i_wen_a) begin
+            data[i_addr_a] <= i_data_a;
+        end
+
         if (i_ren_a) begin
             if (i_wen_a) begin
-                data[i_addr_a] <= i_data_a;
                 o_out_a <= i_data_a;
             end else begin
                 o_out_a <= data[i_addr_a];

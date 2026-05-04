@@ -8,20 +8,18 @@ module MemoryDualPort #(
 )(
     input clk,
 
-    // Port A
-    input [$clog2(DEPTH)-1:0] i_addr_a, // Read or write address
-    input i_ren_a,                      // Read enable
-    input i_wen_a,                      // Write enable
-    input [31:0] i_data_a,              // Write data
+    //! Port A
+    input [$clog2(DEPTH)-1:0] i_addr_a,
+    input i_ren_a,
+    input i_wen_a,
+    input [31:0] i_data_a,
+    output reg [31:0] o_out_a,
 
-    output reg [31:0] o_out_a,          // Read data
-
-    // Port B
+    //! Port B
     input [$clog2(DEPTH)-1:0] i_addr_b,
     input i_ren_b,
     input i_wen_b,
     input [31:0] i_data_b,
-
     output reg [31:0] o_out_b
 );
 
@@ -33,11 +31,14 @@ module MemoryDualPort #(
         end
     end
 
-    // Port A
+    //! Port A
     always @(posedge clk) begin
+        if (i_wen_a) begin
+            data[i_addr_a] <= i_data_a;
+        end
+
         if (i_ren_a) begin
             if (i_wen_a) begin
-                data[i_addr_a] <= i_data_a;
                 o_out_a <= i_data_a;
             end else begin
                 o_out_a <= data[i_addr_a];
@@ -45,11 +46,14 @@ module MemoryDualPort #(
         end
     end
 
-    // Port B
+    //! Port B
     always @(posedge clk) begin
+        if (i_wen_b) begin
+            data[i_addr_b] <= i_data_b;
+        end
+
         if (i_ren_b) begin
             if (i_wen_b) begin
-                data[i_addr_b] <= i_data_b;
                 o_out_b <= i_data_b;
             end else begin
                 o_out_b <= data[i_addr_b];

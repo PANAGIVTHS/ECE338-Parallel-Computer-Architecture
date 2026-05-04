@@ -27,6 +27,7 @@ module tb_StreamingProcessor ();
     StreamingProcessor UUT (
         .i_clk(clk), 
         .rst(rst), 
+        .i_dummy_wen(dummy_wen), 
         .o_leds(o_leds)
     );
 

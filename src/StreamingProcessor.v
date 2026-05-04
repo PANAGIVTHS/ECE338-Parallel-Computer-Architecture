@@ -39,23 +39,20 @@ module StreamingProcessor (
     GUCounter #(.BITS($clog2(`IMEM_ENTRIES))) 
         programCounter (.clk(clk), .i_set_reset({rst, idex_branch_taken}), .i_count_enable(!data_hazard), .i_count_set(idex_beq_target_idx), .o_count_cur(instr_idx));
 
-    assign program_counter = {instr_idx, 2'b00}; // Shift index to multiply by four
+    assign program_counter = {instr_idx, 2'b00};
 
     (* dont_touch = "true" *)
-    MemorySinglePort #(.INIT_FILE("program.mem"))
-            instructionMemory (.clk(clk),
-                                // Port A
-                                .i_addr_a(instr_idx),
-                                .i_ren_a(!data_hazard),
-                                .i_wen_a(1'b0),
-                                .i_data_a(32'b0),
-                                .o_out_a(ifid_instruction));
-
-                                // Port B
-                                // .i_addr_b(10'b0),
-                                // .i_ren_b(1'b0),
-                                // .i_wen_b(1'b0),
-                                // .i_data_b(32'b0));
+    MemorySinglePort #(
+        .DEPTH(`IMEM_ENTRIES),
+        .INIT_FILE("")
+    ) instructionMemory (
+        .clk(clk),
+        .i_addr_a(instr_idx),
+        .i_ren_a(!data_hazard),
+        .i_wen_a(1'b0),
+        .i_data_a(32'b0),
+        .o_out_a(ifid_instruction)
+    );
 
     //* =========================================================================
     //* PIPELINE REGISTER 1: INSTRUCTION FETCH -> INSTRUCTION DECODE
@@ -286,19 +283,22 @@ module StreamingProcessor (
     assign mem_is_store = (exmem_opcode == `OP_SW);
 
     (* dont_touch = "true" *)
-    MemoryDualPort dataMemory (.clk(clk),
-                       // Port A
-                       .i_addr_a(exmem_alu_out[11:2]),
-                       .i_ren_a(mem_is_load),
-                       .i_wen_a(mem_is_store),
-                       .i_data_a(exmem_reg_b),
-                       .o_out_a(mem_dmem_out),
-
-                       // Port B
-                       .i_addr_b(10'b0),
-                       .i_ren_b(1'b0),
-                       .i_wen_b(1'b0),
-                       .i_data_b(32'b0));
+    MemoryDualPort #(
+        .DEPTH(1024),
+        .INIT_FILE("")
+    ) dataMemory (
+        .clk(clk),
+        .i_addr_a(exmem_alu_out[11:2]),
+        .i_ren_a(mem_is_load),
+        .i_wen_a(mem_is_store),
+        .i_data_a(exmem_reg_b),
+        .o_out_a(mem_dmem_out),
+        .i_addr_b(10'b0),
+        .i_ren_b(1'b0),
+        .i_wen_b(1'b0),
+        .i_data_b(32'b0),
+        .o_out_b()
+    );
 
     //! =========================================================================
     //! PIPELINE REGISTER 4: MEMORY -> WRITE BACK

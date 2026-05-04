@@ -6,6 +6,8 @@ import re
 from pathlib import Path
 from riscv_assembler.convert import AssemblyConverter as AC
 
+DEPTH = 1024
+
 def compile_all_tests():
     # Keep output_mode='p' (print) since it's the only one that outputs the data
     convert = AC(output_mode='p', nibble_mode=False, hex_mode=True)
@@ -80,8 +82,6 @@ def compile_all_tests():
 
             # clean empty lines
             lines = [line.strip() for line in lines if line.strip()]
-
-            DEPTH = 1024  # memory size requirement
 
             # pad missing instructions with zeros
             while len(lines) < DEPTH:
