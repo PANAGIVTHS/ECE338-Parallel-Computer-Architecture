@@ -15,4 +15,6 @@ visualize:
 	python3 -m http.server
 
 clean:
+	rm ./test*/program.mem
+	rm ./test*/trace.csv
 	rm ./main
