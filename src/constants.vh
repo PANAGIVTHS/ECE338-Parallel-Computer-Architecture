@@ -26,3 +26,4 @@
 `define NO_DEP 2'b00
 
 `define INITIAL_PC 32'hFFFFFFFC
+`define IMEM_ENTRIES 2048
