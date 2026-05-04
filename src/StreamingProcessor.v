@@ -20,7 +20,7 @@ module StreamingProcessor (
     );
 
     wire idex_branch_taken;
-    wire [29:0] idex_beq_target_idx;
+    wire [$clog2(`IMEM_ENTRIES)-1:0] idex_beq_target_idx;
     wire data_hazard;
     reg [4:0] idex_rd;
     wire [31:0] wb_wdata;
@@ -29,26 +29,38 @@ module StreamingProcessor (
     //! =========================================================================
     //! STAGE 1: INSTRUCTION FETCH
     //! =========================================================================
-    (* dont_touch = "true" *) wire [31:0] program_counter;
+    (* dont_touch = "true" *) wire [$clog2(`IMEM_ENTRIES)+1:0] program_counter;
     wire [31:0] ifid_instruction;
-    wire [29:0] instr_idx;
+    wire [$clog2(`IMEM_ENTRIES)-1:0] instr_idx;
     wire [31:0] if_instruction;
 
     //! Counter returns instruction index not address!
     (* dont_touch = "true" *)
-    GUCounter #(.BITS(30)) 
+    GUCounter #(.BITS($clog2(`IMEM_ENTRIES))) 
         programCounter (.clk(clk), .i_set_reset({rst, idex_branch_taken}), .i_count_enable(!data_hazard), .i_count_set(idex_beq_target_idx), .o_count_cur(instr_idx));
 
-    assign program_counter = {instr_idx, 2'b00};
+    assign program_counter = {instr_idx, 2'b00}; // Shift index to multiply by four
 
     (* dont_touch = "true" *)
-    Memory #(.INIT_FILE("program.mem")) instructionMemory (.clk(clk), .rst(rst), .i_read_addr(instr_idx), .i_read_enable(1'b1), .i_write_addr(10'b0),
-                              .i_write_enable(1'b0), .i_write_data(32'b0), .o_out(ifid_instruction));
+    MemorySinglePort #(.INIT_FILE("program.mem"))
+            instructionMemory (.clk(clk),
+                                // Port A
+                                .i_addr_a(instr_idx),
+                                .i_ren_a(1'b1),
+                                .i_wen_a(1'b0),
+                                .i_data_a(32'b0),
+                                .o_out_a(ifid_instruction));
+
+                                // Port B
+                                // .i_addr_b(10'b0),
+                                // .i_ren_b(1'b0),
+                                // .i_wen_b(1'b0),
+                                // .i_data_b(32'b0));
 
     //* =========================================================================
     //* PIPELINE REGISTER 1: INSTRUCTION FETCH -> INSTRUCTION DECODE
     //* =========================================================================
-    reg [31:0] ifid_program_counter;
+    reg [$clog2(`IMEM_ENTRIES)+1:0] ifid_program_counter;
 
     always @(posedge clk) begin
         if (!rst) begin
@@ -95,7 +107,7 @@ module StreamingProcessor (
     reg [11:0] idex_imm_31_20;
     reg [1:0] idex_aluop, idex_instr_type;
     reg [6:0] idex_opcode, idex_imm_31_25;
-    reg [31:0] idex_program_counter;
+    reg [$clog2(`IMEM_ENTRIES)+1:0] idex_program_counter;
     reg idex_wen;
 
     always @(posedge clk) begin
@@ -230,7 +242,7 @@ module StreamingProcessor (
     );
 
     assign ex_beq_offset = {{20{idex_imm_31_25[6]}}, idex_rd[0], idex_imm_31_25[5:0], idex_rd[4:1], 1'b0};
-    assign idex_beq_target_idx = idex_program_counter[31:2] + ex_beq_offset[31:2];
+    assign idex_beq_target_idx = idex_program_counter[$clog2(`IMEM_ENTRIES)+1:2] + ex_beq_offset[31:2];
 
     //* =========================================================================
     //* PIPELINE REGISTER 3: EXECUTE -> MEMORY
@@ -274,16 +286,26 @@ module StreamingProcessor (
     assign mem_is_store = (exmem_opcode == `OP_SW);
 
     (* dont_touch = "true" *)
-    Memory dataMemory (.clk(clk), .rst(rst), .i_read_addr(exmem_alu_out[11:2]), .i_read_enable(mem_is_load),
-                       .i_write_addr(exmem_alu_out[11:2]), .i_write_enable(mem_is_store), .i_write_data(exmem_reg_b),
-                       .o_out(mem_dmem_out));
+    MemoryDualPort dataMemory (.clk(clk),
+                       // Port A
+                       .i_addr_a(exmem_alu_out[11:2]),
+                       .i_ren_a(mem_is_load),
+                       .i_wen_a(mem_is_store),
+                       .i_data_a(exmem_reg_b),
+                       .o_out_a(mem_dmem_out),
+
+                       // Port B
+                       .i_addr_b(10'b0),
+                       .i_ren_b(1'b0),
+                       .i_wen_b(1'b0),
+                       .i_data_b(32'b0));
 
     //! =========================================================================
     //! PIPELINE REGISTER 4: MEMORY -> WRITE BACK
     //! =========================================================================
     reg memwb_is_mul, memwb_is_load;
     reg [31:0] memwb_alu_out, memwb_alu_mul_out;
-    reg [31:0] memwb_program_counter;
+    reg [$clog2(`IMEM_ENTRIES)+1:0] memwb_program_counter;
 
     always @(posedge clk) begin
         if (!rst) begin
