@@ -2,8 +2,8 @@ import os
 import io
 import itertools
 import contextlib
+import re
 from pathlib import Path
-# Documentation: https://celebi-pkg.github.io/riscv-assembler/index.html
 from riscv_assembler.convert import AssemblyConverter as AC
 
 def compile_all_tests():
@@ -28,12 +28,39 @@ def compile_all_tests():
         try:
             # Read the Assembly code from the .asm file
             with open(asm_path, 'r', encoding='utf-8') as f:
-                asm_code = f.read()
+                raw_asm_code = f.read()
+
+            # ===================== COMMENT REMOVAL START =====================
+            cleaned_lines = []
+            for line in raw_asm_code.splitlines():
+                # Split at '#' or '//' and keep only the code portion
+                code_only = line.split('#')[0].split('//')[0]
+                code_only = code_only.strip()
+                
+                # Only keep lines that still have instructions on them
+                if code_only:
+                    cleaned_lines.append(code_only)
+            
+            asm_code = '\n'.join(cleaned_lines)
+            # ===================== COMMENT REMOVAL END =======================
 
             # Skip the file if it's completely empty
             if not asm_code.strip():
-                print(f"  [Warning] File {asm_path} is empty. Skipped.")
+                print(f"  [Warning] File {asm_path} is empty or only contains comments. Skipped.")
                 continue
+
+            # ===================== ASSEMBLER BUG FIX START =====================
+            # This regex finds "sw rs2, imm(rs1)" and halves the immediate value
+            # to bypass the riscv-assembler S-Type shifting bug.
+            def fix_store_offset(match):
+                rs2 = match.group(1)
+                imm = int(match.group(2))
+                rs1 = match.group(3)
+                fixed_imm = imm // 2
+                return f"sw {rs2}, {fixed_imm}({rs1})"
+                
+            asm_code = re.sub(r'sw\s+(x\d+)\s*,\s*(-?\d+)\((x\d+)\)', fix_store_offset, asm_code)
+            # ===================== ASSEMBLER BUG FIX END =======================
 
             # Create an in-memory string buffer
             f_buffer = io.StringIO()

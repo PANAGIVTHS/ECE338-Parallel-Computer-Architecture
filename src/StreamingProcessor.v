@@ -32,7 +32,7 @@ module StreamingProcessor (
 
     assign program_counter = {instr_idx, 2'b00};
 
-    Memory instructionMemory (.clk(clk), .rst(rst), .i_read_addr(instr_idx), .i_read_enable(1'b1), .i_write_addr(10'b0),
+    Memory instructionMemory (.clk(clk), .rst(rst), .i_read_addr(instr_idx), .i_read_enable(!data_hazard), .i_write_addr(10'b0),
                               .i_write_enable(1'b0), .i_write_data(32'b0), .o_out(ifid_instruction));
 
     //* =========================================================================
@@ -259,9 +259,10 @@ module StreamingProcessor (
     assign mem_is_load = (exmem_opcode == `OP_LW);
     assign mem_is_store = (exmem_opcode == `OP_SW);
 
-    Memory dataMemory (.clk(clk), .rst(rst), .i_read_addr(exmem_alu_out[11:2]), .i_read_enable(mem_is_load),
-                       .i_write_addr(exmem_alu_out[11:2]), .i_write_enable(mem_is_store), .i_write_data(exmem_reg_b),
-                       .o_out(mem_dmem_out));
+    Memory #(.DEPTH(2048))
+        dataMemory (.clk(clk), .rst(rst), .i_read_addr(exmem_alu_out[11:2]), .i_read_enable(mem_is_load),
+            .i_write_addr(exmem_alu_out[11:2]), .i_write_enable(mem_is_store), .i_write_data(exmem_reg_b),
+            .o_out(mem_dmem_out));
 
     //! =========================================================================
     //! PIPELINE REGISTER 4: MEMORY -> WRITE BACK
