@@ -19,8 +19,8 @@ module StreamingProcessor (
         .clk_out1(clk)
     );
 
-    wire idex_branch_taken;
-    wire [$clog2(`IMEM_ENTRIES)-1:0] idex_beq_target_idx;
+    wire ex_branch_taken;
+    wire [$clog2(`IMEM_ENTRIES)-1:0] ex_beq_target_idx;
     wire data_hazard;
     reg [4:0] idex_rd;
     wire [31:0] wb_wdata;
@@ -37,7 +37,7 @@ module StreamingProcessor (
     //! Counter returns instruction index not address!
     (* dont_touch = "true" *)
     GUCounter #(.BITS($clog2(`IMEM_ENTRIES))) 
-        programCounter (.clk(clk), .i_set_reset({rst, idex_branch_taken}), .i_count_enable(!data_hazard), .i_count_set(idex_beq_target_idx), .o_count_cur(instr_idx));
+        programCounter (.clk(clk), .i_set_reset({rst, ex_branch_taken}), .i_count_enable(!data_hazard), .i_count_set(ex_beq_target_idx), .o_count_cur(instr_idx));
 
     assign program_counter = {instr_idx, 2'b00};
 
@@ -75,9 +75,8 @@ module StreamingProcessor (
     wire [1:0] id_aluop, id_instr_type;
     wire [4:0] id_rs1, id_rs2, id_rd;
     wire [4:0] id_mux_rs1, id_mux_rs2;
-    wire id_is_mul;
+    wire id_is_mul, id_wen;
 
-    wire id_wen = !({`INSTR_TYPE_S == id_instr_type && `OP_SW == id_opcode} || {`INSTR_TYPE_S == id_instr_type && `OP_BEQ == id_opcode} || (id_rd == 5'b0));
 
     (* dont_touch = "true" *)
     Decoder decoder (
@@ -92,10 +91,10 @@ module StreamingProcessor (
         .opcode(id_opcode)
     );
 
+    assign id_wen = !({`INSTR_TYPE_S == id_instr_type && `OP_SW == id_opcode} || {`INSTR_TYPE_S == id_instr_type && `OP_BEQ == id_opcode} || (id_rd == 5'b0));
     assign id_is_mul = (id_opcode == `OP_R_TYPE);
     assign id_mux_rs1 = data_hazard ? 5'b0 : id_rs1;
     assign id_mux_rs2 = data_hazard ? 5'b0 : id_rs2;
-
 
     //* =========================================================================
     //* PIPELINE REGISTER 2: INSTRUCTION DECODE -> EXECUTE
@@ -173,8 +172,8 @@ module StreamingProcessor (
     );
 
     assign forwarded_rs2 = (forward_alu_b == `EXALU_MEMALU_DEP) ? exmem_alu_out :
-                        (forward_alu_b == `MEMWB_EXALU_DEP)  ? wb_wdata : 
-                        ex_reg_b;
+                           (forward_alu_b == `MEMWB_EXALU_DEP)  ? wb_wdata : 
+                           ex_reg_b;
 
     //? --- Forwarding Multiplexer A ---
     assign ex_actual_alu_in_a = (forward_alu_a == `EXALU_MEMALU_DEP) ? exmem_alu_out :
@@ -220,8 +219,11 @@ module StreamingProcessor (
     end
 
     assign ex_is_beq = (idex_opcode == `OP_BEQ);
-    assign idex_branch_taken = ex_is_beq && ex_zero;
+    assign ex_branch_taken = ex_is_beq && ex_zero;
 
+    //& ===============
+    //& HAZARD DETECTION
+    //& ===============
     (* dont_touch = "true" *)
     HazardUnit hazardUnit (
         .i_id_rs1(id_rs1),
@@ -234,12 +236,12 @@ module StreamingProcessor (
         .i_mul1_rd(mul1_rd),
         .i_mul2_valid(mul2_valid),
         .i_mul2_rd(mul2_rd),
-        .i_branch_taken(idex_branch_taken),
+        .i_branch_taken(ex_branch_taken),
         .o_data_hazard(data_hazard)
     );
 
     assign ex_beq_offset = {{20{idex_imm_31_25[6]}}, idex_rd[0], idex_imm_31_25[5:0], idex_rd[4:1], 1'b0};
-    assign idex_beq_target_idx = idex_program_counter[$clog2(`IMEM_ENTRIES)+1:2] + ex_beq_offset[31:2];
+    assign ex_beq_target_idx = idex_program_counter[$clog2(`IMEM_ENTRIES)+1:2] + ex_beq_offset[31:2];
 
     //* =========================================================================
     //* PIPELINE REGISTER 3: EXECUTE -> MEMORY
