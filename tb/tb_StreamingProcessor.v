@@ -144,6 +144,7 @@ module tb_StreamingProcessor ();
     //! Waveform
     initial begin
         $dumpfile("dumpfile.vcd");
+        $dumpvars(0, tb_StreamingProcessor);
         $dumpvars(0, tb_StreamingProcessor.UUT);
         for (i = 0; i < 16; i = i + 1) begin
             $dumpvars(0, tb_StreamingProcessor.UUT.instructionMemory.data[i]);
