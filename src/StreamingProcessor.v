@@ -21,7 +21,7 @@ module StreamingProcessor (
 
     wire ex_branch_taken;
     wire [$clog2(`IMEM_ENTRIES)-1:0] ex_beq_target_idx;
-    wire data_hazard;
+    wire data_hazard, flush;
     reg [4:0] idex_rd;
     wire [31:0] wb_wdata;
     reg [4:0] memwb_rd;
@@ -31,8 +31,7 @@ module StreamingProcessor (
     //! =========================================================================
     (* dont_touch = "true" *) wire [$clog2(`IMEM_ENTRIES)+1:0] program_counter;
     wire [31:0] ifid_instruction;
-    wire [$clog2(`IMEM_ENTRIES)-1:0] instr_idx;
-    wire [31:0] if_instruction;
+    wire [$clog2(`IMEM_ENTRIES)-1:0] instr_idx, instr_mem_addr;
 
     //! Counter returns instruction index not address!
     (* dont_touch = "true" *)
@@ -40,6 +39,7 @@ module StreamingProcessor (
         programCounter (.clk(clk), .i_set_reset({rst, ex_branch_taken}), .i_count_enable(!data_hazard), .i_count_set(ex_beq_target_idx), .o_count_cur(instr_idx));
 
     assign program_counter = {instr_idx, 2'b00};
+    assign instr_mem_addr = flush ? `INITIAL_PC : instr_idx;
 
     (* dont_touch = "true" *)
     MemorySinglePort #(
@@ -47,8 +47,8 @@ module StreamingProcessor (
         .INIT_FILE("program.mem")
     ) instructionMemory (
         .clk(clk),
-        .i_addr_a(instr_idx),
-        .i_ren_a(!data_hazard),
+        .i_addr_a(instr_mem_addr),
+        .i_ren_a(!data_hazard | flush),
         .i_wen_a(1'b0),
         .i_data_a(32'b0),
         .o_out_a(ifid_instruction)
@@ -237,7 +237,8 @@ module StreamingProcessor (
         .i_mul2_valid(mul2_valid),
         .i_mul2_rd(mul2_rd),
         .i_branch_taken(ex_branch_taken),
-        .o_data_hazard(data_hazard)
+        .o_data_hazard(data_hazard),
+        .o_flush(flush)
     );
 
     assign ex_beq_offset = {{20{idex_imm_31_25[6]}}, idex_rd[0], idex_imm_31_25[5:0], idex_rd[4:1], 1'b0};
