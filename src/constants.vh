@@ -20,3 +20,13 @@
 `define INSTR_TYPE_R 2'b00
 `define INSTR_TYPE_I 2'b01
 `define INSTR_TYPE_S 2'b10
+
+`define EXALU_MEMALU_DEP 2'b10
+`define MEMWB_EXALU_DEP 2'b01
+`define NO_DEP 2'b00
+
+`define INITIAL_PC 32'hFFFFFFFC
+`define IMEM_ENTRIES 1024
+
+`define NOP_INSTR 32'h00000013
+`define TXD_REGISTER 5'h1F
