@@ -24,7 +24,8 @@ module tb_StreamingProcessor ();
     reg [8*255:0] reg_file;
     reg [8*255:0] trace_file;
 
-    StreamingProcessor UUT (
+    // UUT is now the StreamingMultiprocessor
+    StreamingMultiprocessor UUT (
         .i_clk(clk), 
         .rst(rst), 
         .i_dummy_wen(dummy_wen), 
@@ -68,7 +69,7 @@ module tb_StreamingProcessor ();
             for (i=0; i<1024; i=i+1) UUT.dataMemory.data[i] = 32'b0;
             for (i=0; i<1024; i=i+1) expected_data[i] = 32'b0;
             for (i=0; i<32; i=i+1) expected_regfile[i] = 32'b0;
-            for (i=0; i<32; i=i+1) UUT.regfile.data[i] = 32'b0; 
+            for (i=0; i<32; i=i+1) UUT.core_0.regfile.data[i] = 32'b0; // Updated path
 
             // 4. Load memories
             $readmemh(prog_file, UUT.instructionMemory.data);
@@ -96,11 +97,11 @@ module tb_StreamingProcessor ();
                 if (rst == 1) begin
                     $fdisplay(fd_trace, "%5d,%8h,%8h,%8h,%8h,%8h", 
                         cycle_count,
-                        UUT.program_counter,          // IF
-                        UUT.ifid_program_counter,     // ID
-                        UUT.idex_program_counter,     // EX
-                        UUT.exmem_program_counter,    // MEM
-                        UUT.memwb_program_counter     // WB
+                        UUT.program_counter,               // IF (in SM)
+                        UUT.ifid_program_counter,          // ID (in SM)
+                        UUT.idex_program_counter,          // EX (in SM, passed to SP)
+                        UUT.core_0.exmem_program_counter,  // MEM (in SP)
+                        UUT.core_0.memwb_program_counter   // WB (in SP)
                     );
                 end
             end
@@ -113,9 +114,10 @@ module tb_StreamingProcessor ();
             // 7. Compare the regfile
             reg_errors = 0;
             for (i = 0; i < 32; i = i + 1) begin
-                if (UUT.regfile.data[i] !== expected_regfile[i]) begin
+                // Updated path to regfile inside core_0
+                if (UUT.core_0.regfile.data[i] !== expected_regfile[i]) begin
                     $display("  [Error] Reg %0d: Expected %h, Found %h", 
-                             i, expected_regfile[i], UUT.regfile.data[i]);
+                             i, expected_regfile[i], UUT.core_0.regfile.data[i]);
                     reg_errors = reg_errors + 1;
                 end
             end
@@ -149,7 +151,8 @@ module tb_StreamingProcessor ();
         for (i = 0; i < 16; i = i + 1) begin
             $dumpvars(0, tb_StreamingProcessor.UUT.instructionMemory.data[i]);
             $dumpvars(0, tb_StreamingProcessor.UUT.dataMemory.data[i]);
-            $dumpvars(0, tb_StreamingProcessor.UUT.regfile.data[i]);
+            // Updated path for dumping regfile array 
+            $dumpvars(0, tb_StreamingProcessor.UUT.core_0.regfile.data[i]);
         end
     end
 endmodule

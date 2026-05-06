@@ -1,148 +1,46 @@
 `include "constants.vh"
 
-/*
- ! Reset HAS to be held for at least pipelines * clock cycles to ensure all pipeline registers are cleared and the processor starts in a known state.
- ! We can enforce that somehow later with a reset counter or smthing.
-*/
-
 module StreamingProcessor (
     input i_clk,
     input rst,
     input i_dummy_wen,
-    output [2:0] o_leds
+    output [2:0] o_leds,
+
+    //! Regfile Read Addresses
+    input [4:0] i_id_mux_rs1,
+    input [4:0] i_id_mux_rs2,
+
+    //! Pipeline Register: IDEX -> EX
+    input [4:0] i_idex_rs1,
+    input [4:0] i_idex_rs2,
+    input [4:0] i_idex_rd,
+    input [11:0] i_idex_imm_31_20,
+    input [6:0] i_idex_imm_31_25,
+    input [1:0] i_idex_aluop,
+    input [1:0] i_idex_instr_type,
+    input [6:0] i_idex_opcode,
+    input [$clog2(`IMEM_ENTRIES)+1:0] i_idex_program_counter,
+    input i_idex_wen,
+
+    //! Hazard and Branch feedback
+    output o_ex_branch_taken,
+    output [$clog2(`IMEM_ENTRIES)-1:0] o_ex_beq_target_idx,
+    output o_mul1_valid,
+    output [4:0] o_mul1_rd,
+    output o_mul2_valid,
+    output [4:0] o_mul2_rd,
+    output o_mul3_valid,
+    output [4:0] o_mul3_rd,
+
+    //! External Memory Interface
+    output [9:0] o_mem_addr,
+    output [31:0] o_mem_wdata,
+    output o_mem_ren,
+    output o_mem_wen,
+    input  [31:0] i_mem_rdata
 );
 
-    wire clk;
-
-    clk_wiz_0 clockDivider (
-        .clk_in1(i_clk),
-        .clk_out1(clk)
-    );
-
-    wire ex_branch_taken;
-    wire [$clog2(`IMEM_ENTRIES)-1:0] ex_beq_target_idx;
-    wire data_hazard, flush;
-    reg [4:0] idex_rd;
-    wire [31:0] wb_wdata;
-    reg [4:0] memwb_rd;
-
-    //! =========================================================================
-    //! STAGE 1: INSTRUCTION FETCH
-    //! =========================================================================
-    (* dont_touch = "true" *) wire [$clog2(`IMEM_ENTRIES)+1:0] program_counter;
-    wire [31:0] ifid_instruction;
-    wire [$clog2(`IMEM_ENTRIES)-1:0] instr_idx, instr_mem_addr;
-
-    //! Counter returns instruction index not address!
-    (* dont_touch = "true" *)
-    GUCounter #(.BITS($clog2(`IMEM_ENTRIES))) 
-        programCounter (.clk(clk), .i_set_reset({rst, ex_branch_taken}), .i_count_enable(!data_hazard), .i_count_set(ex_beq_target_idx), .o_count_cur(instr_idx));
-
-    assign program_counter = {instr_idx, 2'b00};
-    assign instr_mem_addr = flush ? `INITIAL_PC : instr_idx;
-
-    (* dont_touch = "true" *)
-    MemorySinglePort #(
-        .DEPTH(`IMEM_ENTRIES),
-        .INIT_FILE("program.mem")
-    ) instructionMemory (
-        .clk(clk),
-        .i_addr_a(instr_mem_addr),
-        .i_ren_a(!data_hazard | flush),
-        .i_wen_a(1'b0),
-        .i_data_a(32'b0),
-        .o_out_a(ifid_instruction)
-    );
-
-    //* =========================================================================
-    //* PIPELINE REGISTER 1: INSTRUCTION FETCH -> INSTRUCTION DECODE
-    //* =========================================================================
-    reg [$clog2(`IMEM_ENTRIES)+1:0] ifid_program_counter;
-
-    always @(posedge clk) begin
-        if (!rst) begin
-            ifid_program_counter <= `INITIAL_PC;
-        end else if (!data_hazard) begin
-            ifid_program_counter <= program_counter;
-        end
-    end
-
-    //! =========================================================================
-    //! STAGE 2: INSTRUCTION DECODE
-    //! =========================================================================
-    wire [6:0] id_imm_31_25, id_opcode;
-    wire [11:0] id_imm_31_20;
-    wire [1:0] id_aluop, id_instr_type;
-    wire [4:0] id_rs1, id_rs2, id_rd;
-    wire [4:0] id_mux_rs1, id_mux_rs2;
-    wire id_is_mul, id_wen;
-
-
-    (* dont_touch = "true" *)
-    Decoder decoder (
-        .i_instr(ifid_instruction),
-        .o_rs1(id_rs1), 
-        .o_rs2(id_rs2),
-        .o_rd(id_rd),
-        .o_imm_31_25(id_imm_31_25),
-        .o_imm_31_20(id_imm_31_20),
-        .o_aluop(id_aluop),
-        .o_instr_type(id_instr_type),
-        .opcode(id_opcode)
-    );
-
-    assign id_wen = !({`INSTR_TYPE_S == id_instr_type && `OP_SW == id_opcode} || {`INSTR_TYPE_S == id_instr_type && `OP_BEQ == id_opcode} || (id_rd == 5'b0));
-    assign id_is_mul = (id_opcode == `OP_R_TYPE) && (id_imm_31_25 == `FUNCT7_MULDIV);
-    assign id_mux_rs1 = data_hazard ? 5'b0 : id_rs1;
-    assign id_mux_rs2 = data_hazard ? 5'b0 : id_rs2;
-
-    //* =========================================================================
-    //* PIPELINE REGISTER 2: INSTRUCTION DECODE -> EXECUTE
-    //* =========================================================================
-    reg [4:0] idex_rs1, idex_rs2;
-    reg [11:0] idex_imm_31_20;
-    reg [1:0] idex_aluop, idex_instr_type;
-    reg [6:0] idex_opcode, idex_imm_31_25;
-    reg [$clog2(`IMEM_ENTRIES)+1:0] idex_program_counter;
-    reg idex_wen;
-
-    always @(posedge clk) begin
-        if (!rst) begin
-            idex_rs1 <= 5'b0;
-            idex_rs2 <= 5'b0;
-            idex_rd <= 5'b0;
-            idex_imm_31_20 <= 12'b0;
-            idex_aluop <= 2'b0;
-            idex_instr_type <= 2'b0;
-            idex_opcode <= 7'b0;
-            idex_imm_31_25 <= 7'b0;
-            idex_program_counter <= `INITIAL_PC;
-            idex_wen <= 1'b0;
-        end else if (data_hazard) begin
-            //! Mux for NOP insertion on hazard
-            idex_rs1 <= 5'b0;
-            idex_rs2 <= 5'b0;
-            idex_rd <= 5'b0;
-            idex_imm_31_20 <= 12'b0;
-            idex_aluop <= `ALU_ADD;
-            idex_instr_type <= `INSTR_TYPE_R;
-            idex_opcode <= 7'b0;
-            idex_imm_31_25 <= 7'b0;
-            idex_program_counter <= ifid_program_counter;
-            idex_wen <= 1'b0;
-        end else begin
-            idex_rs1 <= id_rs1;
-            idex_rs2 <= id_rs2;
-            idex_rd <= id_rd;
-            idex_imm_31_20 <= id_imm_31_20;
-            idex_imm_31_25 <= id_imm_31_25;
-            idex_aluop <= id_aluop;
-            idex_instr_type <= id_instr_type;
-            idex_opcode <= id_opcode;
-            idex_program_counter <= ifid_program_counter;
-            idex_wen <= id_wen;
-        end
-    end
+    wire clk = i_clk;
 
     //! =========================================================================
     //! STAGE 3: EXECUTE
@@ -158,44 +56,45 @@ module StreamingProcessor (
     wire [1:0] forward_alu_a, forward_alu_b;
     wire ex_is_mul, mul_not_ready;
     
+    reg [4:0] memwb_rd;
     reg memwb_wen;
+    wire [31:0] wb_wdata;
 
-    assign ex_is_mul = (idex_opcode == `OP_R_TYPE) && (idex_imm_31_25 == `FUNCT7_MULDIV);
-    assign ex_imm_i_type = {{20{idex_imm_31_20[11]}}, idex_imm_31_20};
-    assign ex_imm_s_type = {{20{idex_imm_31_25[6]}}, idex_imm_31_25, idex_rd};
+    assign ex_is_mul = (i_idex_opcode == `OP_R_TYPE) && (i_idex_imm_31_25 == `FUNCT7_MULDIV);
+    assign ex_imm_i_type = {{20{i_idex_imm_31_20[11]}}, i_idex_imm_31_20};
+    assign ex_imm_s_type = {{20{i_idex_imm_31_25[6]}}, i_idex_imm_31_25, i_idex_rd};
 
     (* dont_touch = "true" *)
     Regfile regfile (
         .clk(clk), .rst(rst), .i_wen(memwb_wen), .i_wdata(wb_wdata), 
-        .i_addr_a(id_mux_rs1), .i_addr_b(id_mux_rs2), .i_waddr(memwb_rd), 
+        .i_addr_a(i_id_mux_rs1), .i_addr_b(i_id_mux_rs2), .i_waddr(memwb_rd), 
         .o_reg_a(ex_reg_a), .o_reg_b(ex_reg_b)
     );
 
     assign forwarded_rs2 = (forward_alu_b == `EXALU_MEMALU_DEP) ? exmem_alu_out :
                            (forward_alu_b == `MEMWB_EXALU_DEP)  ? wb_wdata : 
-                           ex_reg_b;
+                            ex_reg_b;
 
     //? --- Forwarding Multiplexer A ---
     assign ex_actual_alu_in_a = (forward_alu_a == `EXALU_MEMALU_DEP) ? exmem_alu_out :
-                                (forward_alu_a == `MEMWB_EXALU_DEP)  ? wb_wdata : 
-                                ex_reg_a;
+                                (forward_alu_a == `MEMWB_EXALU_DEP)  ? wb_wdata :
+                                 ex_reg_a;
     
     //? --- Forwarding Multiplexer B ---
-    assign ex_actual_alu_in_b = (idex_opcode == `OP_LW || idex_instr_type == `INSTR_TYPE_I) ? ex_imm_i_type :
-                                (idex_opcode == `OP_SW) ? ex_imm_s_type : 
-                                forwarded_rs2;
+    assign ex_actual_alu_in_b = (i_idex_opcode == `OP_LW || i_idex_instr_type == `INSTR_TYPE_I) ? ex_imm_i_type :
+                                (i_idex_opcode == `OP_SW) ? ex_imm_s_type :
+                                 forwarded_rs2;
 
     (* dont_touch = "true" *)
     ALU alu (
         .clk(clk),
         .i_operand_a(ex_actual_alu_in_a), 
         .i_operand_b(ex_actual_alu_in_b), 
-        .i_alu_op(idex_aluop), 
+        .i_alu_op(i_idex_aluop), 
         .i_mul_valid(mul3_valid),
         .o_alu_out(ex_alu_out),
         .o_alu_zero(ex_zero)
     );
-
 
     //? =========================
     //? MUL PIPELINE TRACKING
@@ -210,46 +109,32 @@ module StreamingProcessor (
             mul1_valid <= 0; mul2_valid <= 0; mul3_valid <= 0;
             mul1_program_counter <= 0; mul2_program_counter <= 0; mul3_program_counter <= 0;
         end else begin
-            mul1_rd <= idex_rd;
+            mul1_rd <= i_idex_rd;
             mul2_rd <= mul1_rd;
             mul3_rd <= mul2_rd;
-            mul1_valid <= ex_is_mul && (idex_rd != 5'b0);
+            mul1_valid <= ex_is_mul && (i_idex_rd != 5'b0);
             mul2_valid <= mul1_valid;
             mul3_valid <= mul2_valid;
-            mul1_program_counter <= idex_program_counter;
+            mul1_program_counter <= i_idex_program_counter;
             mul2_program_counter <= mul1_program_counter;
             mul3_program_counter <= mul2_program_counter;
         end
     end
 
-    assign ex_is_beq = (idex_opcode == `OP_BEQ);
-    assign ex_branch_taken = ex_is_beq && ex_zero;
+    //! Output MUL for Hazard Unit
+    assign o_mul1_valid = mul1_valid;
+    assign o_mul1_rd = mul1_rd;
+    assign o_mul2_valid = mul2_valid;
+    assign o_mul2_rd = mul2_rd;
+    assign o_mul3_valid = mul3_valid;
+    assign o_mul3_rd = mul3_rd;
 
-    //& ===============
-    //& HAZARD DETECTION
-    //& ===============
-    (* dont_touch = "true" *)
-    HazardUnit hazardUnit (
-        .i_id_rs1(id_rs1),
-        .i_id_rs2(id_rs2),
-        .i_idex_rd(idex_rd),
-        .i_ex_is_load(idex_opcode == `OP_LW && idex_instr_type == `INSTR_TYPE_I),
-        .i_ex_is_mul(ex_is_mul),
-        .i_id_is_mul(id_is_mul),
-        .i_mul1_valid(mul1_valid),
-        .i_mul1_rd(mul1_rd),
-        .i_mul2_valid(mul2_valid),
-        .i_mul2_rd(mul2_rd),
-        .i_mul3_valid(mul3_valid),
-        .i_mul3_rd(mul3_rd),
-        .i_branch_taken(ex_branch_taken),
-        .i_id_instr_type(id_instr_type),
-        .o_data_hazard(data_hazard),
-        .o_flush(flush)
-    );
+    assign ex_is_beq = (i_idex_opcode == `OP_BEQ);
+    assign o_ex_branch_taken = ex_is_beq && ex_zero;
 
-    assign ex_beq_offset = {{20{idex_imm_31_25[6]}}, idex_rd[0], idex_imm_31_25[5:0], idex_rd[4:1], 1'b0};
-    assign ex_beq_target_idx = idex_program_counter[$clog2(`IMEM_ENTRIES)+1:2] + ex_beq_offset[31:2];
+    assign ex_beq_offset = {{20{i_idex_imm_31_25[6]}}, i_idex_rd[0], i_idex_imm_31_25[5:0], i_idex_rd[4:1], 1'b0};
+    assign o_ex_beq_target_idx = i_idex_program_counter[$clog2(`IMEM_ENTRIES)+1:2] + ex_beq_offset[31:2];
+
     assign mul_not_ready = (ex_is_mul || mul1_valid || mul2_valid) && !mul3_valid;
 
     //* =========================================================================
@@ -283,39 +168,24 @@ module StreamingProcessor (
             exmem_alu_out <= ex_alu_out;
             exmem_reg_b <= forwarded_rs2;
             exmem_mul3_valid <= mul3_valid;
-            exmem_rd <= mul3_valid ? mul3_rd : idex_rd;
-            exmem_opcode <= mul3_valid ? `OP_R_TYPE : idex_opcode;
-            exmem_wen <= mul3_valid ? 1'b1 : idex_wen;
-            exmem_program_counter <= mul3_valid ? mul3_program_counter : idex_program_counter;
+            exmem_rd <= mul3_valid ? mul3_rd : i_idex_rd;
+            exmem_opcode <= mul3_valid ? `OP_R_TYPE : i_idex_opcode;
+            exmem_wen <= mul3_valid ? 1'b1 : i_idex_wen;
+            exmem_program_counter <= mul3_valid ? mul3_program_counter : i_idex_program_counter;
         end
     end
 
     //! =========================================================================
     //! STAGE 4: MEMORY
     //! =========================================================================
-    (* dont_touch = "true" *) wire mem_is_load, mem_is_store;
-    (* dont_touch = "true" *) wire [31:0] mem_dmem_out;
-
+    wire mem_is_load, mem_is_store;
     assign mem_is_load = (exmem_opcode == `OP_LW);
     assign mem_is_store = (exmem_opcode == `OP_SW);
 
-    (* dont_touch = "true" *)
-    MemoryDualPort #(
-        .DEPTH(1024),
-        .INIT_FILE("")
-    ) dataMemory (
-        .clk(clk),
-        .i_addr_a(exmem_alu_out[11:2]),
-        .i_ren_a(mem_is_load | mem_is_store),
-        .i_wen_a(mem_is_store),
-        .i_data_a(exmem_reg_b),
-        .o_out_a(mem_dmem_out),
-        .i_addr_b(10'b0),
-        .i_ren_b(1'b0),
-        .i_wen_b(1'b0),
-        .i_data_b(32'b0),
-        .o_out_b()
-    );
+    assign o_mem_addr = exmem_alu_out[11:2];
+    assign o_mem_ren = mem_is_load | mem_is_store;
+    assign o_mem_wen = mem_is_store;
+    assign o_mem_wdata = exmem_reg_b;
 
     //! =========================================================================
     //! PIPELINE REGISTER 4: MEMORY -> WRITE BACK
@@ -345,8 +215,7 @@ module StreamingProcessor (
     //! =========================================================================
     //! STAGE 5: WRITE BACK
     //! =========================================================================
-
-    assign wb_wdata = memwb_is_load ? mem_dmem_out : memwb_alu_out;
+    assign wb_wdata = memwb_is_load ? i_mem_rdata : memwb_alu_out;
 
     assign o_leds[0] = i_dummy_wen;
     assign o_leds[1] = ^memwb_alu_out;
@@ -357,14 +226,15 @@ module StreamingProcessor (
     //& ===============
     (* dont_touch = "true" *)
     ForwardingUnit forwardingUnit (
-        .i_idex_rs1(idex_rs1),
-        .i_idex_rs2(idex_rs2),
+        .i_idex_rs1(i_idex_rs1),
+        .i_idex_rs2(i_idex_rs2),
         .i_exmem_rd(exmem_rd),
         .i_exmem_wen(exmem_wen),
-        .i_idex_instr_type(idex_instr_type),
+        .i_idex_instr_type(i_idex_instr_type),
         .i_memwb_rd(memwb_rd),
         .i_memwb_wen(memwb_wen),
         .o_forward_alu_a(forward_alu_a),
         .o_forward_alu_b(forward_alu_b)
     );
+
 endmodule
