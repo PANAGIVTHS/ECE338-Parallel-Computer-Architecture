@@ -1,6 +1,8 @@
 `include "constants.vh"
 
-module StreamingProcessor (
+module StreamingProcessor #(
+    parameter CORE_ID = 0
+)(
     input i_clk,
     input rst,
     input i_dummy_wen,
@@ -64,8 +66,10 @@ module StreamingProcessor (
     assign ex_imm_i_type = {{20{i_idex_imm_31_20[11]}}, i_idex_imm_31_20};
     assign ex_imm_s_type = {{20{i_idex_imm_31_25[6]}}, i_idex_imm_31_25, i_idex_rd};
 
-    (* dont_touch = "true" *)
-    Regfile regfile (
+(* dont_touch = "true" *)
+    Regfile #(
+        .CORE_ID(CORE_ID)
+    ) regfile (
         .clk(clk), .rst(rst), .i_wen(memwb_wen), .i_wdata(wb_wdata), 
         .i_addr_a(i_id_mux_rs1), .i_addr_b(i_id_mux_rs2), .i_waddr(memwb_rd), 
         .o_reg_a(ex_reg_a), .o_reg_b(ex_reg_b)

@@ -164,11 +164,11 @@ module StreamingMultiprocessor (
     //& ===============
     //& GLOBAL DATA MEMORY
     //& ===============
-    wire [9:0] sp_mem_addr;
-    wire [31:0] sp_mem_wdata;
-    wire sp_mem_ren;
-    wire sp_mem_wen;
-    wire [31:0] sp_mem_rdata;
+    wire [9:0] sp0_mem_addr, sp1_mem_addr;
+    wire [31:0] sp0_mem_wdata, sp1_mem_wdata;
+    wire sp0_mem_ren, sp1_mem_ren;
+    wire sp0_mem_wen, sp1_mem_wen;
+    wire [31:0] sp0_mem_rdata, sp1_mem_rdata;
 
     (* dont_touch = "true" *)
     MemoryDualPort #(
@@ -176,22 +176,22 @@ module StreamingMultiprocessor (
         .INIT_FILE("")
     ) dataMemory (
         .clk(clk),
-        .i_addr_a(sp_mem_addr),
-        .i_ren_a(sp_mem_ren),
-        .i_wen_a(sp_mem_wen),
-        .i_data_a(sp_mem_wdata),
-        .o_out_a(sp_mem_rdata),
-        .i_addr_b(10'b0),
-        .i_ren_b(1'b0),
-        .i_wen_b(1'b0),
-        .i_data_b(32'b0),
-        .o_out_b()
+        .i_addr_a(sp0_mem_addr),
+        .i_ren_a(sp0_mem_ren),
+        .i_wen_a(sp0_mem_wen),
+        .i_data_a(sp0_mem_wdata),
+        .o_out_a(sp0_mem_rdata),
+        .i_addr_b(sp1_mem_addr),
+        .i_ren_b(sp1_mem_ren),
+        .i_wen_b(sp1_mem_wen),
+        .i_data_b(sp1_mem_wdata),
+        .o_out_b(sp1_mem_rdata)
     );
 
     //& ===============
-    //& STREAMING PROCESSOR CORE
+    //& STREAMING PROCESSOR CORES
     //& ===============
-    StreamingProcessor core_0 (
+    StreamingProcessor #(.CORE_ID(0)) core_0 (
         .i_clk(clk),
         .rst(rst),
         .i_dummy_wen(i_dummy_wen),
@@ -224,11 +224,58 @@ module StreamingMultiprocessor (
         .o_mul3_rd(mul3_rd),
 
         //! Memory connections to Global Memory
-        .o_mem_addr(sp_mem_addr),
-        .o_mem_wdata(sp_mem_wdata),
-        .o_mem_ren(sp_mem_ren),
-        .o_mem_wen(sp_mem_wen),
-        .i_mem_rdata(sp_mem_rdata)
+        .o_mem_addr(sp0_mem_addr),
+        .o_mem_wdata(sp0_mem_wdata),
+        .o_mem_ren(sp0_mem_ren),
+        .o_mem_wen(sp0_mem_wen),
+        .i_mem_rdata(sp0_mem_rdata)
+    );
+
+    // Dummy wires to catch core_1's redundant lockstep feedback
+    wire c1_ex_branch_taken;
+    wire [$clog2(`IMEM_ENTRIES)-1:0] c1_ex_beq_target_idx;
+    wire c1_mul1_valid, c1_mul2_valid, c1_mul3_valid;
+    wire [4:0] c1_mul1_rd, c1_mul2_rd, c1_mul3_rd;
+    wire [2:0] c1_leds;
+
+    StreamingProcessor #(.CORE_ID(1)) core_1 (
+        .i_clk(clk),
+        .rst(rst),
+        .i_dummy_wen(i_dummy_wen),
+        .o_leds(c1_leds),
+
+        //! Regfile Muxes forward
+        .i_id_mux_rs1(id_mux_rs1),
+        .i_id_mux_rs2(id_mux_rs2),
+
+        //! IDEX Pipeline
+        .i_idex_rs1(idex_rs1),
+        .i_idex_rs2(idex_rs2),
+        .i_idex_rd(idex_rd),
+        .i_idex_imm_31_20(idex_imm_31_20),
+        .i_idex_imm_31_25(idex_imm_31_25),
+        .i_idex_aluop(idex_aluop),
+        .i_idex_instr_type(idex_instr_type),
+        .i_idex_opcode(idex_opcode),
+        .i_idex_program_counter(idex_program_counter),
+        .i_idex_wen(idex_wen),
+
+        //! Feedback wires Hazard & PC (ignored for SM logic)
+        .o_ex_branch_taken(c1_ex_branch_taken),
+        .o_ex_beq_target_idx(c1_ex_beq_target_idx),
+        .o_mul1_valid(c1_mul1_valid),
+        .o_mul1_rd(c1_mul1_rd),
+        .o_mul2_valid(c1_mul2_valid),
+        .o_mul2_rd(c1_mul2_rd),
+        .o_mul3_valid(c1_mul3_valid),
+        .o_mul3_rd(c1_mul3_rd),
+
+        //! Memory connections to Global Memory
+        .o_mem_addr(sp1_mem_addr),
+        .o_mem_wdata(sp1_mem_wdata),
+        .o_mem_ren(sp1_mem_ren),
+        .o_mem_wen(sp1_mem_wen),
+        .i_mem_rdata(sp1_mem_rdata)
     );
 
 endmodule
