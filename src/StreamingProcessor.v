@@ -243,7 +243,7 @@ module StreamingProcessor (
         .i_mul3_valid(mul3_valid),
         .i_mul3_rd(mul3_rd),
         .i_branch_taken(ex_branch_taken),
-        .i_id_instr_type(idex_instr_type),
+        .i_id_instr_type(id_instr_type),
         .o_data_hazard(data_hazard),
         .o_flush(flush)
     );
