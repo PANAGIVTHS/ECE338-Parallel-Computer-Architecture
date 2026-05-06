@@ -213,7 +213,7 @@ module StreamingProcessor (
             mul1_rd <= idex_rd;
             mul2_rd <= mul1_rd;
             mul3_rd <= mul2_rd;
-            mul1_valid <= ex_is_mul;
+            mul1_valid <= ex_is_mul && (i_idex_rd != 5'b0);
             mul2_valid <= mul1_valid;
             mul3_valid <= mul2_valid;
             mul1_program_counter <= idex_program_counter;
