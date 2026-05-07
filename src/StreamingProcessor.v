@@ -39,7 +39,12 @@ module StreamingProcessor #(
     output [31:0] o_mem_wdata,
     output o_mem_ren,
     output o_mem_wen,
-    input  [31:0] i_mem_rdata
+    input  [31:0] i_mem_rdata,
+
+    //! New Memory Queue / Arbiter Interface
+    input i_mem_grant,
+    input i_mem_rvalid,
+    input i_global_stall
 );
 
     wire clk = i_clk;
@@ -112,6 +117,8 @@ module StreamingProcessor #(
             mul1_rd <= 0; mul2_rd <= 0; mul3_rd <= 0;
             mul1_valid <= 0; mul2_valid <= 0; mul3_valid <= 0;
             mul1_program_counter <= 0; mul2_program_counter <= 0; mul3_program_counter <= 0;
+        end else if (i_global_stall) begin
+            // Retain state during memory stall
         end else begin
             mul1_rd <= i_idex_rd;
             mul2_rd <= mul1_rd;
@@ -160,6 +167,8 @@ module StreamingProcessor #(
             exmem_wen <= 1'b0;
             exmem_mul3_valid <= 1'b0;
             exmem_program_counter <= `INITIAL_PC;
+        end else if (i_global_stall) begin
+            // Retain state during memory stall
         end else if (mul_not_ready) begin
             exmem_alu_out <= 32'b0;
             exmem_reg_b <= 32'b0;
@@ -206,6 +215,8 @@ module StreamingProcessor #(
             memwb_alu_out <= 32'b0;
             memwb_wen <= 1'b0;
             memwb_program_counter <= `INITIAL_PC;
+        end else if (i_global_stall) begin
+            // Retain state during memory stall
         end else begin
             memwb_rd <= exmem_rd;
             memwb_is_mul <= exmem_mul3_valid;

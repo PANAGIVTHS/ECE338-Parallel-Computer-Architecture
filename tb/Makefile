@@ -16,6 +16,7 @@ compile:
                                                        ../src/HazardUnit.v \
                                                        ../src/ClockDivider.v \
                                                        ../src/StreamingProcessor.v \
+                                                       ../src/MemoryCrossbarNx2.v \
                                                        ../src/StreamingMultiprocessor.v
 
 assemble:

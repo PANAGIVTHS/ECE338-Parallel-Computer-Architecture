@@ -18,6 +18,21 @@ module StreamingMultiprocessor (
     wire data_hazard, flush;
     reg [4:0] idex_rd;
 
+    //& ===============
+    //& CROSSBAR & STALL LOGIC
+    //& ===============
+    // New wires to connect the cores to the Crossbar
+    wire [9:0] c0_mem_addr, c1_mem_addr;
+    wire [31:0] c0_mem_wdata, c1_mem_wdata;
+    wire c0_mem_ren, c1_mem_ren;
+    wire c0_mem_wen, c1_mem_wen;
+    wire [31:0] c0_mem_rdata, c1_mem_rdata;
+    wire c0_mem_grant, c0_mem_rvalid;
+    wire c1_mem_grant, c1_mem_rvalid;
+
+    // If a core requests memory (ren) but doesn't get a grant, stall the whole pipeline
+    wire global_stall = (c0_mem_ren & ~c0_mem_grant) | (c1_mem_ren & ~c1_mem_grant);
+
     //! =========================================================================
     //! STAGE 1: INSTRUCTION FETCH
     //! =========================================================================
@@ -27,7 +42,7 @@ module StreamingMultiprocessor (
 
     (* dont_touch = "true" *)
     GUCounter #(.BITS($clog2(`IMEM_ENTRIES))) 
-        programCounter (.clk(clk), .i_set_reset({rst, ex_branch_taken}), .i_count_enable(!data_hazard), .i_count_set(ex_beq_target_idx), .o_count_cur(instr_idx));
+        programCounter (.clk(clk), .i_set_reset({rst, ex_branch_taken}), .i_count_enable(!data_hazard && !global_stall), .i_count_set(ex_beq_target_idx), .o_count_cur(instr_idx));
 
     assign program_counter = {instr_idx, 2'b00};
     assign instr_mem_addr = flush ? `INITIAL_PC : instr_idx;
@@ -52,6 +67,8 @@ module StreamingMultiprocessor (
     always @(posedge clk) begin
         if (!rst) begin
             ifid_program_counter <= `INITIAL_PC;
+        end else if (global_stall) begin
+            // Retain state during memory stall
         end else if (!data_hazard) begin
             ifid_program_counter <= program_counter;
         end
@@ -108,6 +125,8 @@ module StreamingMultiprocessor (
             idex_imm_31_25 <= 7'b0;
             idex_program_counter <= `INITIAL_PC;
             idex_wen <= 1'b0;
+        end else if (global_stall) begin
+            // Retain state during memory stall
         end else if (data_hazard) begin
             idex_rs1 <= 5'b0;
             idex_rs2 <= 5'b0;
@@ -162,7 +181,7 @@ module StreamingMultiprocessor (
     );
 
     //& ===============
-    //& GLOBAL DATA MEMORY
+    //& GLOBAL DATA MEMORY CROSSBAR
     //& ===============
     wire [9:0] sp0_mem_addr, sp1_mem_addr;
     wire [31:0] sp0_mem_wdata, sp1_mem_wdata;
@@ -170,6 +189,39 @@ module StreamingMultiprocessor (
     wire sp0_mem_wen, sp1_mem_wen;
     wire [31:0] sp0_mem_rdata, sp1_mem_rdata;
 
+    MemoryCrossbarNx2 #(
+        .N(2),
+        .DEPTH(1024)
+    ) memCrossbar (
+        .clk(clk),
+        .rst(rst),
+        // Cores Interface
+        .i_req   ( {c1_mem_ren, c0_mem_ren} ),     // Core ren acts as the global request
+        .i_wen   ( {c1_mem_wen, c0_mem_wen} ),
+        .i_addr  ( {c1_mem_addr, c0_mem_addr} ),
+        .i_wdata ( {c1_mem_wdata, c0_mem_wdata} ),
+        .o_grant ( {c1_mem_grant, c0_mem_grant} ),
+        .o_rvalid( {c1_mem_rvalid, c0_mem_rvalid} ),
+        .o_rdata ( {c1_mem_rdata, c0_mem_rdata} ),
+        
+        // Memory Port A Interface
+        .o_addr_a(sp0_mem_addr),
+        .o_ren_a(sp0_mem_ren),
+        .o_wen_a(sp0_mem_wen),
+        .o_data_a(sp0_mem_wdata),
+        .i_out_a(sp0_mem_rdata),
+        
+        // Memory Port B Interface
+        .o_addr_b(sp1_mem_addr),
+        .o_ren_b(sp1_mem_ren),
+        .o_wen_b(sp1_mem_wen),
+        .o_data_b(sp1_mem_wdata),
+        .i_out_b(sp1_mem_rdata)
+    );
+
+    //& ===============
+    //& GLOBAL DATA MEMORY
+    //& ===============
     (* dont_touch = "true" *)
     MemoryDualPort #(
         .DEPTH(1024),
@@ -223,12 +275,17 @@ module StreamingMultiprocessor (
         .o_mul3_valid(mul3_valid),
         .o_mul3_rd(mul3_rd),
 
-        //! Memory connections to Global Memory
-        .o_mem_addr(sp0_mem_addr),
-        .o_mem_wdata(sp0_mem_wdata),
-        .o_mem_ren(sp0_mem_ren),
-        .o_mem_wen(sp0_mem_wen),
-        .i_mem_rdata(sp0_mem_rdata)
+        //! Memory connections to Crossbar
+        .o_mem_addr(c0_mem_addr),
+        .o_mem_wdata(c0_mem_wdata),
+        .o_mem_ren(c0_mem_ren),
+        .o_mem_wen(c0_mem_wen),
+        .i_mem_rdata(c0_mem_rdata),
+        
+        //! New Crossbar Control Pins
+        .i_mem_grant(c0_mem_grant),
+        .i_mem_rvalid(c0_mem_rvalid),
+        .i_global_stall(global_stall)
     );
 
     // Dummy wires to catch core_1's redundant lockstep feedback
@@ -270,12 +327,17 @@ module StreamingMultiprocessor (
         .o_mul3_valid(c1_mul3_valid),
         .o_mul3_rd(c1_mul3_rd),
 
-        //! Memory connections to Global Memory
-        .o_mem_addr(sp1_mem_addr),
-        .o_mem_wdata(sp1_mem_wdata),
-        .o_mem_ren(sp1_mem_ren),
-        .o_mem_wen(sp1_mem_wen),
-        .i_mem_rdata(sp1_mem_rdata)
+        //! Memory connections to Crossbar
+        .o_mem_addr(c1_mem_addr),
+        .o_mem_wdata(c1_mem_wdata),
+        .o_mem_ren(c1_mem_ren),
+        .o_mem_wen(c1_mem_wen),
+        .i_mem_rdata(c1_mem_rdata),
+
+        //! New Crossbar Control Pins
+        .i_mem_grant(c1_mem_grant),
+        .i_mem_rvalid(c1_mem_rvalid),
+        .i_global_stall(global_stall)
     );
 
 endmodule
