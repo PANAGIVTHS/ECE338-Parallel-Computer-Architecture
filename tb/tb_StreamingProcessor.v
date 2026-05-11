@@ -5,8 +5,7 @@
 
 module tb_StreamingProcessor ();
     reg clk, rst;
-    reg dummy_wen;
-    wire [2:0] o_leds;
+    reg uart_rx;
     
     // Expected results arrays
     reg [31:0] expected_data [0:1023];
@@ -24,11 +23,11 @@ module tb_StreamingProcessor ();
     reg [8*255:0] reg_file;
     reg [8*255:0] trace_file;
 
-    StreamingProcessor UUT (
+    GPGPU UUT (
         .i_clk(clk), 
-        .rst(rst), 
-        .i_dummy_wen(dummy_wen), 
-        .o_leds(o_leds)
+        .i_rst(rst), 
+        .i_uart_rx(uart_rx), 
+        .o_uart_tx()
     );
 
     // Clock
@@ -37,7 +36,6 @@ module tb_StreamingProcessor ();
     initial begin
         clk = 1;
         rst = 0;
-        dummy_wen = 0;
         test_idx = 1;
 
         $display("=================================================");
@@ -68,7 +66,7 @@ module tb_StreamingProcessor ();
             for (i=0; i<1024; i=i+1) UUT.dataMemory.data[i] = 32'b0;
             for (i=0; i<1024; i=i+1) expected_data[i] = 32'b0;
             for (i=0; i<32; i=i+1) expected_regfile[i] = 32'b0;
-            for (i=0; i<32; i=i+1) UUT.regfile.data[i] = 32'b0; 
+            for (i=0; i<32; i=i+1) UUT.sp.regfile.data[i] = 32'b0; 
 
             // 4. Load memories
             $readmemh(prog_file, UUT.instructionMemory.data);
@@ -96,11 +94,11 @@ module tb_StreamingProcessor ();
                 if (rst == 1) begin
                     $fdisplay(fd_trace, "%5d,%8h,%8h,%8h,%8h,%8h", 
                         cycle_count,
-                        UUT.program_counter,          // IF
-                        UUT.ifid_program_counter,     // ID
-                        UUT.idex_program_counter,     // EX
-                        UUT.exmem_program_counter,    // MEM
-                        UUT.memwb_program_counter     // WB
+                        UUT.sp.program_counter,          // IF
+                        UUT.sp.ifid_program_counter,     // ID
+                        UUT.sp.idex_program_counter,     // EX
+                        UUT.sp.exmem_program_counter,    // MEM
+                        UUT.sp.memwb_program_counter     // WB
                     );
                 end
             end
@@ -113,9 +111,9 @@ module tb_StreamingProcessor ();
             // 7. Compare the regfile
             reg_errors = 0;
             for (i = 0; i < 32; i = i + 1) begin
-                if (UUT.regfile.data[i] !== expected_regfile[i]) begin
+                if (UUT.sp.regfile.data[i] !== expected_regfile[i]) begin
                     $display("  [Error] Reg %0d: Expected %h, Found %h", 
-                             i, expected_regfile[i], UUT.regfile.data[i]);
+                             i, expected_regfile[i], UUT.sp.regfile.data[i]);
                     reg_errors = reg_errors + 1;
                 end
             end
@@ -145,11 +143,5 @@ module tb_StreamingProcessor ();
     initial begin
         $dumpfile("dumpfile.vcd");
         $dumpvars(0, tb_StreamingProcessor);
-        $dumpvars(0, tb_StreamingProcessor.UUT);
-        for (i = 0; i < 16; i = i + 1) begin
-            $dumpvars(0, tb_StreamingProcessor.UUT.instructionMemory.data[i]);
-            $dumpvars(0, tb_StreamingProcessor.UUT.dataMemory.data[i]);
-            $dumpvars(0, tb_StreamingProcessor.UUT.regfile.data[i]);
-        end
     end
 endmodule

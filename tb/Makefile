@@ -15,7 +15,8 @@ compile:
 													   ../src/ForwardingUnit.v \
 													   ../src/HazardUnit.v \
 													   ../src/ClockDivider.v \
-													   ../src/StreamingProcessor.v
+													   ../src/StreamingProcessor.v \
+													   ../src/GPGPU_top.v
 
 assemble:
 	python3 assembler.py
@@ -25,6 +26,6 @@ visualize:
 	python3 -m http.server
 
 clean:
-	rm ./test*/program.mem
-	rm ./test*/trace.csv
-	rm ./main
+	rm -f ./test*/program.mem
+	rm -f ./test*/trace.csv
+	rm -f ./main

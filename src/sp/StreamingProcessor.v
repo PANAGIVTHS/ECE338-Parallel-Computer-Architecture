@@ -7,17 +7,16 @@
 
 module StreamingProcessor (
     input i_clk,
-    input rst,
-    input i_dummy_wen,
-    output [2:0] o_leds
+    input i_rst,
+    input [31:0] i_ifid_instruction,
+    input [31:0] i_dmem_read_data,
+    output [$clog2(`IMEM_ENTRIES)-1:0] o_imem_addr,
+    output o_imem_ren,
+    output [9:0] o_dmem_addr,
+    output o_dmem_ren,
+    output o_dmem_wen,
+    output [31:0] o_dmem_write_data
 );
-
-    wire clk;
-
-    clk_wiz_0 clockDivider (
-        .clk_in1(i_clk),
-        .clk_out1(clk)
-    );
 
     wire ex_branch_taken;
     wire [$clog2(`IMEM_ENTRIES)-1:0] ex_beq_target_idx;
@@ -30,37 +29,24 @@ module StreamingProcessor (
     //! STAGE 1: INSTRUCTION FETCH
     //! =========================================================================
     (* dont_touch = "true" *) wire [$clog2(`IMEM_ENTRIES)+1:0] program_counter;
-    wire [31:0] ifid_instruction;
-    wire [$clog2(`IMEM_ENTRIES)-1:0] instr_idx, instr_mem_addr;
+    wire [$clog2(`IMEM_ENTRIES)-1:0] instr_idx;
 
     //! Counter returns instruction index not address!
     (* dont_touch = "true" *)
     GUCounter #(.BITS($clog2(`IMEM_ENTRIES))) 
-        programCounter (.clk(clk), .i_set_reset({rst, ex_branch_taken}), .i_count_enable(!data_hazard), .i_count_set(ex_beq_target_idx), .o_count_cur(instr_idx));
+        programCounter (.clk(i_clk), .i_set_reset({i_rst, ex_branch_taken}), .i_count_enable(!data_hazard), .i_count_set(ex_beq_target_idx), .o_count_cur(instr_idx));
 
     assign program_counter = {instr_idx, 2'b00};
-    assign instr_mem_addr = flush ? `INITIAL_PC : instr_idx;
-
-    (* dont_touch = "true" *)
-    MemorySinglePort #(
-        .DEPTH(`IMEM_ENTRIES),
-        .INIT_FILE("program.mem")
-    ) instructionMemory (
-        .clk(clk),
-        .i_addr_a(instr_mem_addr),
-        .i_ren_a(!data_hazard | flush),
-        .i_wen_a(1'b0),
-        .i_data_a(32'b0),
-        .o_out_a(ifid_instruction)
-    );
+    assign o_imem_addr = flush ? `INITIAL_PC : instr_idx;
+    assign o_imem_ren = !data_hazard | flush;
 
     //* =========================================================================
     //* PIPELINE REGISTER 1: INSTRUCTION FETCH -> INSTRUCTION DECODE
     //* =========================================================================
     reg [$clog2(`IMEM_ENTRIES)+1:0] ifid_program_counter;
 
-    always @(posedge clk) begin
-        if (!rst) begin
+    always @(posedge i_clk) begin
+        if (!i_rst) begin
             ifid_program_counter <= `INITIAL_PC;
         end else if (!data_hazard) begin
             ifid_program_counter <= program_counter;
@@ -80,7 +66,7 @@ module StreamingProcessor (
 
     (* dont_touch = "true" *)
     Decoder decoder (
-        .i_instr(ifid_instruction),
+        .i_instr(i_ifid_instruction),
         .o_rs1(id_rs1), 
         .o_rs2(id_rs2),
         .o_rd(id_rd),
@@ -106,8 +92,8 @@ module StreamingProcessor (
     reg [$clog2(`IMEM_ENTRIES)+1:0] idex_program_counter;
     reg idex_wen;
 
-    always @(posedge clk) begin
-        if (!rst) begin
+    always @(posedge i_clk) begin
+        if (!i_rst) begin
             idex_rs1 <= 5'b0;
             idex_rs2 <= 5'b0;
             idex_rd <= 5'b0;
@@ -166,7 +152,7 @@ module StreamingProcessor (
 
     (* dont_touch = "true" *)
     Regfile regfile (
-        .clk(clk), .rst(rst), .i_wen(memwb_wen), .i_wdata(wb_wdata), 
+        .clk(i_clk), .rst(i_rst), .i_wen(memwb_wen), .i_wdata(wb_wdata), 
         .i_addr_a(id_mux_rs1), .i_addr_b(id_mux_rs2), .i_waddr(memwb_rd), 
         .o_reg_a(ex_reg_a), .o_reg_b(ex_reg_b)
     );
@@ -187,7 +173,7 @@ module StreamingProcessor (
 
     (* dont_touch = "true" *)
     ALU alu (
-        .clk(clk),
+        .clk(i_clk),
         .i_operand_a(ex_actual_alu_in_a), 
         .i_operand_b(ex_actual_alu_in_b), 
         .i_alu_op(idex_aluop), 
@@ -204,8 +190,8 @@ module StreamingProcessor (
     reg [4:0] mul1_rd, mul2_rd, mul3_rd;
     reg mul1_valid, mul2_valid, mul3_valid;
 
-    always @(posedge clk) begin
-        if (!rst) begin
+    always @(posedge i_clk) begin
+        if (!i_rst) begin
             mul1_rd <= 0; mul2_rd <= 0; mul3_rd <= 0;
             mul1_valid <= 0; mul2_valid <= 0; mul3_valid <= 0;
             mul1_program_counter <= 0; mul2_program_counter <= 0; mul3_program_counter <= 0;
@@ -262,8 +248,8 @@ module StreamingProcessor (
     reg [4:0] exmem_rd;
     reg exmem_mul3_valid, exmem_wen;
 
-    always @(posedge clk) begin
-        if (!rst) begin
+    always @(posedge i_clk) begin
+        if (!i_rst) begin
             exmem_alu_out <= 32'b0;
             exmem_reg_b <= 32'b0;
             exmem_rd <= 5'b0;
@@ -294,28 +280,12 @@ module StreamingProcessor (
     //! STAGE 4: MEMORY
     //! =========================================================================
     (* dont_touch = "true" *) wire mem_is_load, mem_is_store;
-    (* dont_touch = "true" *) wire [31:0] mem_dmem_out;
 
     assign mem_is_load = (exmem_opcode == `OP_LW);
-    assign mem_is_store = (exmem_opcode == `OP_SW);
-
-    (* dont_touch = "true" *)
-    MemoryDualPort #(
-        .DEPTH(1024),
-        .INIT_FILE("")
-    ) dataMemory (
-        .clk(clk),
-        .i_addr_a(exmem_alu_out[11:2]),
-        .i_ren_a(mem_is_load | mem_is_store),
-        .i_wen_a(mem_is_store),
-        .i_data_a(exmem_reg_b),
-        .o_out_a(mem_dmem_out),
-        .i_addr_b(10'b0),
-        .i_ren_b(1'b0),
-        .i_wen_b(1'b0),
-        .i_data_b(32'b0),
-        .o_out_b()
-    );
+    assign o_dmem_ren = mem_is_load | o_dmem_wen;
+    assign o_dmem_wen = (exmem_opcode == `OP_SW);
+    assign o_dmem_addr = exmem_alu_out[11:2];
+    assign o_dmem_write_data = exmem_reg_b;
 
     //! =========================================================================
     //! PIPELINE REGISTER 4: MEMORY -> WRITE BACK
@@ -324,8 +294,8 @@ module StreamingProcessor (
     reg [31:0] memwb_alu_out;
     reg [$clog2(`IMEM_ENTRIES)+1:0] memwb_program_counter;
 
-    always @(posedge clk) begin
-        if (!rst) begin
+    always @(posedge i_clk) begin
+        if (!i_rst) begin
             memwb_rd <= 5'b0;
             memwb_is_mul <= 1'b0;
             memwb_is_load <= 1'b0;
@@ -346,11 +316,7 @@ module StreamingProcessor (
     //! STAGE 5: WRITE BACK
     //! =========================================================================
 
-    assign wb_wdata = memwb_is_load ? mem_dmem_out : memwb_alu_out;
-
-    assign o_leds[0] = i_dummy_wen;
-    assign o_leds[1] = ^memwb_alu_out;
-    assign o_leds[2] = ^exmem_reg_b;
+    assign wb_wdata = memwb_is_load ? i_dmem_read_data : memwb_alu_out;
 
     //& ===============
     //& FORWARDING
