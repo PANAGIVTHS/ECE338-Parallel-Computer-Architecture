@@ -1,7 +1,7 @@
 # --- RISC-V Cross-Compiler Variables ---
 CC = riscv64-unknown-elf-gcc
 OBJDUMP = riscv64-unknown-elf-objdump
-CFLAGS = -O0 -march=rv32im -mabi=ilp32 -ffreestanding -nostdlib
+CFLAGS = -O0 -march=rv32im -mabi=ilp32 -ffreestanding -nostdlib -Ttext=0x00000000
 
 # --- Native (x86 Linux) Compiler Variables ---
 NATIVE_CC = gcc
