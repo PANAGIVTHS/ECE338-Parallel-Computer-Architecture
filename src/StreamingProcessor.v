@@ -80,9 +80,10 @@ module StreamingProcessor #(
 
     //? =================================================
     //? STALL SAFETY LATCH LOGIC
-    //? Protects EX operands from being overwritten by ID 
-    //? stage continuous Regfile reads during a crossbar stall
     //? =================================================
+    
+    //! Protects EX operands from being overwritten by ID 
+    //! stage continuous Regfile reads during a crossbar stall
     reg [31:0] stall_reg_a, stall_reg_b;
     reg was_stalled;
     
@@ -93,7 +94,7 @@ module StreamingProcessor #(
             stall_reg_b <= 32'b0;
         end else begin
             was_stalled <= i_global_stall;
-            // Snapshot the live EX data the exact moment a stall begins
+            //! Snapshot the live EX data the exact moment a stall begins
             if (i_global_stall && !was_stalled) begin
                 stall_reg_a <= ex_reg_a;
                 stall_reg_b <= ex_reg_b;
@@ -101,7 +102,7 @@ module StreamingProcessor #(
         end
     end
 
-    // Route the safely latched data whenever we are recovering from a stall
+    //! Route the safely latched data whenever we are recovering from a stall
     wire [31:0] safe_ex_reg_a = was_stalled ? stall_reg_a : ex_reg_a;
     wire [31:0] safe_ex_reg_b = was_stalled ? stall_reg_b : ex_reg_b;
 
