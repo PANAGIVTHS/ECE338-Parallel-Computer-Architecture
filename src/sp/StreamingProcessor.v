@@ -29,12 +29,12 @@ module StreamingProcessor (
     //! =========================================================================
     //! STAGE 1: INSTRUCTION FETCH
     //! =========================================================================
-    // (* dont_touch = "true" *) 
+    (* dont_touch = `DEBUG *) 
     wire [$clog2(`IMEM_ENTRIES)+1:0] program_counter;
     wire [$clog2(`IMEM_ENTRIES)-1:0] instr_idx;
 
     //! Counter returns instruction index not address!
-    // (* dont_touch = "true" *)
+    (* dont_touch = `DEBUG *)
     GUCounter #(.BITS($clog2(`IMEM_ENTRIES))) 
         programCounter (.clk(i_clk), .i_set_reset({i_rst, ex_branch_taken}), .i_count_enable(i_enable && !data_hazard), .i_count_set(ex_beq_target_idx), .o_count_cur(instr_idx));
 
@@ -66,7 +66,7 @@ module StreamingProcessor (
     wire id_is_mul, id_wen;
 
 
-    // (* dont_touch = "true" *)
+    (* dont_touch = `DEBUG *)
     Decoder decoder (
         .i_instr(i_ifid_instruction),
         .o_rs1(id_rs1), 
@@ -152,7 +152,7 @@ module StreamingProcessor (
     assign ex_imm_i_type = {{20{idex_imm_31_20[11]}}, idex_imm_31_20};
     assign ex_imm_s_type = {{20{idex_imm_31_25[6]}}, idex_imm_31_25, idex_rd};
 
-    // (* dont_touch = "true" *)
+    (* dont_touch = `DEBUG *)
     Regfile regfile (
         .clk(i_clk), .rst(i_rst), .i_wen(memwb_wen), .i_enable(i_enable), .i_wdata(wb_wdata), 
         .i_addr_a(id_mux_rs1), .i_addr_b(id_mux_rs2), .i_waddr(memwb_rd), 
@@ -173,7 +173,7 @@ module StreamingProcessor (
                                 (idex_opcode == `OP_SW) ? ex_imm_s_type : 
                                 forwarded_rs2;
 
-    // (* dont_touch = "true" *)
+    (* dont_touch = `DEBUG *)
     ALU alu (
         .clk(i_clk),
         .i_enable(i_enable),
@@ -217,7 +217,7 @@ module StreamingProcessor (
     //& ===============
     //& HAZARD DETECTION
     //& ===============
-    // (* dont_touch = "true" *)
+    (* dont_touch = `DEBUG *)
     HazardUnit hazardUnit (
         .i_id_rs1(id_rs1),
         .i_id_rs2(id_rs2),
@@ -282,7 +282,7 @@ module StreamingProcessor (
     //! =========================================================================
     //! STAGE 4: MEMORY
     //! =========================================================================
-    // (* dont_touch = "true" *) 
+    (* dont_touch = `DEBUG *) 
     wire mem_is_load, mem_is_store;
 
     assign mem_is_load = (exmem_opcode == `OP_LW);
@@ -325,7 +325,7 @@ module StreamingProcessor (
     //& ===============
     //& FORWARDING
     //& ===============
-    // (* dont_touch = "true" *)
+    (* dont_touch = `DEBUG *)
     ForwardingUnit forwardingUnit (
         .i_idex_rs1(idex_rs1),
         .i_idex_rs2(idex_rs2),

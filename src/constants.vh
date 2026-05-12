@@ -30,3 +30,5 @@
 
 `define NOP_INSTR 32'h00000013
 `define TXD_REGISTER 5'h1F
+
+`define DEBUG "true"

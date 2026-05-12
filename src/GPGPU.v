@@ -76,7 +76,7 @@ module GPGPU (
         .o_dmem_wdata(core_dmem_wdata)
     );
 
-    // (* dont_touch = "true" *)
+    (* dont_touch = `DEBUG *)
     MemorySinglePort #(
         .DEPTH(`IMEM_ENTRIES),
         .INIT_FILE("")
@@ -89,7 +89,7 @@ module GPGPU (
         .o_out_a(imem_rdata)
     );
 
-    // (* dont_touch = "true" *)
+    (* dont_touch = `DEBUG *)
     MemoryDualPort #(
         .DEPTH(1024),
         .INIT_FILE("")
