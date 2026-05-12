@@ -3,6 +3,7 @@ import io
 import itertools
 import contextlib
 import re
+import sys
 from pathlib import Path
 from riscv_assembler.convert import AssemblyConverter as AC
 
@@ -14,10 +15,15 @@ def compile_all_tests():
 
     # Search for all 'program.asm' files inside any directory starting with 'test'
     current_dir = Path('.')
-    asm_files = list(current_dir.glob('test*/program.asm'))
+    
+    if len(sys.argv) > 1:
+        target_dir = sys.argv[1]
+        asm_files = [Path(target_dir) / 'program.asm']
+    else:
+        asm_files = list(current_dir.glob('test*/program.asm'))
 
     if not asm_files:
-        print("No 'program.asm' files found in 'test*' directories.")
+        print("No 'program.asm' files found.")
         return
 
     print(f"Found {len(asm_files)} tests. Starting conversion...\n")

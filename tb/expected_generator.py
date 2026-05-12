@@ -1,5 +1,6 @@
 import re
 import argparse
+import sys
 from pathlib import Path
 
 # Memory configurations
@@ -156,14 +157,18 @@ def main():
     current_dir = Path('.')
     asm_files = []
     
-    # 1. Glob only 1 level deep for folders starting with "test"
-    for path in current_dir.glob('test*/program.asm'):
-        # 2. STRICT MATCH: Ensure folder name is exactly "test" + digits (e.g., test1, test12)
-        if re.fullmatch(r'test\d+', path.parent.name):
-            asm_files.append(path)
+    if len(sys.argv) > 1:
+        target_dir = sys.argv[1]
+        asm_files = [Path(target_dir) / 'program.asm']
+    else:
+        # 1. Glob only 1 level deep for folders starting with "test"
+        for path in current_dir.glob('test*/program.asm'):
+            # 2. STRICT MATCH: Ensure folder name is exactly "test" + digits (e.g., test1, test12)
+            if re.fullmatch(r'test\d+', path.parent.name):
+                asm_files.append(path)
 
-    # Sort files numerically based on the test number (optional but helpful)
-    asm_files.sort(key=lambda p: int(p.parent.name.replace('test', '')))
+        # Sort files numerically based on the test number (optional but helpful)
+        asm_files.sort(key=lambda p: int(p.parent.name.replace('test', '')))
 
     if not asm_files:
         print("No 'program.asm' files found in strict 'test[number]' directories.")
