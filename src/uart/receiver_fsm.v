@@ -22,8 +22,8 @@ module receiver_fsm(clk, reset, rx_en, rxD, sample_mid, sample_done, sample_diff
     localparam PERROR = 4'd14;
     localparam FERROR = 4'd15;
 
-    always @(posedge clk, posedge reset) begin
-        if (reset) begin
+    always @(posedge clk) begin
+        if (!reset) begin
             current_state <= DISABLED;
         end else begin
             current_state <= next_state;
@@ -113,7 +113,7 @@ module receiver_fsm(clk, reset, rx_en, rxD, sample_mid, sample_done, sample_diff
                 if (sample_diff) begin
                     next_state = FERROR;
                 end else begin
-                    next_state = sample_done ? PARITY_BIT : BIT_7;
+                    next_state = sample_done ? STOP_BIT : BIT_7;
                 end
             end
             PARITY_BIT: begin

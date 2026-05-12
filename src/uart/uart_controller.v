@@ -1,0 +1,154 @@
+module uart_controller (
+    input i_clk,
+    input i_rst,
+
+    // UART interface
+    input i_uart_rx,
+    output o_uart_tx,
+
+    // Transmission signals
+    input i_tx_enable,
+    input i_rx_enable,
+
+    // Instruction memory
+    output reg [$clog2(`IMEM_ENTRIES)-1:0] o_imem_addr,
+    output reg [31:0] o_imem_wdata,
+    output reg o_imem_wen,
+    
+    // Data memory and regfile
+    output reg [9:0] o_dmem_addr,
+    input wire [31:0] i_dmem_rdata,
+    output reg [4:0] o_reg_addr,
+    input wire [31:0] i_reg_rdata,
+
+    // Status signals
+    output reg o_program_ready,
+    output reg o_dump_ready,
+    
+    // Error handling
+    output wire o_ferror,
+    output wire o_perror
+);
+
+    localparam DMEM_BYTES = (2 ** 10) * 4;
+    localparam IMEM_BYTES = `IMEM_ENTRIES * 4;
+    localparam COUNTER_WIDTH = $clog2((IMEM_BYTES > DMEM_BYTES) ? IMEM_BYTES : DMEM_BYTES);
+
+    // FSM states
+    localparam IDLE = 4'd0;
+    localparam IMEM_RECEIVE = 4'd1;
+    localparam IMEM_WORD_DONE = 4'd2;
+    localparam IMEM_DONE = 4'd3;
+    localparam DMEM_TRANSMIT = 4'd4;
+    localparam DMEM_WORD_DONE = 4'd5;
+    localparam DMEM_DONE = 4'd6;
+    localparam REG_TRANSMIT = 4'd7;
+    localparam REG_WORD_DONE = 4'd8;
+    localparam REG_DONE = 4'd9;
+
+    // FSM signals
+    reg [3:0] current_state, next_state;
+    reg [31:0] word_buffer;
+    reg [COUNTER_WIDTH:0] byte_counter;
+
+    // Receiver signals
+    reg rx_enabled;
+    reg rx_valid_l2p [1:0];
+    wire rx_valid, rx_valid_pulse;
+    wire [7:0] rx_data;
+
+    always @(posedge i_clk) begin
+        if (!i_rst) begin
+            current_state <= IDLE;
+        end else begin
+            current_state <= next_state;
+        end
+    end
+
+    always @(*) begin
+        case (current_state)
+            IDLE: next_state = i_tx_enable ? DMEM_TRANSMIT : (i_rx_enable ? IMEM_RECEIVE : IDLE);
+            IMEM_RECEIVE: next_state = (rx_valid_pulse && byte_counter[1:0] == 2'b11) ? IMEM_WORD_DONE : IMEM_RECEIVE;
+            IMEM_WORD_DONE: next_state = (byte_counter == `IMEM_ENTRIES * 4) ? IMEM_DONE : IMEM_RECEIVE;
+            IMEM_DONE: next_state = IDLE;
+            DMEM_TRANSMIT: next_state = IDLE;
+            DMEM_WORD_DONE: next_state = (byte_counter == (2 ** 10) * 4) ? DMEM_DONE : DMEM_TRANSMIT;
+            DMEM_DONE: next_state = REG_TRANSMIT;
+            REG_TRANSMIT: next_state = IDLE;
+            REG_WORD_DONE: next_state = (byte_counter == 32 * 4) ? REG_DONE : REG_WORD_DONE;
+            REG_DONE: next_state = IDLE;
+            default: next_state = IDLE;
+        endcase
+    end
+
+    always @(*) begin
+        rx_enabled = 1'b0;
+        o_program_ready = 1'b0;
+        o_dump_ready = 1'b0;
+        o_imem_wen = 1'b0;
+        o_imem_wdata = word_buffer;
+        o_imem_addr = byte_counter[COUNTER_WIDTH:2] - 1;
+
+        case (current_state)
+            IMEM_RECEIVE: begin
+                rx_enabled = 1'b1;
+            end
+            IMEM_WORD_DONE: begin 
+                rx_enabled = 1'b1;
+                o_imem_wen = 1'b1;
+            end
+            IMEM_DONE: begin 
+                rx_enabled = 1'b1;
+                o_program_ready = 1'b1;
+            end
+        endcase
+    end
+
+    always @(posedge i_clk) begin
+        if (!i_rst) begin
+            byte_counter <= 0;
+        end else if (current_state == IDLE) begin
+            byte_counter <= 0;
+        end else if (i_rx_enable && rx_valid_pulse) begin
+            byte_counter <= byte_counter + 1;
+        end
+    end
+
+    always @(posedge i_clk) begin
+        if (!i_rst) begin
+            word_buffer <= 32'b0;
+        end else if (i_rx_enable && rx_valid_pulse) begin
+            case (byte_counter[1:0])
+                2'b00: word_buffer[31:24] <= rx_data;
+                2'b01: word_buffer[23:16] <= rx_data;
+                2'b10: word_buffer[15:8] <= rx_data;
+                2'b11: word_buffer[7:0] <= rx_data;
+            endcase
+        end
+    end
+
+    always @(posedge i_clk) begin
+        if (!i_rst) begin
+            rx_valid_l2p[0] <= 0;
+            rx_valid_l2p[1] <= 0;
+        end else begin
+            rx_valid_l2p[0] <= rx_valid;
+            rx_valid_l2p[1] <= rx_valid_l2p[0];
+        end
+    end
+
+    assign rx_valid_pulse = !rx_valid_l2p[1] & rx_valid_l2p[0];
+
+    uart_receiver uart_receiver (
+        .clk(i_clk),
+        .reset(i_rst),
+        .baud_select(3'b111),
+        .rx_en(rx_enabled),
+        .rxD(i_uart_rx),
+        .rx_data(rx_data),
+        .rx_ferror(o_ferror),
+        .rx_perror(o_perror),
+        .rx_valid(rx_valid)
+    );
+    
+endmodule

@@ -2,3 +2,6 @@
 *.log
 *.str
 *.csv
+*.pb
+.Xil/
+*_vivado

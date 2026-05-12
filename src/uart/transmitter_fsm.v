@@ -19,8 +19,8 @@ module transmitter_fsm(clk, reset, tx_en, tx_wr, tx_sample, tx_data, txD, tx_bus
     localparam PARITY_BIT = 4'd11;
     localparam STOP_BIT = 4'd12;    
 
-    always @(posedge clk, posedge reset) begin
-        if (reset) begin
+    always @(posedge clk) begin
+        if (!reset) begin
             current_state <= DISABLED;
         end else begin
             current_state <= next_state;
