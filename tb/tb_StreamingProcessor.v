@@ -4,15 +4,19 @@
 `define TEST_TIMEOUT_CYCLES 200
 
 module tb_StreamingProcessor ();
+    // Configure the number of cores to test
+    parameter NUM_CORES = 2;
+
     reg clk, rst;
     reg dummy_wen;
     wire [2:0] o_leds;
     
     // Expected results arrays
     reg [31:0] expected_data [0:1023];
-    reg [31:0] expected_regfile [0:31];
+    reg [31:0] expected_regfile [0:NUM_CORES-1][0:31];
+    reg [31:0] temp_regfile [0:31];
 
-    integer i;
+    integer i, c;
     integer test_idx;
     integer fd;
     integer data_errors, reg_errors;
@@ -24,15 +28,34 @@ module tb_StreamingProcessor ();
     reg [8*255:0] reg_file;
     reg [8*255:0] trace_file;
 
-    // UUT is now the StreamingMultiprocessor
-    StreamingMultiprocessor UUT (
+    // Instantiation of the UUT
+    StreamingMultiprocessor #(
+        .NUM_CORES(NUM_CORES)
+    ) UUT (
         .i_clk(clk), 
         .rst(rst), 
         .i_dummy_wen(dummy_wen), 
         .o_leds(o_leds)
     );
 
-    // Clock
+    // =========================================================================
+    // Icarus Verilog Workaround: Probe Arrays
+    // We cannot dynamically index instances (e.g. UUT.cores[c].core...) inside a 
+    // standard procedural for-loop. We use generate blocks to map the inner 
+    // register file arrays to a 2D wire array we can easily index.
+    // =========================================================================
+    wire [31:0] core_reg_probes [0:NUM_CORES-1][0:31];
+    
+    genvar cg, rg;
+    generate
+        for (cg = 0; cg < NUM_CORES; cg = cg + 1) begin : probe_cores
+            for (rg = 0; rg < 32; rg = rg + 1) begin : probe_regs
+                assign core_reg_probes[cg][rg] = UUT.cores[cg].core.regfile.data[rg];
+            end
+        end
+    endgenerate
+
+    // Clock Generation
     always #(`CLOCK_PERIOD / 2) clk = ~clk;
 
     initial begin
@@ -42,14 +65,13 @@ module tb_StreamingProcessor ();
         test_idx = 1;
 
         $display("=================================================");
-        $display(" Starting the test suite");
+        $display(" Starting the Multi-Core Test Suite");
         $display("=================================================");
 
         forever begin
             // 1. Find the path of the tests dynamically
             $sformat(prog_file, "test%0d/program.mem", test_idx);
             $sformat(data_file, "test%0d/data.mem", test_idx);
-            $sformat(reg_file, "test%0d/regfile.mem", test_idx);
 
             // 2. If the test doesn't exist, break the loop
             fd = $fopen(prog_file, "r");
@@ -57,38 +79,45 @@ module tb_StreamingProcessor ();
                 if (test_idx == 1) 
                     $display("[ERROR] No tests were found");
                 else 
-                    $display("\nSimulation finished!");
+                    $display("\nSimulation finished successfully!");
                 #(`CLOCK_PERIOD * `TEST_TIMEOUT_CYCLES);
                 $finish;
             end
             $fclose(fd);
 
-            $display("\n---> Starting the tests %0d...", test_idx);
+            $display("\n---> Starting test %0d...", test_idx);
 
             // 3. Clear the memories
             for (i=0; i<1024; i=i+1) UUT.dataMemory.data[i] = 32'b0;
             for (i=0; i<1024; i=i+1) expected_data[i] = 32'b0;
-            for (i=0; i<32; i=i+1) expected_regfile[i] = 32'b0;
-            for (i=0; i<32; i=i+1) UUT.cores[0].core.regfile.data[i] = 32'b0;
+            for (c=0; c<NUM_CORES; c=c+1)
+                for (i=0; i<32; i=i+1) expected_regfile[c][i] = 32'b0;
+
+            // Wait until runtime to let internal registers reset cleanly via RST, 
+            // rather than forcefully clearing them from the TB.
 
             // 4. Load memories
             $readmemh(prog_file, UUT.instructionMemory.data);
             $readmemh(data_file, expected_data);
-            $readmemh(reg_file, expected_regfile);
-
-            $sformat(trace_file, "test%0d/trace.csv", test_idx);
-
-            fd_trace = $fopen(trace_file, "w");
-            if (fd_trace == 0) begin
-                $display("  [ERROR] Could not create trace file: %s", trace_file);
+            
+            for (c=0; c<NUM_CORES; c=c+1) begin
+                $sformat(reg_file, "test%0d/regfile_c%0d.mem", test_idx, c);
+                
+                // Read into the 1D temp array first
+                $readmemh(reg_file, temp_regfile); 
+                
+                // Copy the contents into the 2D array
+                for (i=0; i<32; i=i+1) begin
+                    expected_regfile[c][i] = temp_regfile[i];
+                end
             end
 
-            // 5. Reset
+            // 5. Reset Sequence
             rst = 0;
             #(`CLOCK_PERIOD * 5.75);
             rst = 1;
 
-            // 6. Timeout mechanism and output to csv
+            // 6. Test execution cycle loop
             cycle_count = 0;
             while (cycle_count < `TEST_TIMEOUT_CYCLES) begin
                 #(`CLOCK_PERIOD);
@@ -97,32 +126,40 @@ module tb_StreamingProcessor ();
                 if (rst == 1) begin
                     $fdisplay(fd_trace, "%5d,%8h,%8h,%8h,%8h,%8h", 
                         cycle_count,
-                        UUT.program_counter,               // IF (in SM)
-                        UUT.ifid_program_counter,          // ID (in SM)
-                        UUT.idex_program_counter,          // EX (in SM, passed to SP)
-                        UUT.cores[0].core.exmem_program_counter,  // MEM (in SP)
-                        UUT.cores[0].core.memwb_program_counter   // WB (in SP)
+                        UUT.program_counter,               
+                        UUT.ifid_program_counter,          
+                        UUT.idex_program_counter,          
+                        UUT.cores[0].core.exmem_program_counter,  
+                        UUT.cores[0].core.memwb_program_counter   
                     );
                 end
             end
-
             $fclose(fd_trace);
 
-            if (cycle_count >= `TEST_TIMEOUT_CYCLES) 
-                $display("  [WARNING] Test %0d timed out!", test_idx);
+            // Note: Timeout warning removed as requested. 
 
-            // 7. Compare the regfile
+            // 7. Compare the Regfiles for ALL cores
             reg_errors = 0;
-            for (i = 0; i < 32; i = i + 1) begin
-                // Updated path to regfile inside core_0
-                if (UUT.cores[0].core.regfile.data[i] !== expected_regfile[i]) begin
-                    $display("  [Error] Reg %0d: Expected %h, Found %h", 
-                            i, expected_regfile[i], UUT.cores[0].core.regfile.data[i]);
-                    reg_errors = reg_errors + 1;
+            for (c = 0; c < NUM_CORES; c = c + 1) begin
+                for (i = 0; i < 32; i = i + 1) begin
+                    // Account for TXD_REGISTER (R31) which holds the hardcoded CORE_ID
+                    if (i == 31) begin 
+                        if (core_reg_probes[c][i] !== c) begin
+                            $display("  [Error] Core %0d Reg %0d (TXD): Expected %0h, Found %h", 
+                                     c, i, c, core_reg_probes[c][i]);
+                            reg_errors = reg_errors + 1;
+                        end
+                    end else begin
+                        if (core_reg_probes[c][i] !== expected_regfile[c][i]) begin
+                            $display("  [Error] Core %0d Reg %0d: Expected %h, Found %h", 
+                                     c, i, expected_regfile[c][i], core_reg_probes[c][i]);
+                            reg_errors = reg_errors + 1;
+                        end
+                    end
                 end
             end
 
-            // 8. Compare Data Memory
+            // 8. Compare Global Shared Data Memory
             data_errors = 0;
             for (i = 0; i < 1024; i = i + 1) begin
                 if (UUT.dataMemory.data[i] !== expected_data[i]) begin
@@ -132,9 +169,9 @@ module tb_StreamingProcessor ();
                 end
             end
 
-            // 9. Test result
+            // 9. Final Verdict
             if (reg_errors == 0 && data_errors == 0)
-                $display("  [PASS] Test %0d is correct!", test_idx);
+                $display("  [PASS] Test %0d is correct across all %0d cores!", test_idx, NUM_CORES);
             else
                 $display("  [FAIL] Test %0d failed. (Reg errors: %0d, Data errors: %0d)", 
                     test_idx, reg_errors, data_errors);
@@ -143,27 +180,30 @@ module tb_StreamingProcessor ();
         end
     end
 
-    //! Waveform
+    // =========================================================================
+    // Waveform Dumping
+    // =========================================================================
     initial begin
         $dumpfile("dumpfile.vcd");
-        
-        // Dumps all standard wires and registers (including addresses and live crossbar data)
         $dumpvars(0, tb_StreamingProcessor);
     end
 
-    // Use a compile-time generate block to dump the 2D memory arrays
-    // This perfectly bypasses the Icarus Verilog "Scope index is not constant" error!
-    genvar d;
+    // Dump multi-core 2D Arrays without throwing Scope Index errors
+    genvar d, c_dump;
     generate
-        for (d = 0; d < 32; d = d + 1) begin : dump_arrays
+        for (d = 0; d < 32; d = d + 1) begin : dump_mems
             initial begin
-                // Dumps the first 32 words of Instruction and Data memory
                 $dumpvars(0, tb_StreamingProcessor.UUT.instructionMemory.data[d]);
                 $dumpvars(0, tb_StreamingProcessor.UUT.dataMemory.data[d]);
-                
-                // Dumps all 32 registers of Core 0
-                $dumpvars(0, tb_StreamingProcessor.UUT.cores[0].core.regfile.data[d]);
+            end
+        end
+        for (c_dump = 0; c_dump < NUM_CORES; c_dump = c_dump + 1) begin : dump_cores
+            for (d = 0; d < 32; d = d + 1) begin : dump_regs
+                initial begin
+                    $dumpvars(0, tb_StreamingProcessor.UUT.cores[c_dump].core.regfile.data[d]);
+                end
             end
         end
     endgenerate
+
 endmodule
