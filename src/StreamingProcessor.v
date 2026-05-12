@@ -46,7 +46,6 @@ module StreamingProcessor #(
     input i_mem_rvalid,
     input i_global_stall
 );
-
     wire clk = i_clk;
 
     //! =========================================================================
@@ -62,7 +61,6 @@ module StreamingProcessor #(
     wire [31:0] ex_actual_alu_in_b;
     wire [1:0] forward_alu_a, forward_alu_b;
     wire ex_is_mul, mul_not_ready;
-    
     reg [4:0] memwb_rd;
     reg memwb_wen;
     wire [31:0] wb_wdata;
@@ -71,25 +69,53 @@ module StreamingProcessor #(
     assign ex_imm_i_type = {{20{i_idex_imm_31_20[11]}}, i_idex_imm_31_20};
     assign ex_imm_s_type = {{20{i_idex_imm_31_25[6]}}, i_idex_imm_31_25, i_idex_rd};
 
-(* dont_touch = "true" *)
+    (* dont_touch = "true" *)
     Regfile #(
         .CORE_ID(CORE_ID)
     ) regfile (
         .clk(clk), .rst(rst), .i_wen(memwb_wen), .i_wdata(wb_wdata), 
         .i_addr_a(i_id_mux_rs1), .i_addr_b(i_id_mux_rs2), .i_waddr(memwb_rd), 
-        .o_reg_a(ex_reg_a), .o_reg_b(ex_reg_b)
+        .o_reg_a(ex_reg_a), .o_reg_b(ex_reg_b), .i_global_stall(i_global_stall)
     );
 
+    //? =================================================
+    //? STALL SAFETY LATCH LOGIC
+    //? Protects EX operands from being overwritten by ID 
+    //? stage continuous Regfile reads during a crossbar stall
+    //? =================================================
+    reg [31:0] stall_reg_a, stall_reg_b;
+    reg was_stalled;
+    
+    always @(posedge clk) begin
+        if (!rst) begin
+            was_stalled <= 1'b0;
+            stall_reg_a <= 32'b0;
+            stall_reg_b <= 32'b0;
+        end else begin
+            was_stalled <= i_global_stall;
+            // Snapshot the live EX data the exact moment a stall begins
+            if (i_global_stall && !was_stalled) begin
+                stall_reg_a <= ex_reg_a;
+                stall_reg_b <= ex_reg_b;
+            end
+        end
+    end
+
+    // Route the safely latched data whenever we are recovering from a stall
+    wire [31:0] safe_ex_reg_a = was_stalled ? stall_reg_a : ex_reg_a;
+    wire [31:0] safe_ex_reg_b = was_stalled ? stall_reg_b : ex_reg_b;
+
+    //? --- Forwarding Multiplexer B (Must be defined first for routing) ---
     assign forwarded_rs2 = (forward_alu_b == `EXALU_MEMALU_DEP) ? exmem_alu_out :
                            (forward_alu_b == `MEMWB_EXALU_DEP)  ? wb_wdata : 
-                            ex_reg_b;
+                            safe_ex_reg_b; // Use protected register
 
     //? --- Forwarding Multiplexer A ---
     assign ex_actual_alu_in_a = (forward_alu_a == `EXALU_MEMALU_DEP) ? exmem_alu_out :
                                 (forward_alu_a == `MEMWB_EXALU_DEP)  ? wb_wdata :
-                                 ex_reg_a;
-    
-    //? --- Forwarding Multiplexer B ---
+                                 safe_ex_reg_a; // Use protected register
+
+    //? --- Final ALU Input B ---
     assign ex_actual_alu_in_b = (i_idex_opcode == `OP_LW || i_idex_instr_type == `INSTR_TYPE_I) ? ex_imm_i_type :
                                 (i_idex_opcode == `OP_SW) ? ex_imm_s_type :
                                  forwarded_rs2;
@@ -97,8 +123,10 @@ module StreamingProcessor #(
     (* dont_touch = "true" *)
     ALU alu (
         .clk(clk),
+        .rst(rst),
         .i_operand_a(ex_actual_alu_in_a), 
-        .i_operand_b(ex_actual_alu_in_b), 
+        .i_operand_b(ex_actual_alu_in_b),
+        .i_global_stall(i_global_stall),
         .i_alu_op(i_idex_aluop), 
         .i_mul_valid(mul3_valid),
         .o_alu_out(ex_alu_out),
@@ -114,9 +142,11 @@ module StreamingProcessor #(
 
     always @(posedge clk) begin
         if (!rst) begin
-            mul1_rd <= 0; mul2_rd <= 0; mul3_rd <= 0;
+            mul1_rd <= 0;
+            mul2_rd <= 0; mul3_rd <= 0;
             mul1_valid <= 0; mul2_valid <= 0; mul3_valid <= 0;
-            mul1_program_counter <= 0; mul2_program_counter <= 0; mul3_program_counter <= 0;
+            mul1_program_counter <= 0;
+            mul2_program_counter <= 0; mul3_program_counter <= 0;
         end else if (i_global_stall) begin
             // Retain state during memory stall
         end else begin
@@ -145,7 +175,6 @@ module StreamingProcessor #(
 
     assign ex_beq_offset = {{20{i_idex_imm_31_25[6]}}, i_idex_rd[0], i_idex_imm_31_25[5:0], i_idex_rd[4:1], 1'b0};
     assign o_ex_beq_target_idx = i_idex_program_counter[$clog2(`IMEM_ENTRIES)+1:2] + ex_beq_offset[31:2];
-
     assign mul_not_ready = (ex_is_mul || mul1_valid || mul2_valid) && !mul3_valid;
 
     //* =========================================================================

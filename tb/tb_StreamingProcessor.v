@@ -69,7 +69,7 @@ module tb_StreamingProcessor ();
             for (i=0; i<1024; i=i+1) UUT.dataMemory.data[i] = 32'b0;
             for (i=0; i<1024; i=i+1) expected_data[i] = 32'b0;
             for (i=0; i<32; i=i+1) expected_regfile[i] = 32'b0;
-            for (i=0; i<32; i=i+1) UUT.core_0.regfile.data[i] = 32'b0; // Updated path
+            for (i=0; i<32; i=i+1) UUT.cores[0].core.regfile.data[i] = 32'b0;
 
             // 4. Load memories
             $readmemh(prog_file, UUT.instructionMemory.data);
@@ -100,8 +100,8 @@ module tb_StreamingProcessor ();
                         UUT.program_counter,               // IF (in SM)
                         UUT.ifid_program_counter,          // ID (in SM)
                         UUT.idex_program_counter,          // EX (in SM, passed to SP)
-                        UUT.core_0.exmem_program_counter,  // MEM (in SP)
-                        UUT.core_0.memwb_program_counter   // WB (in SP)
+                        UUT.cores[0].core.exmem_program_counter,  // MEM (in SP)
+                        UUT.cores[0].core.memwb_program_counter   // WB (in SP)
                     );
                 end
             end
@@ -115,9 +115,9 @@ module tb_StreamingProcessor ();
             reg_errors = 0;
             for (i = 0; i < 32; i = i + 1) begin
                 // Updated path to regfile inside core_0
-                if (UUT.core_0.regfile.data[i] !== expected_regfile[i]) begin
+                if (UUT.cores[0].core.regfile.data[i] !== expected_regfile[i]) begin
                     $display("  [Error] Reg %0d: Expected %h, Found %h", 
-                             i, expected_regfile[i], UUT.core_0.regfile.data[i]);
+                            i, expected_regfile[i], UUT.cores[0].core.regfile.data[i]);
                     reg_errors = reg_errors + 1;
                 end
             end
@@ -146,13 +146,24 @@ module tb_StreamingProcessor ();
     //! Waveform
     initial begin
         $dumpfile("dumpfile.vcd");
+        
+        // Dumps all standard wires and registers (including addresses and live crossbar data)
         $dumpvars(0, tb_StreamingProcessor);
-        $dumpvars(0, tb_StreamingProcessor.UUT);
-        for (i = 0; i < 16; i = i + 1) begin
-            $dumpvars(0, tb_StreamingProcessor.UUT.instructionMemory.data[i]);
-            $dumpvars(0, tb_StreamingProcessor.UUT.dataMemory.data[i]);
-            // Updated path for dumping regfile array 
-            $dumpvars(0, tb_StreamingProcessor.UUT.core_0.regfile.data[i]);
-        end
     end
+
+    // Use a compile-time generate block to dump the 2D memory arrays
+    // This perfectly bypasses the Icarus Verilog "Scope index is not constant" error!
+    genvar d;
+    generate
+        for (d = 0; d < 32; d = d + 1) begin : dump_arrays
+            initial begin
+                // Dumps the first 32 words of Instruction and Data memory
+                $dumpvars(0, tb_StreamingProcessor.UUT.instructionMemory.data[d]);
+                $dumpvars(0, tb_StreamingProcessor.UUT.dataMemory.data[d]);
+                
+                // Dumps all 32 registers of Core 0
+                $dumpvars(0, tb_StreamingProcessor.UUT.cores[0].core.regfile.data[d]);
+            end
+        end
+    endgenerate
 endmodule

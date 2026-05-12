@@ -2,10 +2,12 @@
 
 module ALU (
     input clk,
+    input rst,
     input [31:0] i_operand_a,
     input [31:0] i_operand_b,
     input [1:0] i_alu_op,
     input i_mul_valid,
+    input i_global_stall,
     output reg [31:0] o_alu_out,
     output reg o_alu_zero
 );
@@ -14,9 +16,15 @@ module ALU (
     (* use_dsp = "yes" *) reg [31:0] mul_stage3;
 
     always @(posedge clk) begin
-        mul_stage1 <= i_operand_a * i_operand_b;
-        mul_stage2 <= mul_stage1;
-        mul_stage3 <= mul_stage2;
+        if (!rst) begin
+            mul_stage1 <= 0;
+            mul_stage2 <= 0;
+            mul_stage3 <= 0;
+        end else if (!i_global_stall) begin
+            mul_stage1 <= i_operand_a * i_operand_b;
+            mul_stage2 <= mul_stage1;
+            mul_stage3 <= mul_stage2;
+        end
     end
     
     always @(*) begin

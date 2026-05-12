@@ -1,6 +1,8 @@
 `include "constants.vh"
 
-module StreamingMultiprocessor (
+module StreamingMultiprocessor #(
+    parameter NUM_CORES = 4
+)(
     input i_clk,
     input rst,
     input i_dummy_wen,
@@ -21,17 +23,16 @@ module StreamingMultiprocessor (
     //& ===============
     //& CROSSBAR & STALL LOGIC
     //& ===============
-    // New wires to connect the cores to the Crossbar
-    wire [9:0] c0_mem_addr, c1_mem_addr;
-    wire [31:0] c0_mem_wdata, c1_mem_wdata;
-    wire c0_mem_ren, c1_mem_ren;
-    wire c0_mem_wen, c1_mem_wen;
-    wire [31:0] c0_mem_rdata, c1_mem_rdata;
-    wire c0_mem_grant, c0_mem_rvalid;
-    wire c1_mem_grant, c1_mem_rvalid;
+    wire [9:0] sp_mem_addr [0:NUM_CORES-1];
+    wire [31:0] sp_mem_wdata [0:NUM_CORES-1];
+    wire [NUM_CORES-1:0] sp_mem_ren;
+    wire [NUM_CORES-1:0] sp_mem_wen;
+    wire [31:0] sp_mem_rdata [0:NUM_CORES-1];
+    wire [NUM_CORES-1:0] sp_mem_grant;
+    wire [NUM_CORES-1:0] sp_mem_rvalid;
 
-    // If a core requests memory (ren) but doesn't get a grant, stall the whole pipeline
-    wire global_stall = (c0_mem_ren & ~c0_mem_grant) | (c1_mem_ren & ~c1_mem_grant);
+    // A single core waiting for a grant stalls the entire lockstep pipeline
+    wire global_stall = |(sp_mem_ren & ~sp_mem_grant);
 
     //! =========================================================================
     //! STAGE 1: INSTRUCTION FETCH
@@ -54,7 +55,7 @@ module StreamingMultiprocessor (
     ) instructionMemory (
         .clk(clk),
         .i_addr_a(instr_mem_addr),
-        .i_ren_a(!data_hazard | flush),
+        .i_ren_a((!data_hazard && !global_stall) | flush),
         .i_wen_a(1'b0),
         .i_data_a(32'b0),
         .o_out_a(ifid_instruction)
@@ -100,8 +101,9 @@ module StreamingMultiprocessor (
     assign id_wen = !({`INSTR_TYPE_S == id_instr_type && `OP_SW == id_opcode} || {`INSTR_TYPE_S == id_instr_type && `OP_BEQ == id_opcode} || (id_rd == 5'b0));
     assign id_is_mul = (id_opcode == `OP_R_TYPE) && (id_imm_31_25 == `FUNCT7_MULDIV);
     
-    assign id_mux_rs1 = data_hazard ? 5'b0 : id_rs1;
-    assign id_mux_rs2 = data_hazard ? 5'b0 : id_rs2;
+    // Solved earlier hazard stall bug: Never zero out these addresses
+    assign id_mux_rs1 = id_rs1;
+    assign id_mux_rs2 = id_rs2;
 
     //* =========================================================================
     //* PIPELINE REGISTER 2: INSTRUCTION DECODE -> EXECUTE (Feeds into SP)
@@ -183,40 +185,53 @@ module StreamingMultiprocessor (
     //& ===============
     //& GLOBAL DATA MEMORY CROSSBAR
     //& ===============
-    wire [9:0] sp0_mem_addr, sp1_mem_addr;
-    wire [31:0] sp0_mem_wdata, sp1_mem_wdata;
-    wire sp0_mem_ren, sp1_mem_ren;
-    wire sp0_mem_wen, sp1_mem_wen;
-    wire [31:0] sp0_mem_rdata, sp1_mem_rdata;
+    wire [9:0] dmem_addr_a, dmem_addr_b;
+    wire [31:0] dmem_wdata_a, dmem_wdata_b;
+    wire dmem_ren_a, dmem_ren_b;
+    wire dmem_wen_a, dmem_wen_b;
+    wire [31:0] dmem_rdata_a, dmem_rdata_b;
+
+    wire [NUM_CORES*10-1:0] flat_mem_addr;
+    wire [NUM_CORES*32-1:0] flat_mem_wdata;
+    wire [NUM_CORES*32-1:0] flat_mem_rdata;
+
+    genvar i;
+    generate
+        for (i = 0; i < NUM_CORES; i = i + 1) begin : gen_flat
+            assign flat_mem_addr[i*10 +: 10] = sp_mem_addr[i];
+            assign flat_mem_wdata[i*32 +: 32] = sp_mem_wdata[i];
+            assign sp_mem_rdata[i] = flat_mem_rdata[i*32 +: 32];
+        end
+    endgenerate
 
     MemoryCrossbarNx2 #(
-        .N(2),
+        .N(NUM_CORES),
         .DEPTH(1024)
     ) memCrossbar (
         .clk(clk),
         .rst(rst),
         // Cores Interface
-        .i_req   ( {c1_mem_ren, c0_mem_ren} ),     // Core ren acts as the global request
-        .i_wen   ( {c1_mem_wen, c0_mem_wen} ),
-        .i_addr  ( {c1_mem_addr, c0_mem_addr} ),
-        .i_wdata ( {c1_mem_wdata, c0_mem_wdata} ),
-        .o_grant ( {c1_mem_grant, c0_mem_grant} ),
-        .o_rvalid( {c1_mem_rvalid, c0_mem_rvalid} ),
-        .o_rdata ( {c1_mem_rdata, c0_mem_rdata} ),
+        .i_req   ( sp_mem_ren ),
+        .i_wen   ( sp_mem_wen ),
+        .i_addr  ( flat_mem_addr ),
+        .i_wdata ( flat_mem_wdata ),
+        .o_grant ( sp_mem_grant ),
+        .o_rvalid( sp_mem_rvalid ),
+        .o_rdata ( flat_mem_rdata ),
         
         // Memory Port A Interface
-        .o_addr_a(sp0_mem_addr),
-        .o_ren_a(sp0_mem_ren),
-        .o_wen_a(sp0_mem_wen),
-        .o_data_a(sp0_mem_wdata),
-        .i_out_a(sp0_mem_rdata),
+        .o_addr_a(dmem_addr_a),
+        .o_ren_a(dmem_ren_a),
+        .o_wen_a(dmem_wen_a),
+        .o_data_a(dmem_wdata_a),
+        .i_out_a(dmem_rdata_a),
         
         // Memory Port B Interface
-        .o_addr_b(sp1_mem_addr),
-        .o_ren_b(sp1_mem_ren),
-        .o_wen_b(sp1_mem_wen),
-        .o_data_b(sp1_mem_wdata),
-        .i_out_b(sp1_mem_rdata)
+        .o_addr_b(dmem_addr_b),
+        .o_ren_b(dmem_ren_b),
+        .o_wen_b(dmem_wen_b),
+        .o_data_b(dmem_wdata_b),
+        .i_out_b(dmem_rdata_b)
     );
 
     //& ===============
@@ -228,116 +243,88 @@ module StreamingMultiprocessor (
         .INIT_FILE("")
     ) dataMemory (
         .clk(clk),
-        .i_addr_a(sp0_mem_addr),
-        .i_ren_a(sp0_mem_ren),
-        .i_wen_a(sp0_mem_wen),
-        .i_data_a(sp0_mem_wdata),
-        .o_out_a(sp0_mem_rdata),
-        .i_addr_b(sp1_mem_addr),
-        .i_ren_b(sp1_mem_ren),
-        .i_wen_b(sp1_mem_wen),
-        .i_data_b(sp1_mem_wdata),
-        .o_out_b(sp1_mem_rdata)
+        .i_addr_a(dmem_addr_a),
+        .i_ren_a(dmem_ren_a),
+        .i_wen_a(dmem_wen_a),
+        .i_data_a(dmem_wdata_a),
+        .o_out_a(dmem_rdata_a),
+        .i_addr_b(dmem_addr_b),
+        .i_ren_b(dmem_ren_b),
+        .i_wen_b(dmem_wen_b),
+        .i_data_b(dmem_wdata_b),
+        .o_out_b(dmem_rdata_b)
     );
 
     //& ===============
     //& STREAMING PROCESSOR CORES
     //& ===============
-    StreamingProcessor #(.CORE_ID(0)) core_0 (
-        .i_clk(clk),
-        .rst(rst),
-        .i_dummy_wen(i_dummy_wen),
-        .o_leds(o_leds),
+    wire [NUM_CORES-1:0] core_ex_branch_taken;
+    wire [$clog2(`IMEM_ENTRIES)-1:0] core_ex_beq_target_idx [0:NUM_CORES-1];
+    wire [NUM_CORES-1:0] core_mul1_valid, core_mul2_valid, core_mul3_valid;
+    wire [4:0] core_mul1_rd [0:NUM_CORES-1];
+    wire [4:0] core_mul2_rd [0:NUM_CORES-1];
+    wire [4:0] core_mul3_rd [0:NUM_CORES-1];
 
-        //! Regfile Muxes forward
-        .i_id_mux_rs1(id_mux_rs1),
-        .i_id_mux_rs2(id_mux_rs2),
+    // Since execution is lockstep, use Core 0 for shared hazard tracking
+    assign ex_branch_taken = core_ex_branch_taken[0];
+    assign ex_beq_target_idx = core_ex_beq_target_idx[0];
+    assign mul1_valid = core_mul1_valid[0];
+    assign mul1_rd = core_mul1_rd[0];
+    assign mul2_valid = core_mul2_valid[0];
+    assign mul2_rd = core_mul2_rd[0];
+    assign mul3_valid = core_mul3_valid[0];
+    assign mul3_rd = core_mul3_rd[0];
 
-        //! IDEX Pipeline
-        .i_idex_rs1(idex_rs1),
-        .i_idex_rs2(idex_rs2),
-        .i_idex_rd(idex_rd),
-        .i_idex_imm_31_20(idex_imm_31_20),
-        .i_idex_imm_31_25(idex_imm_31_25),
-        .i_idex_aluop(idex_aluop),
-        .i_idex_instr_type(idex_instr_type),
-        .i_idex_opcode(idex_opcode),
-        .i_idex_program_counter(idex_program_counter),
-        .i_idex_wen(idex_wen),
+    generate
+        for (i = 0; i < NUM_CORES; i = i + 1) begin : cores
+            wire [2:0] core_leds;
+            if (i == 0) assign o_leds = core_leds;
 
-        //! Feedback wires Hazard & PC 
-        .o_ex_branch_taken(ex_branch_taken),
-        .o_ex_beq_target_idx(ex_beq_target_idx),
-        .o_mul1_valid(mul1_valid),
-        .o_mul1_rd(mul1_rd),
-        .o_mul2_valid(mul2_valid),
-        .o_mul2_rd(mul2_rd),
-        .o_mul3_valid(mul3_valid),
-        .o_mul3_rd(mul3_rd),
+            StreamingProcessor #(.CORE_ID(i)) core (
+                .i_clk(clk),
+                .rst(rst),
+                .i_dummy_wen(i_dummy_wen),
+                .o_leds(core_leds),
 
-        //! Memory connections to Crossbar
-        .o_mem_addr(c0_mem_addr),
-        .o_mem_wdata(c0_mem_wdata),
-        .o_mem_ren(c0_mem_ren),
-        .o_mem_wen(c0_mem_wen),
-        .i_mem_rdata(c0_mem_rdata),
-        
-        //! New Crossbar Control Pins
-        .i_mem_grant(c0_mem_grant),
-        .i_mem_rvalid(c0_mem_rvalid),
-        .i_global_stall(global_stall)
-    );
+                //! Regfile Muxes forward
+                .i_id_mux_rs1(id_mux_rs1),
+                .i_id_mux_rs2(id_mux_rs2),
 
-    // Dummy wires to catch core_1's redundant lockstep feedback
-    wire c1_ex_branch_taken;
-    wire [$clog2(`IMEM_ENTRIES)-1:0] c1_ex_beq_target_idx;
-    wire c1_mul1_valid, c1_mul2_valid, c1_mul3_valid;
-    wire [4:0] c1_mul1_rd, c1_mul2_rd, c1_mul3_rd;
-    wire [2:0] c1_leds;
+                //! IDEX Pipeline
+                .i_idex_rs1(idex_rs1),
+                .i_idex_rs2(idex_rs2),
+                .i_idex_rd(idex_rd),
+                .i_idex_imm_31_20(idex_imm_31_20),
+                .i_idex_imm_31_25(idex_imm_31_25),
+                .i_idex_aluop(idex_aluop),
+                .i_idex_instr_type(idex_instr_type),
+                .i_idex_opcode(idex_opcode),
+                .i_idex_program_counter(idex_program_counter),
+                .i_idex_wen(idex_wen),
 
-    StreamingProcessor #(.CORE_ID(1)) core_1 (
-        .i_clk(clk),
-        .rst(rst),
-        .i_dummy_wen(i_dummy_wen),
-        .o_leds(c1_leds),
+                //! Feedback wires Hazard & PC 
+                .o_ex_branch_taken(core_ex_branch_taken[i]),
+                .o_ex_beq_target_idx(core_ex_beq_target_idx[i]),
+                .o_mul1_valid(core_mul1_valid[i]),
+                .o_mul1_rd(core_mul1_rd[i]),
+                .o_mul2_valid(core_mul2_valid[i]),
+                .o_mul2_rd(core_mul2_rd[i]),
+                .o_mul3_valid(core_mul3_valid[i]),
+                .o_mul3_rd(core_mul3_rd[i]),
 
-        //! Regfile Muxes forward
-        .i_id_mux_rs1(id_mux_rs1),
-        .i_id_mux_rs2(id_mux_rs2),
-
-        //! IDEX Pipeline
-        .i_idex_rs1(idex_rs1),
-        .i_idex_rs2(idex_rs2),
-        .i_idex_rd(idex_rd),
-        .i_idex_imm_31_20(idex_imm_31_20),
-        .i_idex_imm_31_25(idex_imm_31_25),
-        .i_idex_aluop(idex_aluop),
-        .i_idex_instr_type(idex_instr_type),
-        .i_idex_opcode(idex_opcode),
-        .i_idex_program_counter(idex_program_counter),
-        .i_idex_wen(idex_wen),
-
-        //! Feedback wires Hazard & PC (ignored for SM logic)
-        .o_ex_branch_taken(c1_ex_branch_taken),
-        .o_ex_beq_target_idx(c1_ex_beq_target_idx),
-        .o_mul1_valid(c1_mul1_valid),
-        .o_mul1_rd(c1_mul1_rd),
-        .o_mul2_valid(c1_mul2_valid),
-        .o_mul2_rd(c1_mul2_rd),
-        .o_mul3_valid(c1_mul3_valid),
-        .o_mul3_rd(c1_mul3_rd),
-
-        //! Memory connections to Crossbar
-        .o_mem_addr(c1_mem_addr),
-        .o_mem_wdata(c1_mem_wdata),
-        .o_mem_ren(c1_mem_ren),
-        .o_mem_wen(c1_mem_wen),
-        .i_mem_rdata(c1_mem_rdata),
-
-        //! New Crossbar Control Pins
-        .i_mem_grant(c1_mem_grant),
-        .i_mem_rvalid(c1_mem_rvalid),
-        .i_global_stall(global_stall)
-    );
+                //! Memory connections to Crossbar
+                .o_mem_addr(sp_mem_addr[i]),
+                .o_mem_wdata(sp_mem_wdata[i]),
+                .o_mem_ren(sp_mem_ren[i]),
+                .o_mem_wen(sp_mem_wen[i]),
+                .i_mem_rdata(sp_mem_rdata[i]),
+                
+                //! New Crossbar Control Pins
+                .i_mem_grant(sp_mem_grant[i]),
+                .i_mem_rvalid(sp_mem_rvalid[i]),
+                .i_global_stall(global_stall)
+            );
+        end
+    endgenerate
 
 endmodule
