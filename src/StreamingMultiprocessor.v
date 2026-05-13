@@ -201,7 +201,7 @@ module StreamingMultiprocessor #(
     genvar i;
     generate
         for (i = 0; i < NUM_CORES; i = i + 1) begin : gen_flat
-            assign flat_mem_addr[i*11 +: 11] = sp_mem_addr[i];
+            assign flat_mem_addr[i*DMEM_AW +: DMEM_AW] = sp_mem_addr[i];
             assign flat_mem_wdata[i*32 +: 32] = sp_mem_wdata[i];
             assign sp_mem_rdata[i] = flat_mem_rdata[i*32 +: 32];
         end
@@ -209,7 +209,7 @@ module StreamingMultiprocessor #(
 
     MemoryCrossbarNx2 #(
         .N(NUM_CORES),
-        .DEPTH(`IMEM_ENTRIES),
+        .DEPTH(`DMEM_ENTRIES),
         .ADDR_W(DMEM_AW)
     ) memCrossbar (
         .clk(clk),
@@ -243,7 +243,7 @@ module StreamingMultiprocessor #(
     //& ===============
     (* dont_touch = "true" *)
     MemoryDualPort #(
-        .DEPTH(`IMEM_ENTRIES),
+        .DEPTH(`DMEM_ENTRIES),
         .INIT_FILE("")
     ) dataMemory (
         .clk(clk),
