@@ -47,11 +47,7 @@ $(MEM): $(ASM)
 		hex_code = $$2; \
 		instruction = $$3; \
 		if (length(hex_code) == 8) { \
-			if (instruction == "jalr") { \
-				print "00000063"; \
-			} else { \
-				print hex_code; \
-			} \
+			print hex_code; \
 		} \
 	}' $< > $@
 	@echo "Success! RISC-V Memory File is ready: $@"
