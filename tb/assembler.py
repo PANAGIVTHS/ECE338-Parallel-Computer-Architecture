@@ -7,7 +7,43 @@ import sys
 from pathlib import Path
 from riscv_assembler.convert import AssemblyConverter as AC
 
-DEPTH = 1024
+DEPTH = 2048
+
+# ===================== MANUAL BYPASS FUNCTIONS =====================
+def parse_reg(r):
+    return int(r.replace('x', '').replace(',', '').replace('(', '').replace(')', ''))
+
+def parse_imm(imm_str):
+    if imm_str.lower().startswith('0x') or imm_str.lower().startswith('-0x'):
+        return int(imm_str, 16)
+    return int(imm_str)
+
+def assemble_slt_srli(line):
+    """Manually computes the hex for the 2 unsupported instructions"""
+    parts = line.replace(',', ' ').split()
+    op = parts[0].lower()
+    if op == 'slt':
+        rd = parse_reg(parts[1])
+        rs1 = parse_reg(parts[2])
+        rs2 = parse_reg(parts[3])
+        b = (0x00 << 25) | (rs2 << 20) | (rs1 << 15) | (0x2 << 12) | (rd << 7) | 0x33
+        return f"{b:08x}"
+    elif op == 'srli':
+        rd = parse_reg(parts[1])
+        rs1 = parse_reg(parts[2])
+        imm = parse_imm(parts[3])
+        shamt = imm & 0x1F
+        b = (0x00 << 25) | (shamt << 20) | (rs1 << 15) | (0x5 << 12) | (rd << 7) | 0x13
+        return f"{b:08x}"
+    return None
+
+def convert_hex_immediates(match):
+    """Converts 0x strings to decimal integers"""
+    val_str = match.group(0)
+    sign = -1 if val_str.startswith('-') else 1
+    val = sign * int(val_str.replace('-', ''), 16)
+    return str(val)
+# ===================================================================
 
 def compile_all_tests():
     # Keep output_mode='p' (print) since it's the only one that outputs the data
@@ -37,6 +73,10 @@ def compile_all_tests():
             # Read the Assembly code from the .asm file
             with open(asm_path, 'r', encoding='utf-8') as f:
                 raw_asm_code = f.read()
+
+            # --- 1. PRE-PROCESS 0x VALUES FOR ENTIRE FILE ---
+            # This fixes the library crashing on '0x2' by making it '2' before doing anything
+            raw_asm_code = re.sub(r'-?0[xX][0-9a-fA-F]+', convert_hex_immediates, raw_asm_code)
 
             # ===================== COMMENT REMOVAL START =====================
             cleaned_lines = []
@@ -70,6 +110,25 @@ def compile_all_tests():
             asm_code = re.sub(r'sw\s+(x\d+)\s*,\s*(-?\d+)\((x\d+)\)', fix_store_offset, asm_code)
             # ===================== ASSEMBLER BUG FIX END =======================
 
+            # ===================== INSTRUCTION BYPASS START ====================
+            safe_lines = []
+            custom_hex_map = {}
+            
+            for i, line in enumerate(asm_code.splitlines()):
+                op = line.replace(',', ' ').split()[0].lower() if line.strip() else ""
+                if op in ['slt', 'srli']:
+                    # Manually convert the instruction to hex
+                    custom_hex = assemble_slt_srli(line)
+                    if custom_hex:
+                        custom_hex_map[i] = custom_hex
+                    # Give the library a dummy instruction of the same length
+                    safe_lines.append("addi x0, x0, 0")
+                else:
+                    safe_lines.append(line)
+                    
+            asm_code = '\n'.join(safe_lines)
+            # ===================== INSTRUCTION BYPASS END ======================
+
             # Create an in-memory string buffer
             f_buffer = io.StringIO()
 
@@ -88,6 +147,11 @@ def compile_all_tests():
 
             # clean empty lines
             lines = [line.strip() for line in lines if line.strip()]
+
+            # --- RESTORE OUR MANUALLY CALCULATED HEX ---
+            for idx, hex_val in custom_hex_map.items():
+                if idx < len(lines):
+                    lines[idx] = hex_val
 
             # pad missing instructions with zeros
             while len(lines) < DEPTH:

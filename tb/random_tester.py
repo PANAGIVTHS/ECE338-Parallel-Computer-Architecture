@@ -12,7 +12,7 @@ RANDOM_TEST_DIR = "test999"
 # x1 is reserved as a safe memory base pointer (0)
 # x0 is hardwired 0, x31 is Core ID
 AVAILABLE_REGS = [f"x{i}" for i in range(2, 31)]
-OPCODES = ['add', 'sub', 'addi', 'mul', 'lw', 'sw', 'beq']
+OPCODES = ['add', 'sub', 'addi', 'mul', 'lw', 'sw', 'beq', 'and', 'andi', 'or', 'sll', 'slli', 'sra', 'srai', 'srl', 'srli', 'slt', 'slti', 'sltu', 'sltiu']
 
 def generate_random_assembly(filepath):
     """Generates a randomized but safe RISC-V assembly program."""
@@ -37,12 +37,16 @@ def generate_random_assembly(filepath):
         rs1 = random.choice(AVAILABLE_REGS)
         rs2 = random.choice(AVAILABLE_REGS)
         
-        if op in ['add', 'sub', 'mul']:
+        if op in ['add', 'sub', 'mul', 'and', 'or', 'sll', 'srl', 'sra', 'slt', 'sltu']:
             asm.append(f"{op} {rd}, {rs1}, {rs2}")
             
-        elif op == 'addi':
+        elif op in ['addi', 'andi', 'slti', 'sltiu']:
             imm = random.randint(-100, 100)
-            asm.append(f"addi {rd}, {rs1}, {imm}")
+            asm.append(f"{op} {rd}, {rs1}, {imm}")
+
+        elif op in ['slli', 'srli', 'srai']:
+            imm = random.randint(0, 31) # Shifts are bounded between 0 and 31
+            asm.append(f"{op} {rd}, {rs1}, {imm}")
             
         elif op in ['lw', 'sw']:
             # Safe memory access: Word-aligned offset between 0 and 4000 (Max is 4092)

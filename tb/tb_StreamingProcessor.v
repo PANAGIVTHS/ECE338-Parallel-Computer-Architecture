@@ -1,4 +1,5 @@
 `timescale 1ns/1ps
+`include "constants.vh"
 
 `define CLOCK_PERIOD 10
 `define TEST_TIMEOUT_CYCLES 200
@@ -12,7 +13,7 @@ module tb_StreamingProcessor ();
     wire [2:0] o_leds;
     
     // Expected results arrays
-    reg [31:0] expected_data [0:1023];
+    reg [31:0] expected_data [0:`DMEM_ENTRIES-1];
     reg [31:0] expected_regfile [0:NUM_CORES-1][0:31];
     reg [31:0] temp_regfile [0:31];
 
@@ -88,8 +89,8 @@ module tb_StreamingProcessor ();
             $display("\n---> Starting test %0d...", test_idx);
 
             // 3. Clear the memories
-            for (i=0; i<1024; i=i+1) UUT.dataMemory.data[i] = 32'b0;
-            for (i=0; i<1024; i=i+1) expected_data[i] = 32'b0;
+            for (i=0; i<`DMEM_ENTRIES; i=i+1) UUT.dataMemory.data[i] = 32'b0;
+            for (i=0; i<`DMEM_ENTRIES; i=i+1) expected_data[i] = 32'b0;
             for (c=0; c<NUM_CORES; c=c+1)
                 for (i=0; i<32; i=i+1) expected_regfile[c][i] = 32'b0;
 
@@ -161,7 +162,7 @@ module tb_StreamingProcessor ();
 
             // 8. Compare Global Shared Data Memory
             data_errors = 0;
-            for (i = 0; i < 1024; i = i + 1) begin
+            for (i = 0; i < `DMEM_ENTRIES; i = i + 1) begin
                 if (UUT.dataMemory.data[i] !== expected_data[i]) begin
                     $display("  [Error] Data memory Address %0d: Expected %h, Found %h", 
                              i, expected_data[i], UUT.dataMemory.data[i]);

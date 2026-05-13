@@ -7,7 +7,7 @@ module Decoder (
     output [4:0] o_rd,
     output [6:0] o_imm_31_25,
     output [11:0] o_imm_31_20,
-    output reg [1:0] o_aluop,
+    output reg [3:0] o_aluop,
     output reg [1:0] o_instr_type,
     output [6:0] opcode
 );
@@ -33,6 +33,13 @@ module Decoder (
                     {`FUNCT7_SUB, `FUNCT3_ADD_SUB_MUL}: o_aluop = `ALU_SUB;
                     {`FUNCT7_MULDIV, `FUNCT3_ADD_SUB_MUL}: o_aluop = `ALU_MUL;
                     {`FUNCT7_MULDIV, `FUNCT3_DIV}: o_aluop = `ALU_DIV;
+                    {`FUNCT7_ADD, `FUNCT3_OR}:  o_aluop = `ALU_OR;
+                    {`FUNCT7_ADD, `FUNCT3_SLL}: o_aluop = `ALU_SLL;
+                    {`FUNCT7_SUB, `FUNCT3_SRA}: o_aluop = `ALU_SRA;
+                    {`FUNCT7_ADD, `FUNCT3_AND}: o_aluop = `ALU_AND;
+                    {`FUNCT7_ADD, `FUNCT3_SRL}:  o_aluop = `ALU_SRL;
+                    {`FUNCT7_ADD, `FUNCT3_SLT}:  o_aluop = `ALU_SLT;
+                    {`FUNCT7_ADD, `FUNCT3_SLTU}: o_aluop = `ALU_SLTU;
                     default:
                         o_aluop = `ALU_ADD;
                 endcase
@@ -43,8 +50,21 @@ module Decoder (
                 o_instr_type = `INSTR_TYPE_I;
             end
             `OP_ADDI: begin
-                o_aluop = `ALU_ADD;
                 o_instr_type = `INSTR_TYPE_I;
+                case (funct3)
+                    `FUNCT3_AND: o_aluop = `ALU_AND;
+                    `FUNCT3_SLL: o_aluop = `ALU_SLL;
+                    `FUNCT3_SRA: o_aluop = `ALU_SRA;
+                    `FUNCT3_SLT:  o_aluop = `ALU_SLT;
+                    `FUNCT3_SLTU: o_aluop = `ALU_SLTU;                    
+                    `FUNCT3_SRL: begin
+                        if (funct7 == `FUNCT7_SUB)
+                            o_aluop = `ALU_SRA;
+                        else
+                            o_aluop = `ALU_SRL;
+                    end
+                    default: o_aluop = `ALU_ADD;
+                endcase
             end
             `OP_SW: begin 
                 o_aluop = `ALU_ADD;

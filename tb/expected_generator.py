@@ -4,8 +4,9 @@ import sys
 from pathlib import Path
 
 # Memory configurations
-MEM_DEPTH = 1024
+MEM_DEPTH = 2048
 REG_DEPTH = 32
+NUM_CORES = 2
 
 def parse_register(reg_str):
     """Extracts the integer index from a register string like 'x1', 'x31'"""
@@ -51,7 +52,8 @@ def generate_expected_memories(asm_text, num_cores=2):
     for core_id in range(num_cores):
         registers = regfiles[core_id]
         registers[31] = core_id  # Hardwire x31 to CORE_ID
-        
+        registers[2] = MEM_DEPTH * 4
+
         pc = 0
         cycles = 0
         max_cycles = 10000 # Safeguard against complex infinite loops
@@ -59,48 +61,70 @@ def generate_expected_memories(asm_text, num_cores=2):
         while pc < len(instructions) and cycles < max_cycles:
             cycles += 1
             inst = instructions[pc]
-            # Split by whitespace, ignoring multiple spaces and commas
-            parts = [p.strip(',') for p in inst.split()]
+            # Replace commas with spaces FIRST, then split by whitespace
+            parts = inst.replace(',', ' ').split()
             op = parts[0].lower()
 
             if op == 'nop':
                 pass
                 
-            elif op == 'add':
+            elif op in ['add', 'sub', 'mul', 'and', 'or', 'sll', 'srl', 'sra', 'slt', 'sltu']:
                 rd = parse_register(parts[1])
                 rs1 = parse_register(parts[2])
                 rs2 = parse_register(parts[3])
                 if rd != 0 and rd != 31:
-                    registers[rd] = registers[rs1] + registers[rs2]
+                    v1 = registers[rs1]
+                    v2 = registers[rs2]
                     
-            elif op == 'sub':
-                rd = parse_register(parts[1])
-                rs1 = parse_register(parts[2])
-                rs2 = parse_register(parts[3])
-                if rd != 0 and rd != 31:
-                    registers[rd] = registers[rs1] - registers[rs2]
-
-            elif op == 'add':
-                rd = parse_register(parts[1])
-                rs1 = parse_register(parts[2])
-                rs2 = parse_register(parts[3])
-                if rd != 0 and rd != 31:
-                    registers[rd] = registers[rs1] + registers[rs2]
-                    
-            elif op == 'mul':
-                rd = parse_register(parts[1])
-                rs1 = parse_register(parts[2])
-                rs2 = parse_register(parts[3])
-                if rd != 0 and rd != 31:
-                    # Multiply and mask to 32-bit just like hardware
-                    registers[rd] = (registers[rs1] * registers[rs2]) & 0xFFFFFFFF
-                    
-            elif op == 'addi':
+                    if op == 'add':
+                        registers[rd] = (v1 + v2) & 0xFFFFFFFF
+                    elif op == 'sub':
+                        registers[rd] = (v1 - v2) & 0xFFFFFFFF
+                    elif op == 'mul':
+                        registers[rd] = (v1 * v2) & 0xFFFFFFFF
+                    elif op == 'and':
+                        registers[rd] = v1 & v2
+                    elif op == 'or':
+                        registers[rd] = v1 | v2
+                    elif op == 'sll':
+                        registers[rd] = (v1 << (v2 & 0x1F)) & 0xFFFFFFFF
+                    elif op == 'srl':
+                        registers[rd] = (v1 >> (v2 & 0x1F)) & 0xFFFFFFFF
+                    elif op == 'sra':
+                        # Convert to signed 32-bit integer for arithmetic shift
+                        sv1 = v1 if v1 < 0x80000000 else v1 - 0x100000000
+                        registers[rd] = (sv1 >> (v2 & 0x1F)) & 0xFFFFFFFF
+                    elif op == 'slt':
+                        sv1 = v1 if v1 < 0x80000000 else v1 - 0x100000000
+                        sv2 = v2 if v2 < 0x80000000 else v2 - 0x100000000
+                        registers[rd] = 1 if sv1 < sv2 else 0
+                    elif op == 'sltu':
+                        registers[rd] = 1 if v1 < v2 else 0
+                        
+            elif op in ['addi', 'andi', 'slli', 'srli', 'srai', 'slti', 'sltiu']:
                 rd = parse_register(parts[1])
                 rs1 = parse_register(parts[2])
                 imm = int(parts[3])
                 if rd != 0 and rd != 31:
-                    registers[rd] = registers[rs1] + imm
+                    v1 = registers[rs1]
+                    
+                    if op == 'addi':
+                        registers[rd] = (v1 + imm) & 0xFFFFFFFF
+                    elif op == 'andi':
+                        registers[rd] = (v1 & imm) & 0xFFFFFFFF
+                    elif op == 'slli':
+                        registers[rd] = (v1 << (imm & 0x1F)) & 0xFFFFFFFF
+                    elif op == 'srli':
+                        registers[rd] = (v1 >> (imm & 0x1F)) & 0xFFFFFFFF
+                    elif op == 'srai':
+                        sv1 = v1 if v1 < 0x80000000 else v1 - 0x100000000
+                        registers[rd] = (sv1 >> (imm & 0x1F)) & 0xFFFFFFFF
+                    elif op == 'slti':
+                        sv1 = v1 if v1 < 0x80000000 else v1 - 0x100000000
+                        registers[rd] = 1 if sv1 < imm else 0
+                    elif op == 'sltiu':
+                        u_imm = imm & 0xFFFFFFFF # Sign extended then treated as unsigned
+                        registers[rd] = 1 if v1 < u_imm else 0
             
             elif op == 'lw' or op == 'sw':
                 # Parse format like: lw x4, -12(x8)
@@ -152,7 +176,7 @@ def generate_expected_memories(asm_text, num_cores=2):
 
 def main():
     # Set this to match your Verilog NUM_CORES parameter
-    num_cores = 2 
+    num_cores = NUM_CORES 
     
     current_dir = Path('.')
     asm_files = []
@@ -189,7 +213,7 @@ def main():
 
         # Run simulation
         regfiles, memory = generate_expected_memories(asm_code, num_cores)
-
+            
         # Output regfiles into the specific test directory
         for core_id in range(num_cores):
             reg_filename = test_dir / f"regfile_c{core_id}.mem"

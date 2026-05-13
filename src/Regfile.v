@@ -10,6 +10,8 @@ module Regfile  #(
     reg [31:0] data [31:0];
     integer i;
 
+    localparam DEPTH = 8192;
+
     //! Read
     always @(posedge clk) begin
         if (!rst) begin
@@ -30,7 +32,9 @@ module Regfile  #(
     always @(posedge clk) begin
         if (!rst) begin
             for (i = 0; i < 32; i = i + 1) begin
-                if (i == `TXD_REGISTER) begin
+                if (i == 2) begin
+                    data[i] <= DEPTH;
+                end else if (i == `TXD_REGISTER) begin
                     data[i] <= CORE_ID;
                 end else begin
                     data[i] <= 32'b0;

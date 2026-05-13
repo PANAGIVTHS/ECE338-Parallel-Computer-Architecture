@@ -1,13 +1,14 @@
 `include "constants.vh"
 
 module StreamingMultiprocessor #(
-    parameter NUM_CORES = 4
+    parameter NUM_CORES = 2
 )(
     input i_clk,
     input rst,
     input i_dummy_wen,
     output [2:0] o_leds
 );
+    localparam DMEM_AW = $clog2(`DMEM_ENTRIES);
 
     wire clk;
     clk_wiz_0 clockDivider (
@@ -23,7 +24,7 @@ module StreamingMultiprocessor #(
     //& ===============
     //& CROSSBAR & STALL LOGIC
     //& ===============
-    wire [9:0] sp_mem_addr [0:NUM_CORES-1];
+    wire [DMEM_AW-1:0] sp_mem_addr [0:NUM_CORES-1];
     wire [31:0] sp_mem_wdata [0:NUM_CORES-1];
     wire [NUM_CORES-1:0] sp_mem_ren;
     wire [NUM_CORES-1:0] sp_mem_wen;
@@ -80,7 +81,8 @@ module StreamingMultiprocessor #(
     //! =========================================================================
     wire [6:0] id_imm_31_25, id_opcode;
     wire [11:0] id_imm_31_20;
-    wire [1:0] id_aluop, id_instr_type;
+    wire [3:0] id_aluop;
+    wire [1:0] id_instr_type;
     wire [4:0] id_rs1, id_rs2, id_rd;
     wire [4:0] id_mux_rs1, id_mux_rs2;
     wire id_is_mul, id_wen;
@@ -110,7 +112,8 @@ module StreamingMultiprocessor #(
     //* =========================================================================
     reg [4:0] idex_rs1, idex_rs2;
     reg [11:0] idex_imm_31_20;
-    reg [1:0] idex_aluop, idex_instr_type;
+    reg [3:0] idex_aluop;
+    reg [1:0] idex_instr_type;
     reg [6:0] idex_opcode, idex_imm_31_25;
     reg [$clog2(`IMEM_ENTRIES)+1:0] idex_program_counter;
     reg idex_wen;
@@ -185,20 +188,20 @@ module StreamingMultiprocessor #(
     //& ===============
     //& GLOBAL DATA MEMORY CROSSBAR
     //& ===============
-    wire [9:0] dmem_addr_a, dmem_addr_b;
+    wire [DMEM_AW-1:0] dmem_addr_a, dmem_addr_b;
     wire [31:0] dmem_wdata_a, dmem_wdata_b;
     wire dmem_ren_a, dmem_ren_b;
     wire dmem_wen_a, dmem_wen_b;
     wire [31:0] dmem_rdata_a, dmem_rdata_b;
 
-    wire [NUM_CORES*10-1:0] flat_mem_addr;
+    wire [NUM_CORES*DMEM_AW-1:0] flat_mem_addr;
     wire [NUM_CORES*32-1:0] flat_mem_wdata;
     wire [NUM_CORES*32-1:0] flat_mem_rdata;
 
     genvar i;
     generate
         for (i = 0; i < NUM_CORES; i = i + 1) begin : gen_flat
-            assign flat_mem_addr[i*10 +: 10] = sp_mem_addr[i];
+            assign flat_mem_addr[i*11 +: 11] = sp_mem_addr[i];
             assign flat_mem_wdata[i*32 +: 32] = sp_mem_wdata[i];
             assign sp_mem_rdata[i] = flat_mem_rdata[i*32 +: 32];
         end
@@ -206,7 +209,8 @@ module StreamingMultiprocessor #(
 
     MemoryCrossbarNx2 #(
         .N(NUM_CORES),
-        .DEPTH(1024)
+        .DEPTH(`IMEM_ENTRIES),
+        .ADDR_W(DMEM_AW)
     ) memCrossbar (
         .clk(clk),
         .rst(rst),
@@ -239,7 +243,7 @@ module StreamingMultiprocessor #(
     //& ===============
     (* dont_touch = "true" *)
     MemoryDualPort #(
-        .DEPTH(1024),
+        .DEPTH(`IMEM_ENTRIES),
         .INIT_FILE("")
     ) dataMemory (
         .clk(clk),

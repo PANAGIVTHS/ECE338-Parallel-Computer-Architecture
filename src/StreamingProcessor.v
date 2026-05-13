@@ -18,7 +18,7 @@ module StreamingProcessor #(
     input [4:0] i_idex_rd,
     input [11:0] i_idex_imm_31_20,
     input [6:0] i_idex_imm_31_25,
-    input [1:0] i_idex_aluop,
+    input [3:0] i_idex_aluop,
     input [1:0] i_idex_instr_type,
     input [6:0] i_idex_opcode,
     input [$clog2(`IMEM_ENTRIES)+1:0] i_idex_program_counter,
@@ -35,7 +35,7 @@ module StreamingProcessor #(
     output [4:0] o_mul3_rd,
 
     //! External Memory Interface
-    output [9:0] o_mem_addr,
+    output [$clog2(`DMEM_ENTRIES)-1:0] o_mem_addr,
     output [31:0] o_mem_wdata,
     output o_mem_ren,
     output o_mem_wen,
@@ -225,7 +225,7 @@ module StreamingProcessor #(
     assign mem_is_load = (exmem_opcode == `OP_LW);
     assign mem_is_store = (exmem_opcode == `OP_SW);
 
-    assign o_mem_addr = exmem_alu_out[11:2];
+    assign o_mem_addr = exmem_alu_out[$clog2(`DMEM_ENTRIES)+1 : 2];
     assign o_mem_ren = mem_is_load | mem_is_store;
     assign o_mem_wen = mem_is_store;
     assign o_mem_wdata = exmem_reg_b;

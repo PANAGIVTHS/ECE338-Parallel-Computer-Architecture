@@ -5,7 +5,7 @@ module ALU (
     input rst,
     input [31:0] i_operand_a,
     input [31:0] i_operand_b,
-    input [1:0] i_alu_op,
+    input [3:0] i_alu_op,
     input i_mul_valid,
     input i_global_stall,
     output reg [31:0] o_alu_out,
@@ -35,6 +35,13 @@ module ALU (
                 `ALU_ADD: o_alu_out = i_operand_a + i_operand_b;
                 `ALU_SUB: o_alu_out = i_operand_a - i_operand_b;
                 `ALU_DIV: o_alu_out = i_operand_a / i_operand_b;
+                `ALU_AND: o_alu_out = i_operand_a & i_operand_b;
+                `ALU_OR:  o_alu_out = i_operand_a | i_operand_b;
+                `ALU_SLL: o_alu_out = i_operand_a << i_operand_b[4:0];
+                `ALU_SRA: o_alu_out = $signed(i_operand_a) >>> i_operand_b[4:0];
+                `ALU_SRL:  o_alu_out = i_operand_a >> i_operand_b[4:0];
+                `ALU_SLT:  o_alu_out = ($signed(i_operand_a) < $signed(i_operand_b)) ? 32'b1 : 32'b0;
+                `ALU_SLTU: o_alu_out = (i_operand_a < i_operand_b) ? 32'b1 : 32'b0;
                 default: o_alu_out = 32'b0;
             endcase
         end
