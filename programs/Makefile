@@ -1,7 +1,7 @@
 # --- RISC-V Cross-Compiler Variables ---
 CC = riscv64-unknown-elf-gcc
 OBJDUMP = riscv64-unknown-elf-objdump
-CFLAGS = -O0 -march=rv32im -mabi=ilp32 -ffreestanding -nostdlib -Ttext=0x00000000
+CFLAGS = -O0 -march=rv32im -mabi=ilp32 -ffreestanding -nostdlib -fomit-frame-pointer -Ttext=0x00000000
 
 # --- Native (x86 Linux) Compiler Variables ---
 NATIVE_CC = gcc
@@ -42,12 +42,23 @@ $(NATIVE_EXE): $(NATIVE_SRC)
 
 # Create the Memory File (.mem) from the Assembly Dump
 $(MEM): $(ASM)
-	@echo "Filtering and creating Memory File (replacing jalr)..."
+	@echo "Filtering and creating Memory File (removing sp/x2 instructions)..."
 	@awk '/^[[:space:]]*[0-9a-fA-F]+:/ { \
 		hex_code = $$2; \
-		instruction = $$3; \
 		if (length(hex_code) == 8) { \
-			print hex_code; \
+			skip = 0; \
+			# Split the line in tokens (spaces, commas, parenthesis) \
+			n = split($$0, tokens, /[ \t,()]+/); \
+			# Search if register x2 or sp exist \
+			for (i = 1; i <= n; i++) { \
+				if (tokens[i] == "x2" || tokens[i] == "sp") { \
+					skip = 1; \
+					break; \
+				} \
+			} \
+			if (!skip) { \
+				print hex_code; \
+			} \
 		} \
 	}' $< > $@
 	@echo "Success! RISC-V Memory File is ready: $@"
