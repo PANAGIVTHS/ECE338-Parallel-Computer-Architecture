@@ -1,3 +1,17 @@
+# ==========================================
+# LOCKSTEP-SAFE 2-CORE BOOTLOADER
+# ==========================================
+# Calculate Base Multiplier: (2 - x31)
+addi x15, x0, 2
+sub x15, x15, x31
+
+# Shift left by 12 to multiply by 4096
+# Core 0 Stack Pointer (x2) = 8192
+# Core 1 Stack Pointer (x2) = 4096
+add x2, x0, x15
+slli x2, x2, 12
+# ==========================================
+
 addi    x2, x2, -48
 sw      x8, 44(x2)
 addi    x8, x2, 48
