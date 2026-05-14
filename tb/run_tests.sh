@@ -52,11 +52,11 @@ fi
 if [ "$VISUALIZE" = true ]; then
     echo -e "\n[Optional] Opening GTKWave..."
     # Check if the dump file exists before trying to open it
-    if [ -f "./dump.vcd" ]; then
-        (gtkwave ./dump.vcd ./waveform.gtkw > /dev/shm/gtkwave.log 2>&1 &)
+    if [ -f "./dumpfile.vcd" ]; then
+        (gtkwave ./dumpfile.vcd ./waveform.gtkw > /dev/shm/gtkwave.log 2>&1 &)
         echo "  -> GTKWave launched in background."
     else
-        echo "  -> [Error] dump.vcd not found. Cannot open GTKWave."
+        echo "  -> [Error] dumpfile.vcd not found. Cannot open GTKWave."
     fi
 fi
 
