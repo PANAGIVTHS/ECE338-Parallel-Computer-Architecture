@@ -45,7 +45,7 @@ module GPGPU (
     assign o_dumping = !core_run && !core_clear;
 
     HostController host_controller (
-        .i_clk(i_clk),
+        .i_clk(clk),
         .i_rst(i_rst),
         .i_core_complete(core_complete),
         .i_uart_rx(i_uart_rx),
@@ -64,7 +64,7 @@ module GPGPU (
     );
 
     StreamingProcessor sp (
-        .i_clk(i_clk),
+        .i_clk(clk),
         .i_rst(i_rst && !core_clear),
         .i_enable(core_run),
         .i_ifid_instruction(imem_rdata),
@@ -85,7 +85,7 @@ module GPGPU (
         .DEPTH(`IMEM_ENTRIES),
         .INIT_FILE("empty.mem")
     ) instructionMemory (
-        .clk(i_clk),
+        .clk(clk),
         .i_addr_a(imem_addr),
         .i_ren_a(imem_ren),
         .i_wen_a(host_imem_wen),
@@ -98,7 +98,7 @@ module GPGPU (
         .DEPTH(1024),
         .INIT_FILE("empty.mem")
     ) dataMemory (
-        .clk(i_clk),
+        .clk(clk),
         .i_addr_a(dmem_addr),
         .i_ren_a(dmem_ren),
         .i_wen_a(dmem_wen),
@@ -111,9 +111,9 @@ module GPGPU (
         .o_out_b()
     );
 
-    // clk_wiz_0 clockDivider (
-    //     .clk_in1(i_clk),
-    //     .clk_out1(clk)
-    // );
+    clk_wiz_0 clockDivider (
+        .clk_in1(i_clk),
+        .clk_out1(clk)
+    );
 
 endmodule
