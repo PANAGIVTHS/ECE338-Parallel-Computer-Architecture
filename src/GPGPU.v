@@ -17,8 +17,9 @@ module GPGPU (
     
     // Host controller memory signals
     wire [9:0] host_dmem_addr;
+    wire [4:0] host_reg_addr;
     wire [$clog2(`IMEM_ENTRIES)-1:0] host_imem_addr;
-    wire [31:0] host_imem_wdata;
+    wire [31:0] host_imem_wdata, host_reg_rdata;
     wire host_imem_wen;
     
     // Streaming processor memory signals
@@ -46,7 +47,7 @@ module GPGPU (
     HostController host_controller (
         .i_clk(i_clk),
         .i_rst(i_rst),
-        .i_core_complete(1'b0),
+        .i_core_complete(core_complete),
         .i_uart_rx(i_uart_rx),
         .o_uart_tx(o_uart_tx),
         .o_core_run(core_run),
@@ -56,8 +57,8 @@ module GPGPU (
         .o_imem_wen(host_imem_wen),
         .o_dmem_addr(host_dmem_addr),
         .i_dmem_rdata(dmem_rdata),
-        .o_reg_addr(),
-        .i_reg_rdata(),
+        .o_reg_addr(host_reg_addr),
+        .i_reg_rdata(host_reg_rdata),
         .o_ferror(o_ferror),
         .o_perror(o_perror)
     );
@@ -73,13 +74,16 @@ module GPGPU (
         .o_dmem_addr(core_dmem_addr),
         .o_dmem_ren(core_dmem_ren),
         .o_dmem_wen(core_dmem_wen),
-        .o_dmem_wdata(core_dmem_wdata)
+        .o_dmem_wdata(core_dmem_wdata),
+        .i_reg_addr(host_reg_addr),
+        .o_reg_rdata(host_reg_rdata),
+        .o_core_complete(core_complete)
     );
 
     (* dont_touch = `DEBUG *)
     MemorySinglePort #(
         .DEPTH(`IMEM_ENTRIES),
-        .INIT_FILE("")
+        .INIT_FILE("empty.mem")
     ) instructionMemory (
         .clk(i_clk),
         .i_addr_a(imem_addr),
@@ -92,7 +96,7 @@ module GPGPU (
     (* dont_touch = `DEBUG *)
     MemoryDualPort #(
         .DEPTH(1024),
-        .INIT_FILE("")
+        .INIT_FILE("empty.mem")
     ) dataMemory (
         .clk(i_clk),
         .i_addr_a(dmem_addr),

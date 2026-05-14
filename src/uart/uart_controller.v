@@ -9,6 +9,7 @@ module uart_controller (
     // Transmission signals
     input i_tx_enable,
     input i_rx_enable,
+    input i_error,
 
     // Instruction memory
     output reg [$clog2(`IMEM_ENTRIES)-1:0] o_imem_addr,
@@ -47,6 +48,7 @@ module uart_controller (
     localparam REG_TRANSMIT = 4'd7;
     localparam REG_WORD_DONE = 4'd8;
     localparam REG_DONE = 4'd9;
+    localparam ERROR = 4'd10;
 
     // FSM signals
     reg [3:0] current_state, next_state;
@@ -73,19 +75,24 @@ module uart_controller (
     end
 
     always @(*) begin
-        case (current_state)
-            IDLE: next_state = i_tx_enable ? DMEM_TRANSMIT : (i_rx_enable ? IMEM_RECEIVE : IDLE);
-            IMEM_RECEIVE: next_state = (rx_valid_pulse && byte_counter[1:0] == 2'b11) ? IMEM_WORD_DONE : IMEM_RECEIVE;
-            IMEM_WORD_DONE: next_state = (byte_counter == `IMEM_ENTRIES * 4) ? IMEM_DONE : IMEM_RECEIVE;
-            IMEM_DONE: next_state = IDLE;
-            DMEM_TRANSMIT: next_state = (tx_done_pulse && byte_counter[1:0] == 2'b11) ? DMEM_WORD_DONE : DMEM_TRANSMIT;
-            DMEM_WORD_DONE: next_state = (byte_counter == (2 ** 10) * 4) ? DMEM_DONE : DMEM_TRANSMIT;
-            DMEM_DONE: next_state = REG_TRANSMIT;
-            REG_TRANSMIT: next_state = (tx_done_pulse && byte_counter[1:0] == 2'b11) ? REG_WORD_DONE : REG_TRANSMIT;
-            REG_WORD_DONE: next_state = (byte_counter == 32 * 4) ? REG_DONE : REG_TRANSMIT;
-            REG_DONE: next_state = IDLE;
-            default: next_state = IDLE;
-        endcase
+        if (i_error) begin
+            next_state = ERROR;
+        end else begin
+            case (current_state)
+                IDLE: next_state = i_tx_enable ? DMEM_TRANSMIT : (i_rx_enable ? IMEM_RECEIVE : IDLE);
+                IMEM_RECEIVE: next_state = (rx_valid_pulse && byte_counter[1:0] == 2'b11) ? IMEM_WORD_DONE : IMEM_RECEIVE;
+                IMEM_WORD_DONE: next_state = (byte_counter == `IMEM_ENTRIES * 4) ? IMEM_DONE : IMEM_RECEIVE;
+                IMEM_DONE: next_state = IDLE;
+                DMEM_TRANSMIT: next_state = (tx_done_pulse && byte_counter[1:0] == 2'b11) ? DMEM_WORD_DONE : DMEM_TRANSMIT;
+                DMEM_WORD_DONE: next_state = (byte_counter == (2 ** 10) * 4) ? DMEM_DONE : DMEM_TRANSMIT;
+                DMEM_DONE: next_state = REG_TRANSMIT;
+                REG_TRANSMIT: next_state = (tx_done_pulse && byte_counter[1:0] == 2'b11) ? REG_WORD_DONE : REG_TRANSMIT;
+                REG_WORD_DONE: next_state = (byte_counter == 32 * 4) ? REG_DONE : REG_TRANSMIT;
+                REG_DONE: next_state = IDLE;
+                ERROR: next_state = ERROR;
+                default: next_state = IDLE;
+            endcase
+        end
     end
 
     always @(*) begin
@@ -146,6 +153,9 @@ module uart_controller (
                 tx_wr = 1'b0;
                 transmit_dmem = 1'b0;
                 o_dump_ready = 1'b1;
+            end
+            ERROR: begin
+                rx_enabled = 1'b1;
             end
         endcase
     end

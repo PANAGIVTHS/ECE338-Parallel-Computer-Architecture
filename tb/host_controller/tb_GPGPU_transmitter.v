@@ -1,10 +1,10 @@
 `timescale 1ns / 1ps
 
-module tb_host_transmitter();
+module tb_GPGPU_transmitter();
 
     // 10MHz Clock, 625,000 Baud
-    localparam CLK_PERIOD = 100; 
-    localparam BIT_PERIOD = 1600; 
+    localparam CLK_PERIOD = 13.889; 
+    localparam BIT_PERIOD = 8681;
 
     reg clk;
     reg rst;
@@ -179,7 +179,7 @@ module tb_host_transmitter();
     //==============================================
     initial begin
         $dumpfile("host_tx_dump.vcd");
-        $dumpvars(0, tb_host_transmitter);
+        $dumpvars(0, tb_GPGPU_transmitter);
     end
 
 endmodule

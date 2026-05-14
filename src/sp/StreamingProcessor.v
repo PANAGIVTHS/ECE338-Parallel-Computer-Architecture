@@ -16,7 +16,10 @@ module StreamingProcessor (
     output [9:0] o_dmem_addr,
     output o_dmem_ren,
     output o_dmem_wen,
-    output [31:0] o_dmem_wdata
+    output [31:0] o_dmem_wdata,
+    input [4:0] i_reg_addr,
+    output [31:0] o_reg_rdata,
+    output o_core_complete
 );
 
     wire ex_branch_taken;
@@ -64,7 +67,6 @@ module StreamingProcessor (
     wire [4:0] id_rs1, id_rs2, id_rd;
     wire [4:0] id_mux_rs1, id_mux_rs2;
     wire id_is_mul, id_wen;
-
 
     (* dont_touch = `DEBUG *)
     Decoder decoder (
@@ -145,17 +147,20 @@ module StreamingProcessor (
     wire [31:0] ex_actual_alu_in_b;
     wire [1:0] forward_alu_a, forward_alu_b;
     wire ex_is_mul, mul_not_ready;
+    wire [4:0] reg_addr_a;
     
     reg memwb_wen;
 
     assign ex_is_mul = (idex_opcode == `OP_R_TYPE) && (idex_imm_31_25 == `FUNCT7_MULDIV);
     assign ex_imm_i_type = {{20{idex_imm_31_20[11]}}, idex_imm_31_20};
     assign ex_imm_s_type = {{20{idex_imm_31_25[6]}}, idex_imm_31_25, idex_rd};
+    assign reg_addr_a = i_enable ? id_mux_rs1 : i_reg_addr;
+    assign o_reg_rdata = ex_reg_a;
 
     (* dont_touch = `DEBUG *)
     Regfile regfile (
-        .clk(i_clk), .rst(i_rst), .i_wen(memwb_wen), .i_enable(i_enable), .i_wdata(wb_wdata), 
-        .i_addr_a(id_mux_rs1), .i_addr_b(id_mux_rs2), .i_waddr(memwb_rd), 
+        .clk(i_clk), .rst(i_rst), .i_wen(i_enable && memwb_wen), .i_enable(i_enable), .i_wdata(wb_wdata), 
+        .i_addr_a(reg_addr_a), .i_addr_b(id_mux_rs2), .i_waddr(memwb_rd), 
         .o_reg_a(ex_reg_a), .o_reg_b(ex_reg_b)
     );
 
@@ -290,6 +295,7 @@ module StreamingProcessor (
     assign o_dmem_wen = (exmem_opcode == `OP_SW);
     assign o_dmem_addr = exmem_alu_out[11:2];
     assign o_dmem_wdata = exmem_reg_b;
+    assign o_core_complete = (exmem_opcode == `OP_JALR && exmem_rd == 5'b0);
 
     //! =========================================================================
     //! PIPELINE REGISTER 4: MEMORY -> WRITE BACK

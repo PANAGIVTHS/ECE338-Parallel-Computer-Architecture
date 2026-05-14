@@ -6,11 +6,8 @@ module tb_GPGPU_receiver();
     // CLOCK AND TIMING PARAMETERS
     //==============================================
     // Assuming a 10MHz input clock (100ns period)
-    localparam CLK_PERIOD = 100; 
-    
-    // Change this to perfectly match your hardware's baud rate!
-    // Using 1600ns for the 625,000 Baud custom rate we discussed.
-    localparam BIT_PERIOD = 1600; 
+    localparam CLK_PERIOD = 13.889; 
+    localparam BIT_PERIOD = 8681;
 
     reg  clk;
     reg  rst;
@@ -62,7 +59,7 @@ module tb_GPGPU_receiver();
     //==============================================
     // MAIN TEST SEQUENCE
     //==============================================
-    integer w; 
+    integer w;
 
     initial begin
         $display("=================================================");
@@ -142,8 +139,8 @@ module tb_GPGPU_receiver();
     end
 
     initial begin
-        $dumpfile("gpgpu_e2e.vcd");
-        $dumpvars(0, tb_GPGPU_e2e);
+        $dumpfile("gpgpu_rx_dump.vcd");
+        $dumpvars(0, tb_GPGPU_receiver);
     end
 
 endmodule

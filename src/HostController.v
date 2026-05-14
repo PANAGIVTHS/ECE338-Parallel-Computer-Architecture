@@ -104,6 +104,7 @@ module HostController (
     uart_controller uart_controller (
         .i_clk(i_clk),
         .i_rst(i_rst),
+        .i_error(rx_perror || rx_ferror),
         .i_uart_rx(i_uart_rx),
         .o_uart_tx(o_uart_tx),
         .i_tx_enable(!o_core_run && !o_core_clear),

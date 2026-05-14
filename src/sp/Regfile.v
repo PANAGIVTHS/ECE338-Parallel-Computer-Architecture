@@ -14,11 +14,11 @@ module Regfile  #(
         if (!rst) begin
             o_reg_a <= 32'b0;
             o_reg_b <= 32'b0;
-        end else if (i_enable && !i_wen) begin
+        end else if (!i_wen) begin
             //! Output the data when write is disabled
             o_reg_a <= (i_addr_a == 5'b0) ? 32'b0 : data[i_addr_a];
             o_reg_b <= (i_addr_b == 5'b0) ? 32'b0 : data[i_addr_b];
-        end else if (i_enable) begin
+        end else begin
             //! Read the same address you want to write, forward the data
             o_reg_a <= (i_addr_a == 5'b0) ? 32'b0 : ((i_addr_a == i_waddr) ? i_wdata : data[i_addr_a]);
             o_reg_b <= (i_addr_b == 5'b0) ? 32'b0 : ((i_addr_b == i_waddr) ? i_wdata : data[i_addr_b]);
