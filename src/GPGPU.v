@@ -64,7 +64,7 @@ module GPGPU (
 
     StreamingProcessor sp (
         .i_clk(i_clk),
-        .i_rst(i_rst || core_clear),
+        .i_rst(i_rst && !core_clear),
         .i_enable(core_run),
         .i_ifid_instruction(imem_rdata),
         .i_dmem_rdata(dmem_rdata),

@@ -84,6 +84,10 @@ module tb_StreamingProcessor ();
             rst = 0;
             #(`CLOCK_PERIOD * 5.75);
             rst = 1;
+            #(`CLOCK_PERIOD * 10);
+            force UUT.host_controller.current_state = 2'b01; // RUN state
+            #(`CLOCK_PERIOD * 10);
+            release UUT.host_controller.current_state;
 
             // 6. Timeout mechanism and output to csv
             cycle_count = 0;

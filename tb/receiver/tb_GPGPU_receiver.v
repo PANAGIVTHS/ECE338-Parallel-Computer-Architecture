@@ -1,6 +1,6 @@
 `timescale 1ns / 1ps
 
-module tb_GPGPU_e2e();
+module tb_GPGPU_receiver();
 
     //==============================================
     // CLOCK AND TIMING PARAMETERS

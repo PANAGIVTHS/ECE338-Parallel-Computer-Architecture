@@ -32,7 +32,9 @@ module uart_controller (
 
     localparam DMEM_BYTES = (2 ** 10) * 4;
     localparam IMEM_BYTES = `IMEM_ENTRIES * 4;
-    localparam COUNTER_WIDTH = $clog2((IMEM_BYTES > DMEM_BYTES) ? IMEM_BYTES : DMEM_BYTES);
+    localparam DMEM_WIDTH = $clog2(DMEM_BYTES);
+    localparam IMEM_WIDTH = $clog2(IMEM_BYTES);
+    localparam COUNTER_WIDTH = DMEM_WIDTH > IMEM_WIDTH ? DMEM_WIDTH : IMEM_WIDTH;
 
     // FSM states
     localparam IDLE = 4'd0;
@@ -57,6 +59,11 @@ module uart_controller (
     wire rx_valid, rx_valid_pulse;
     wire [7:0] rx_data;
 
+    // Transmitter signals
+    reg tx_enabled, tx_wr, transmit_dmem, tx_word_done, tx_busy_l2p;
+    wire tx_busy, tx_done_pulse;
+    reg [7:0] tx_data;
+
     always @(posedge i_clk) begin
         if (!i_rst) begin
             current_state <= IDLE;
@@ -71,11 +78,11 @@ module uart_controller (
             IMEM_RECEIVE: next_state = (rx_valid_pulse && byte_counter[1:0] == 2'b11) ? IMEM_WORD_DONE : IMEM_RECEIVE;
             IMEM_WORD_DONE: next_state = (byte_counter == `IMEM_ENTRIES * 4) ? IMEM_DONE : IMEM_RECEIVE;
             IMEM_DONE: next_state = IDLE;
-            DMEM_TRANSMIT: next_state = IDLE;
+            DMEM_TRANSMIT: next_state = (tx_done_pulse && byte_counter[1:0] == 2'b11) ? DMEM_WORD_DONE : DMEM_TRANSMIT;
             DMEM_WORD_DONE: next_state = (byte_counter == (2 ** 10) * 4) ? DMEM_DONE : DMEM_TRANSMIT;
             DMEM_DONE: next_state = REG_TRANSMIT;
-            REG_TRANSMIT: next_state = IDLE;
-            REG_WORD_DONE: next_state = (byte_counter == 32 * 4) ? REG_DONE : REG_WORD_DONE;
+            REG_TRANSMIT: next_state = (tx_done_pulse && byte_counter[1:0] == 2'b11) ? REG_WORD_DONE : REG_TRANSMIT;
+            REG_WORD_DONE: next_state = (byte_counter == 32 * 4) ? REG_DONE : REG_TRANSMIT;
             REG_DONE: next_state = IDLE;
             default: next_state = IDLE;
         endcase
@@ -83,11 +90,17 @@ module uart_controller (
 
     always @(*) begin
         rx_enabled = 1'b0;
+        tx_enabled = 1'b0;
+        tx_wr = 1'b0;
+        tx_word_done = 1'b0;
+        transmit_dmem = 1'b0;
         o_program_ready = 1'b0;
         o_dump_ready = 1'b0;
         o_imem_wen = 1'b0;
         o_imem_wdata = word_buffer;
-        o_imem_addr = byte_counter[COUNTER_WIDTH:2] - 1;
+        o_imem_addr = byte_counter[IMEM_WIDTH:2] - 1;
+        o_dmem_addr = byte_counter[DMEM_WIDTH:2];
+        o_reg_addr = byte_counter[6:2];
 
         case (current_state)
             IMEM_RECEIVE: begin
@@ -101,19 +114,54 @@ module uart_controller (
                 rx_enabled = 1'b1;
                 o_program_ready = 1'b1;
             end
+            DMEM_TRANSMIT: begin
+                tx_enabled = 1'b1;
+                tx_wr = 1'b1;
+                transmit_dmem = 1'b1;
+            end
+            DMEM_WORD_DONE: begin
+                tx_enabled = 1'b1;
+                tx_wr = 1'b1;
+                transmit_dmem = 1'b1;
+                tx_word_done = 1'b1;
+            end
+            DMEM_DONE: begin
+                tx_enabled = 1'b1;
+                tx_wr = 1'b1;
+                transmit_dmem = 1'b1;
+            end
+            REG_TRANSMIT: begin
+                tx_enabled = 1'b1;
+                tx_wr = 1'b1;
+                transmit_dmem = 1'b0;
+            end
+            REG_WORD_DONE: begin
+                tx_enabled = 1'b1;
+                tx_wr = 1'b1;
+                transmit_dmem = 1'b0;
+                tx_word_done = 1'b1;
+            end
+            REG_DONE: begin
+                tx_enabled = 1'b1;
+                tx_wr = 1'b0;
+                transmit_dmem = 1'b0;
+                o_dump_ready = 1'b1;
+            end
         endcase
     end
 
+    // Byte counter for transmitter and receiver
     always @(posedge i_clk) begin
         if (!i_rst) begin
             byte_counter <= 0;
         end else if (current_state == IDLE) begin
             byte_counter <= 0;
-        end else if (i_rx_enable && rx_valid_pulse) begin
+        end else if ((i_rx_enable && rx_valid_pulse) || (i_tx_enable && tx_done_pulse)) begin
             byte_counter <= byte_counter + 1;
         end
     end
 
+    // Word buffer holding received bytes
     always @(posedge i_clk) begin
         if (!i_rst) begin
             word_buffer <= 32'b0;
@@ -127,6 +175,7 @@ module uart_controller (
         end
     end
 
+    // Level to pulse on rx_valid
     always @(posedge i_clk) begin
         if (!i_rst) begin
             rx_valid_l2p[0] <= 0;
@@ -139,6 +188,36 @@ module uart_controller (
 
     assign rx_valid_pulse = !rx_valid_l2p[1] & rx_valid_l2p[0];
 
+    // Transmission data
+    always @(*) begin
+        if (transmit_dmem) begin
+            case (byte_counter[1:0])
+                2'b00: tx_data = i_dmem_rdata[31:24];
+                2'b01: tx_data = i_dmem_rdata[23:16];
+                2'b10: tx_data = i_dmem_rdata[15:8];
+                2'b11: tx_data = i_dmem_rdata[7:0];
+            endcase 
+        end else begin
+            case (byte_counter[1:0])
+                2'b00: tx_data = i_reg_rdata[31:24];
+                2'b01: tx_data = i_reg_rdata[23:16];
+                2'b10: tx_data = i_reg_rdata[15:8];
+                2'b11: tx_data = i_reg_rdata[7:0];
+            endcase 
+        end
+    end
+
+    // Level to pulse on tx_done
+    always @(posedge i_clk) begin
+        if (!i_rst) begin
+            tx_busy_l2p <= 1'b0;
+        end else begin
+            tx_busy_l2p <= tx_busy;
+        end
+    end
+
+    assign tx_done_pulse = ~tx_busy & tx_busy_l2p;
+
     uart_receiver uart_receiver (
         .clk(i_clk),
         .reset(i_rst),
@@ -149,6 +228,17 @@ module uart_controller (
         .rx_ferror(o_ferror),
         .rx_perror(o_perror),
         .rx_valid(rx_valid)
+    );
+
+    uart_transmitter uart_transmitter (
+        .clk(i_clk),
+        .reset(i_rst),
+        .baud_select(3'b111),
+        .tx_en(tx_enabled),
+        .tx_data(tx_data),
+        .tx_wr(tx_wr),
+        .txD(o_uart_tx),
+        .tx_busy(tx_busy)
     );
     
 endmodule

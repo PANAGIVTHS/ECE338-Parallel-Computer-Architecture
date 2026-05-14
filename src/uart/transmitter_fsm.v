@@ -17,7 +17,7 @@ module transmitter_fsm(clk, reset, tx_en, tx_wr, tx_sample, tx_data, txD, tx_bus
     localparam BIT_6 = 4'd9;
     localparam BIT_7 = 4'd10;
     localparam PARITY_BIT = 4'd11;
-    localparam STOP_BIT = 4'd12;    
+    localparam STOP_BIT = 4'd12;
 
     always @(posedge clk) begin
         if (!reset) begin
@@ -66,7 +66,7 @@ module transmitter_fsm(clk, reset, tx_en, tx_wr, tx_sample, tx_data, txD, tx_bus
                 next_state = tx_sample ? BIT_7 : BIT_6;
             end
             BIT_7: begin
-                next_state = tx_sample ? PARITY_BIT : BIT_7;
+                next_state = tx_sample ? STOP_BIT : BIT_7;
             end
             PARITY_BIT: begin
                 next_state = tx_sample ? STOP_BIT : PARITY_BIT;

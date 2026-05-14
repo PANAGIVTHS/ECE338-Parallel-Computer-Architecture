@@ -29,7 +29,7 @@ module ALU (
             case (i_alu_op)
                 `ALU_ADD: o_alu_out = i_operand_a + i_operand_b;
                 `ALU_SUB: o_alu_out = i_operand_a - i_operand_b;
-                `ALU_DIV: o_alu_out = i_operand_a / i_operand_b;
+                // `ALU_DIV: o_alu_out = i_operand_a / i_operand_b;
                 default: o_alu_out = 32'b0;
             endcase
         end
