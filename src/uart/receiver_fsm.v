@@ -30,7 +30,7 @@ module receiver_fsm(clk, reset, rx_en, rxD, sample_mid, sample_done, sample_diff
         end
     end
 
-    always @(current_state or rx_en or rxD or sample_mid or sample_done or sample_diff or rx_data) begin
+    always @(*) begin
         case (current_state)
             DISABLED: begin
                 next_state = rx_en ? IDLE : DISABLED;
@@ -54,67 +54,31 @@ module receiver_fsm(clk, reset, rx_en, rxD, sample_mid, sample_done, sample_diff
                 end
             end
             START_BIT: begin
-                if (sample_diff) begin
-                    next_state = FERROR;
-                end else begin
-                    next_state = sample_done ? BIT_0 : START_BIT;
-                end 
+                next_state = sample_done ? BIT_0 : START_BIT;
             end
             BIT_0: begin
-                if (sample_diff) begin
-                    next_state = FERROR;
-                end else begin
-                    next_state = sample_done ? BIT_1 : BIT_0;
-                end 
+                next_state = sample_done ? BIT_1 : BIT_0;
             end
             BIT_1: begin
-                if (sample_diff) begin
-                    next_state = FERROR;
-                end else begin
-                    next_state = sample_done ? BIT_2 : BIT_1;
-                end 
+                next_state = sample_done ? BIT_2 : BIT_1;
             end
             BIT_2: begin
-                if (sample_diff) begin
-                    next_state = FERROR;
-                end else begin
-                    next_state = sample_done ? BIT_3 : BIT_2;
-                end 
+                next_state = sample_done ? BIT_3 : BIT_2;
             end
             BIT_3: begin
-                if (sample_diff) begin
-                    next_state = FERROR;
-                end else begin
-                    next_state = sample_done ? BIT_4 : BIT_3;
-                end 
+                next_state = sample_done ? BIT_4 : BIT_3;
             end
             BIT_4: begin
-                if (sample_diff) begin
-                    next_state = FERROR;
-                end else begin
-                    next_state = sample_done ? BIT_5 : BIT_4;
-                end 
+                next_state = sample_done ? BIT_5 : BIT_4;
             end
             BIT_5: begin
-                if (sample_diff) begin
-                    next_state = FERROR;
-                end else begin
-                    next_state = sample_done ? BIT_6 : BIT_5;
-                end 
+                next_state = sample_done ? BIT_6 : BIT_5;
             end
             BIT_6: begin
-                if (sample_diff) begin
-                    next_state = FERROR;
-                end else begin
-                    next_state = sample_done ? BIT_7 : BIT_6;
-                end 
+                next_state = sample_done ? BIT_7 : BIT_6;
             end
             BIT_7: begin
-                if (sample_diff) begin
-                    next_state = FERROR;
-                end else begin
-                    next_state = sample_done ? STOP_BIT : BIT_7;
-                end
+                next_state = sample_done ? STOP_BIT : BIT_7;
             end
             PARITY_BIT: begin
                 if (sample_diff) begin
@@ -126,10 +90,10 @@ module receiver_fsm(clk, reset, rx_en, rxD, sample_mid, sample_done, sample_diff
                 end
             end
             STOP_BIT: begin
-                if (sample_diff) begin
-                    next_state = FERROR;
+                if (sample_done) begin
+                    next_state = COMPLETED;
                 end else begin
-                    next_state = sample_done ? COMPLETED : STOP_BIT;
+                    next_state = STOP_BIT;
                 end
             end
             PERROR: begin

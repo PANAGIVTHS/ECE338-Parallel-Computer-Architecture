@@ -1,13 +1,15 @@
 module GPGPU (
     input wire i_clk,
     input wire i_rst,
-    input wire i_uart_rx,
+    (* mark_debug = "true" *) input wire i_uart_rx,
     output wire o_uart_tx,
     output wire o_ferror,
     output wire o_perror,
     output wire o_loading,
     output wire o_running,
-    output wire o_dumping
+    output wire o_dumping,
+    output wire o_rx_activity,
+    output wire o_tx_activity
 );
     // tdb was here...
     wire clk;
@@ -43,6 +45,8 @@ module GPGPU (
     assign o_loading = !core_run && core_clear;
     assign o_running = core_run;
     assign o_dumping = !core_run && !core_clear;
+    assign o_rx_activity = i_uart_rx;
+    assign o_tx_activity = o_uart_tx;
 
     HostController host_controller (
         .i_clk(clk),

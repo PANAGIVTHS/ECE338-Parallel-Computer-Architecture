@@ -32,7 +32,7 @@ module StreamingProcessor (
     //! =========================================================================
     //! STAGE 1: INSTRUCTION FETCH
     //! =========================================================================
-    (* dont_touch = `DEBUG *) 
+    (* mark_debug = "true" *)
     wire [$clog2(`IMEM_ENTRIES)+1:0] program_counter;
     wire [$clog2(`IMEM_ENTRIES)-1:0] instr_idx;
 

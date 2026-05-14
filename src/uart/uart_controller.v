@@ -53,13 +53,13 @@ module uart_controller (
     // FSM signals
     reg [3:0] current_state, next_state;
     reg [31:0] word_buffer;
-    reg [COUNTER_WIDTH:0] byte_counter;
+    (* mark_debug = "true" *) reg [COUNTER_WIDTH:0] byte_counter;
 
     // Receiver signals
     reg rx_enabled;
     reg rx_valid_l2p [1:0];
-    wire rx_valid, rx_valid_pulse;
-    wire [7:0] rx_data;
+    (* mark_debug = "true" *) wire rx_valid, rx_valid_pulse;
+    (* mark_debug = "true" *) wire [7:0] rx_data;
 
     // Transmitter signals
     reg tx_enabled, tx_wr, transmit_dmem, tx_word_done, tx_busy_l2p;

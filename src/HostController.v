@@ -32,7 +32,7 @@ module HostController (
     localparam FERROR = 3'b011;
     localparam PERROR = 3'b100;
 
-    reg [2:0] current_state, next_state;
+    (* mark_debug = "true" *) reg [2:0] current_state, next_state;
     wire program_ready, dump_ready, rx_ferror, rx_perror;
 
     always @(posedge i_clk) begin

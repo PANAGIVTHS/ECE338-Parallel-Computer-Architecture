@@ -5,7 +5,7 @@ module tb_GPGPU_e2e();
     //==============================================
     // SYSTEM CONSTANTS (72 MHz & 115200 Baud)
     //==============================================
-    localparam CLK_PERIOD = 13.889;   // 1000 / 72 MHz
+    localparam CLK_PERIOD = 10;   // 1000 / 72 MHz
     localparam BIT_PERIOD = 8681;     // 1,000,000,000 / 115200 baud
     
     // Memory Sizes (Adjust these if your architecture uses different limits)
@@ -130,9 +130,9 @@ module tb_GPGPU_e2e();
         rst = 0;
         uart_rx = 1; // Idle state is HIGH
 
-        #(CLK_PERIOD * 10);
+        #(CLK_PERIOD * 1000);
         rst = 1;
-        #(CLK_PERIOD * 10);
+        #(CLK_PERIOD * 1000);
 
         //-----------------------------------------------------
         // PHASE 1: LOAD INSTRUCTIONS
