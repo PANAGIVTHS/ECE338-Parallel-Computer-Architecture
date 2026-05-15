@@ -208,6 +208,8 @@ module StreamingMultiprocessor #(
         end
     endgenerate
 
+    //TODO 
+    //! Only supports 2 cores internally for now 
     MemoryCrossbarNx2 #(
         .N(NUM_CORES),
         .DEPTH(`DMEM_ENTRIES),
