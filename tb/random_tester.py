@@ -70,9 +70,8 @@ def generate_random_assembly(filepath):
         asm.append(f"{lbl}:")
         
     # 3. Safe End Trap
-    asm.append("\n# INFINITE LOOP TRAP")
-    asm.append("end_trap:")
-    asm.append("beq x0, x0, end_trap")
+    asm.append("\n# KERNEL COMPLETE TRAP")
+    asm.append("jalr x0, 0(x1)")
     
     # Write to file
     with open(filepath, 'w') as f:

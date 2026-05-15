@@ -6,7 +6,8 @@ module StreamingMultiprocessor #(
     input i_clk,
     input rst,
     input i_dummy_wen,
-    output [2:0] o_leds
+    output [2:0] o_leds,
+    output o_kernel_complete
 );
     localparam DMEM_AW = $clog2(`DMEM_ENTRIES);
 
@@ -262,7 +263,7 @@ module StreamingMultiprocessor #(
     //& ===============
     //& STREAMING PROCESSOR CORES
     //& ===============
-    wire [NUM_CORES-1:0] core_ex_branch_taken;
+    wire [NUM_CORES-1:0] core_ex_branch_taken, core_complete;
     wire [$clog2(`IMEM_ENTRIES)-1:0] core_ex_beq_target_idx [0:NUM_CORES-1];
     wire [NUM_CORES-1:0] core_mul1_valid, core_mul2_valid, core_mul3_valid;
     wire [4:0] core_mul1_rd [0:NUM_CORES-1];
@@ -278,6 +279,7 @@ module StreamingMultiprocessor #(
     assign mul2_rd = core_mul2_rd[0];
     assign mul3_valid = core_mul3_valid[0];
     assign mul3_rd = core_mul3_rd[0];
+    assign o_kernel_complete = core_complete[0]; //! Assign first one since divergence isnt supported
 
     generate
         for (i = 0; i < NUM_CORES; i = i + 1) begin : cores
@@ -326,7 +328,8 @@ module StreamingMultiprocessor #(
                 //! New Crossbar Control Pins
                 .i_mem_grant(sp_mem_grant[i]),
                 .i_mem_rvalid(sp_mem_rvalid[i]),
-                .i_global_stall(global_stall)
+                .i_global_stall(global_stall),
+                .o_core_complete(core_complete[i])
             );
         end
     endgenerate

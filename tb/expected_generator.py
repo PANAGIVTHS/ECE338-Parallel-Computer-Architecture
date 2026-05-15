@@ -170,6 +170,16 @@ def generate_expected_memories(asm_text, num_cores=2):
                     # -1 because the loop unconditionally does pc += 1 at the end
                     pc = target_pc - 1 
 
+            elif op == 'jalr':
+                rd = parse_register(parts[1])
+                match = re.match(r'(-?\d+)\s*\(\s*(x\d+)\s*\)', parts[2])
+                if match:
+                    imm = int(match.group(1))
+                    rs1 = parse_register(match.group(2))
+                    # Stop if it finds exactly jalr x0, 0(x1)
+                    if rd == 0 and rs1 == 1 and imm == 0:
+                        break
+
             pc += 1
 
     return regfiles, memory

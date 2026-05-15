@@ -11,6 +11,7 @@ module tb_StreamingProcessor ();
     reg clk, rst;
     reg dummy_wen;
     wire [2:0] o_leds;
+    wire o_kernel_complete;
     
     // Expected results arrays
     reg [31:0] expected_data [0:`DMEM_ENTRIES-1];
@@ -36,7 +37,8 @@ module tb_StreamingProcessor ();
         .i_clk(clk), 
         .rst(rst), 
         .i_dummy_wen(dummy_wen), 
-        .o_leds(o_leds)
+        .o_leds(o_leds),
+        .o_kernel_complete(o_kernel_complete)
     );
 
     // =========================================================================
@@ -118,9 +120,9 @@ module tb_StreamingProcessor ();
             #(`CLOCK_PERIOD * 5.75);
             rst = 1;
 
-            // 6. Test execution cycle loop
+            // 6. Test execution cycle loop (Now with both completion check AND timeout)
             cycle_count = 0;
-            while (cycle_count < `TEST_TIMEOUT_CYCLES) begin
+            while (o_kernel_complete !== 1'b1 && cycle_count < `TEST_TIMEOUT_CYCLES) begin
                 #(`CLOCK_PERIOD);
                 cycle_count = cycle_count + 1;
 
@@ -137,7 +139,12 @@ module tb_StreamingProcessor ();
             end
             $fclose(fd_trace);
 
-            // Note: Timeout warning removed as requested. 
+            if (cycle_count >= `TEST_TIMEOUT_CYCLES) begin
+                $display("  [WARNING] Test %0d reached timeout of %0d cycles!", test_idx, `TEST_TIMEOUT_CYCLES);
+            end
+
+            // Leave some cycles pass to let pipeline drain and clearly separate tests in waveforms
+            #(`CLOCK_PERIOD * 10);
 
             // 7. Compare the Regfiles for ALL cores
             reg_errors = 0;
@@ -172,7 +179,7 @@ module tb_StreamingProcessor ();
 
             // 9. Final Verdict
             if (reg_errors == 0 && data_errors == 0)
-                $display("  [PASS] Test %0d is correct across all %0d cores!", test_idx, NUM_CORES);
+                $display("  [PASS] Test %0d is correct across all %0d cores! (Finished in %0d cycles)", test_idx, NUM_CORES, cycle_count);
             else
                 $display("  [FAIL] Test %0d failed. (Reg errors: %0d, Data errors: %0d)", 
                     test_idx, reg_errors, data_errors);
@@ -194,6 +201,7 @@ module tb_StreamingProcessor ();
     generate
         for (d = 0; d < 32; d = d + 1) begin : dump_mems
             initial begin
+                #0;
                 $dumpvars(0, tb_StreamingProcessor.UUT.instructionMemory.data[d]);
                 $dumpvars(0, tb_StreamingProcessor.UUT.dataMemory.data[d]);
             end
@@ -201,6 +209,7 @@ module tb_StreamingProcessor ();
         for (c_dump = 0; c_dump < NUM_CORES; c_dump = c_dump + 1) begin : dump_cores
             for (d = 0; d < 32; d = d + 1) begin : dump_regs
                 initial begin
+                    #0;
                     $dumpvars(0, tb_StreamingProcessor.UUT.cores[c_dump].core.regfile.data[d]);
                 end
             end

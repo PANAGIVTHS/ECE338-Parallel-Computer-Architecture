@@ -44,7 +44,8 @@ module StreamingProcessor #(
     //! New Memory Queue / Arbiter Interface
     input i_mem_grant,
     input i_mem_rvalid,
-    input i_global_stall
+    input i_global_stall,
+    output o_core_complete
 );
     wire clk = i_clk;
 
@@ -229,6 +230,7 @@ module StreamingProcessor #(
     assign o_mem_ren = mem_is_load | mem_is_store;
     assign o_mem_wen = mem_is_store;
     assign o_mem_wdata = exmem_reg_b;
+    assign o_core_complete = (exmem_opcode == `OP_JALR && exmem_rd == 5'b0);
 
     //! =========================================================================
     //! PIPELINE REGISTER 4: MEMORY -> WRITE BACK

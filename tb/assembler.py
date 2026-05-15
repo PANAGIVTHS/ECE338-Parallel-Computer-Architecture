@@ -18,7 +18,7 @@ def parse_imm(imm_str):
         return int(imm_str, 16)
     return int(imm_str)
 
-def assemble_slt_srli(line):
+def assemble_manual(line):
     """Manually computes the hex for the 2 unsupported instructions"""
     parts = line.replace(',', ' ').split()
     op = parts[0].lower()
@@ -34,6 +34,18 @@ def assemble_slt_srli(line):
         imm = parse_imm(parts[3])
         shamt = imm & 0x1F
         b = (0x00 << 25) | (shamt << 20) | (rs1 << 15) | (0x5 << 12) | (rd << 7) | 0x13
+        return f"{b:08x}"
+    elif op == 'jalr':
+        rd = parse_reg(parts[1])
+        if '(' in parts[2]:
+            imm_str, rs1_str = parts[2].split('(')
+            imm = parse_imm(imm_str)
+            rs1 = parse_reg(rs1_str)
+        else:
+            rs1 = parse_reg(parts[2])
+            imm = parse_imm(parts[3])
+        imm = imm & 0xFFF
+        b = (imm << 20) | (rs1 << 15) | (0x0 << 12) | (rd << 7) | 0x67
         return f"{b:08x}"
     return None
 
@@ -116,9 +128,9 @@ def compile_all_tests():
             
             for i, line in enumerate(asm_code.splitlines()):
                 op = line.replace(',', ' ').split()[0].lower() if line.strip() else ""
-                if op in ['slt', 'srli']:
+                if op in ['slt', 'srli', 'jalr']:
                     # Manually convert the instruction to hex
-                    custom_hex = assemble_slt_srli(line)
+                    custom_hex = assemble_manual(line)
                     if custom_hex:
                         custom_hex_map[i] = custom_hex
                     # Give the library a dummy instruction of the same length
