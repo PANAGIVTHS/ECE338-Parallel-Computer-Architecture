@@ -32,9 +32,54 @@ module StreamingMultiprocessor #(
     wire [31:0] sp_mem_rdata [0:NUM_CORES-1];
     wire [NUM_CORES-1:0] sp_mem_grant;
     wire [NUM_CORES-1:0] sp_mem_rvalid;
+    reg [NUM_CORES-1:0] mem_satisfied;
+    
+    always @(posedge clk) begin
+        if (!rst) begin
+            mem_satisfied <= {NUM_CORES{1'b0}};
+        end else if (!global_stall) begin
+            //! Reset when pipeline moves
+            mem_satisfied <= {NUM_CORES{1'b0}};
+        end else begin
+            //! Accumulate grants
+            mem_satisfied <= mem_satisfied | sp_mem_grant;
+        end
+    end
 
-    // A single core waiting for a grant stalls the entire lockstep pipeline
-    wire global_stall = |(sp_mem_ren & ~sp_mem_grant);
+    //! Only request memory if the core hasn't already been served during this stall
+    wire [NUM_CORES-1:0] active_mem_ren = sp_mem_ren & ~mem_satisfied;
+    wire [NUM_CORES-1:0] active_mem_wen = sp_mem_wen & ~mem_satisfied;
+
+    //! If even a single core asks for memory but is denied, stall
+    wire global_stall = |(active_mem_ren & ~sp_mem_grant);
+
+    //& ===============
+    //& READ DATA LATCHING
+    //& ===============
+    reg [31:0] latched_rdata [0:NUM_CORES-1];
+    reg [NUM_CORES-1:0] mem_grant_delayed;
+    integer k;
+
+    //! BRAM data arrives exactly 1 cycle after a grant. We delay the grant signal
+    //! to know exactly when to latch the valid data from the crossbar.
+    always @(posedge clk) begin
+        if (!rst) mem_grant_delayed <= {NUM_CORES{1'b0}};
+        else mem_grant_delayed <= sp_mem_grant;
+    end
+
+    always @(posedge clk) begin
+        if (!rst) begin
+            for (k = 0; k < NUM_CORES; k = k + 1) begin 
+                latched_rdata[k] <= 32'b0;
+            end
+        end else begin
+            for (k = 0; k < NUM_CORES; k = k + 1) begin
+                if (mem_grant_delayed[k]) begin
+                    latched_rdata[k] <= flat_mem_rdata[k*32 +: 32];
+                end
+            end
+        end
+    end
 
     //! =========================================================================
     //! STAGE 1: INSTRUCTION FETCH
@@ -103,8 +148,7 @@ module StreamingMultiprocessor #(
 
     assign id_wen = !({`INSTR_TYPE_S == id_instr_type && `OP_SW == id_opcode} || {`INSTR_TYPE_S == id_instr_type && `OP_BEQ == id_opcode} || (id_rd == 5'b0));
     assign id_is_mul = (id_opcode == `OP_R_TYPE) && (id_imm_31_25 == `FUNCT7_MULDIV);
-    
-    // Solved earlier hazard stall bug: Never zero out these addresses
+
     assign id_mux_rs1 = id_rs1;
     assign id_mux_rs2 = id_rs2;
 
@@ -204,12 +248,13 @@ module StreamingMultiprocessor #(
         for (i = 0; i < NUM_CORES; i = i + 1) begin : gen_flat
             assign flat_mem_addr[i*DMEM_AW +: DMEM_AW] = sp_mem_addr[i];
             assign flat_mem_wdata[i*32 +: 32] = sp_mem_wdata[i];
-            assign sp_mem_rdata[i] = flat_mem_rdata[i*32 +: 32];
+            
+            //! If granted exactly 1 cycle ago, read live directly from crossbar
+            //! Otherwise (stalled for >1 cycle), read from the safety latch.
+            assign sp_mem_rdata[i] = mem_grant_delayed[i] ? flat_mem_rdata[i*32 +: 32] : latched_rdata[i];
         end
     endgenerate
 
-    //TODO 
-    //! Only supports 2 cores internally for now 
     MemoryCrossbarNx2 #(
         .N(NUM_CORES),
         .DEPTH(`DMEM_ENTRIES),
@@ -218,8 +263,8 @@ module StreamingMultiprocessor #(
         .clk(clk),
         .rst(rst),
         // Cores Interface
-        .i_req   ( sp_mem_ren ),
-        .i_wen   ( sp_mem_wen ),
+        .i_req   ( active_mem_ren ), 
+        .i_wen   ( active_mem_wen ), 
         .i_addr  ( flat_mem_addr ),
         .i_wdata ( flat_mem_wdata ),
         .o_grant ( sp_mem_grant ),

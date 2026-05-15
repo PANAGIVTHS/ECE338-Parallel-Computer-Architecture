@@ -79,43 +79,15 @@ module StreamingProcessor #(
         .o_reg_a(ex_reg_a), .o_reg_b(ex_reg_b), .i_global_stall(i_global_stall)
     );
 
-    //? =================================================
-    //? STALL SAFETY LATCH LOGIC
-    //? =================================================
-    
-    //! Protects EX operands from being overwritten by ID 
-    //! stage continuous Regfile reads during a crossbar stall
-    reg [31:0] stall_reg_a, stall_reg_b;
-    reg was_stalled;
-    
-    always @(posedge clk) begin
-        if (!rst) begin
-            was_stalled <= 1'b0;
-            stall_reg_a <= 32'b0;
-            stall_reg_b <= 32'b0;
-        end else begin
-            was_stalled <= i_global_stall;
-            //! Snapshot the live EX data the exact moment a stall begins
-            if (i_global_stall && !was_stalled) begin
-                stall_reg_a <= ex_reg_a;
-                stall_reg_b <= ex_reg_b;
-            end
-        end
-    end
-
-    //! Route the safely latched data whenever we are recovering from a stall
-    wire [31:0] safe_ex_reg_a = was_stalled ? stall_reg_a : ex_reg_a;
-    wire [31:0] safe_ex_reg_b = was_stalled ? stall_reg_b : ex_reg_b;
-
-    //? --- Forwarding Multiplexer B (Must be defined first for routing) ---
+    //? --- Forwarding Multiplexer B ---
     assign forwarded_rs2 = (forward_alu_b == `EXALU_MEMALU_DEP) ? exmem_alu_out :
                            (forward_alu_b == `MEMWB_EXALU_DEP)  ? wb_wdata : 
-                            safe_ex_reg_b; // Use protected register
+                            ex_reg_b;
 
     //? --- Forwarding Multiplexer A ---
     assign ex_actual_alu_in_a = (forward_alu_a == `EXALU_MEMALU_DEP) ? exmem_alu_out :
                                 (forward_alu_a == `MEMWB_EXALU_DEP)  ? wb_wdata :
-                                 safe_ex_reg_a; // Use protected register
+                                 ex_reg_a;
 
     //? --- Final ALU Input B ---
     assign ex_actual_alu_in_b = (i_idex_opcode == `OP_LW || i_idex_instr_type == `INSTR_TYPE_I) ? ex_imm_i_type :

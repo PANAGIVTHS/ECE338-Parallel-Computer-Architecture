@@ -7,6 +7,7 @@ from pathlib import Path
 MEM_DEPTH = 2048
 REG_DEPTH = 32
 NUM_CORES = 2
+STACK_P_INIT = 0
 
 def parse_register(reg_str):
     """Extracts the integer index from a register string like 'x1', 'x31'"""
@@ -52,7 +53,7 @@ def generate_expected_memories(asm_text, num_cores=2):
     for core_id in range(num_cores):
         registers = regfiles[core_id]
         registers[31] = core_id  # Hardwire x31 to CORE_ID
-        registers[2] = MEM_DEPTH * 4
+        registers[2] = STACK_P_INIT
 
         pc = 0
         cycles = 0
