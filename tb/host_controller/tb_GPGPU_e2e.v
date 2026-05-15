@@ -1,203 +1,290 @@
 `timescale 1ns / 1ps
 
-module tb_GPGPU_e2e();
+module tb_GPGPU_e2e_command();
 
-    //==============================================
-    // SYSTEM CONSTANTS (72 MHz & 115200 Baud)
-    //==============================================
-    localparam CLK_PERIOD = 10;   // 1000 / 72 MHz
-    localparam BIT_PERIOD = 8681;     // 1,000,000,000 / 115200 baud
-    
-    // Memory Sizes (Adjust these if your architecture uses different limits)
-    localparam IMEM_WORDS = 1024; // 4096 Bytes
-    localparam DMEM_WORDS = 1024; // 4096 Bytes
-    localparam REG_WORDS  = 32;   // 128 Bytes
+    //==================================================
+    // Constants
+    //==================================================
+    localparam CLK_PERIOD = 10;
 
+    localparam IMEM_WORDS = 1024;
+    localparam DMEM_WORDS = 1024;
+    localparam REG_WORDS  = 32;
+
+    // Host commands
+    localparam CMD_IMEM_WRITE = 3'd0;
+    localparam CMD_WRITE_DONE = 3'd1;
+    localparam CMD_DMEM_READ  = 3'd2;
+    localparam CMD_REG_READ   = 3'd3;
+    localparam CMD_READ_DONE  = 3'd4;
+
+    //==================================================
+    // DUT signals
+    //==================================================
     reg clk;
     reg rst;
-    reg uart_rx;
-    wire uart_tx;
 
-    //==============================================
-    // INSTANTIATE YOUR TOP LEVEL GPGPU
-    //==============================================
-    // (Ensure the module name matches your actual top-level file)
+    wire o_loading;
+    wire o_running;
+    wire o_dumping;
+
+    reg [2:0]  host_command;
+    reg        host_command_valid;
+    reg [31:0] host_address;
+    reg [31:0] host_wdata;
+
+    wire [31:0] host_rdata;
+    wire host_busy;
+    wire host_done;
+
+    //==================================================
+    // DUT
+    //==================================================
     GPGPU UUT (
         .i_clk(clk),
         .i_rst(rst),
-        .i_uart_rx(uart_rx),
-        .o_uart_tx(uart_tx)
+
+        .o_loading(o_loading),
+        .o_running(o_running),
+        .o_dumping(o_dumping),
+
+        .i_host_command(host_command),
+        .i_host_command_valid(host_command_valid),
+        .i_host_address(host_address),
+        .i_host_wdata(host_wdata),
+
+        .o_host_rdata(host_rdata),
+        .o_host_busy(host_busy),
+        .o_host_done(host_done)
     );
 
-    //==============================================
-    // CLOCK GENERATION
-    //==============================================
+    //==================================================
+    // Clock
+    //==================================================
     always #(CLK_PERIOD / 2.0) clk = ~clk;
 
-    //==============================================
-    // MEMORY ARRAYS FOR TESTING
-    //==============================================
+    //==================================================
+    // Expected memories
+    //==================================================
     reg [31:0] expected_imem [0:IMEM_WORDS-1];
     reg [31:0] expected_dmem [0:DMEM_WORDS-1];
     reg [31:0] expected_reg  [0:REG_WORDS-1];
 
-    //==============================================
-    // UART TRANSMISSION TASKS (Simulates PC -> FPGA)
-    //==============================================
-    task send_uart_byte(input [7:0] tx_data);
-        integer b;
+    //==================================================
+    // Command task
+    //==================================================
+    task send_command(
+        input [2:0]  cmd,
+        input [31:0] addr,
+        input [31:0] wdata
+    );
         begin
-            uart_rx = 1'b0; // Start bit
-            #(BIT_PERIOD);
-            
-            for (b = 0; b < 8; b = b + 1) begin
-                uart_rx = tx_data[b]; // Data bits (LSB first logically, but our vector index handles it)
-                #(BIT_PERIOD);
+            // Wait until accelerator command interface is available
+            while (host_busy) begin
+                @(posedge clk);
             end
-            
-            uart_rx = 1'b1; // Stop bit
-            #(BIT_PERIOD);
-        end
-    endtask
 
-    task send_uart_word(input [31:0] tx_word);
-        begin
-            // Matches your UART receiver's Big-Endian buffer: [31:24], [23:16], [15:8], [7:0]
-            send_uart_byte(tx_word[31:24]);
-            send_uart_byte(tx_word[23:16]);
-            send_uart_byte(tx_word[15:8]);
-            send_uart_byte(tx_word[7:0]);
-        end
-    endtask
+            // Present command fields
+            host_command <= cmd;
+            host_address <= addr;
+            host_wdata   <= wdata;
 
-    //==============================================
-    // UART RECEPTION TASKS (Simulates FPGA -> PC)
-    //==============================================
-    task receive_uart_byte(output reg [7:0] rx_data);
-        integer b;
-        begin
-            wait (uart_tx == 1'b0); // Wait for the Start Bit to drop
-            #(BIT_PERIOD / 2.0);    // Step to the center of the Start Bit
-            
-            if (uart_tx !== 1'b0) $display("ERROR: Start bit glitch!");
-            #(BIT_PERIOD);          // Step to center of Bit 0
+            // Assert valid and KEEP IT HIGH until done
+            host_command_valid <= 1'b1;
 
-            for (b = 0; b < 8; b = b + 1) begin
-                rx_data[b] = uart_tx;
-                #(BIT_PERIOD);
+            // Wait for command completion
+            while (!host_done) begin
+                @(posedge clk);
             end
-            
-            if (uart_tx !== 1'b1) $display("ERROR: Stop bit missing! Framing Error.");
+
+            // Command is complete; deassert valid
+            host_command_valid <= 1'b0;
+
+            // Wait for done to drop before next command
+            while (host_done) begin
+                @(posedge clk);
+            end
         end
     endtask
 
-    task receive_uart_word(output reg [31:0] rx_word);
-        reg [7:0] b3, b2, b1, b0;
+    //==================================================
+    // IMEM write helper
+    //==================================================
+    task write_imem(
+        input [31:0] addr,
+        input [31:0] instr
+    );
         begin
-            receive_uart_byte(b3);
-            receive_uart_byte(b2);
-            receive_uart_byte(b1);
-            receive_uart_byte(b0);
-            rx_word = {b3, b2, b1, b0};
+            send_command(CMD_IMEM_WRITE, addr, instr);
         end
     endtask
 
-    //==============================================
-    // MAIN TEST SEQUENCE
-    //==============================================
+    //==================================================
+    // DMEM read helper
+    //==================================================
+    task read_dmem(
+        input [31:0] addr,
+        output [31:0] data
+    );
+        begin
+            send_command(CMD_DMEM_READ, addr, 32'b0);
+
+            // send_command returns only after done was seen,
+            // so host_rdata should now be stable.
+            data = host_rdata;
+        end
+    endtask
+
+    //==================================================
+    // REG read helper
+    //==================================================
+    task read_reg(
+        input [31:0] addr,
+        output [31:0] data
+    );
+        begin
+            send_command(CMD_REG_READ, addr, 32'b0);
+
+            // send_command returns only after done was seen,
+            // so host_rdata should now be stable.
+            data = host_rdata;
+        end
+    endtask
+
+    //==================================================
+    // Main test
+    //==================================================
     integer i;
-    reg [31:0] captured_word;
     integer errors;
+    reg [31:0] captured_word;
 
     initial begin
         $display("=================================================");
-        $display(" Starting End-to-End GPGPU Simulation...");
+        $display(" Starting Command-Based GPGPU E2E Simulation...");
         $display("=================================================");
-        
-        // 1. Initialize Memories to ZERO
-        for (i = 0; i < IMEM_WORDS; i = i + 1) expected_imem[i] = 32'b0;
-        for (i = 0; i < DMEM_WORDS; i = i + 1) expected_dmem[i] = 32'b0;
-        for (i = 0; i < REG_WORDS; i = i + 1)  expected_reg[i]  = 32'b0;
 
-        // 2. Load the User's Provided Files
-        // Make sure these text files are in your Vivado simulation directory!
+        clk = 1'b0;
+        rst = 1'b0;
+
+        host_command       = 3'b0;
+        host_command_valid = 1'b0;
+        host_address       = 32'b0;
+        host_wdata         = 32'b0;
+
+        errors = 0;
+
+        // Initialize expected arrays
+        for (i = 0; i < IMEM_WORDS; i = i + 1)
+            expected_imem[i] = 32'h00000013; // NOP
+
+        expected_imem[1000] = 32'h00008067; // RET
+
+        for (i = 0; i < DMEM_WORDS; i = i + 1)
+            expected_dmem[i] = 32'b0;
+
+        for (i = 0; i < REG_WORDS; i = i + 1)
+            expected_reg[i] = 32'b0;
+
+        // Optional file-based expected data
         $readmemh("program.mem", expected_imem);
         $readmemh("data.mem", expected_dmem);
         $readmemh("regfile.mem", expected_reg);
 
-        errors = 0;
-        clk = 0;
-        rst = 0;
-        uart_rx = 1; // Idle state is HIGH
+        // Reset
+        repeat (10) @(posedge clk);
+        rst <= 1'b1;
+        repeat (10) @(posedge clk);
 
-        #(CLK_PERIOD * 1000);
-        rst = 1;
-        #(CLK_PERIOD * 1000);
-
-        //-----------------------------------------------------
-        // PHASE 1: LOAD INSTRUCTIONS
-        //-----------------------------------------------------
-        $display("\n[PHASE 1] Sending %0d words of Instruction Memory to FPGA...", IMEM_WORDS);
-        
-        // We MUST send all 1024 words so the FSM byte_counter reaches 4096!
-        // The first 26 words will be your code, the rest will be 0x00000000 (NOPs).
-        for (i = 0; i < IMEM_WORDS; i = i + 1) begin
-            send_uart_word(expected_imem[i]);
-            
-            // Print a progress update so you know the simulation hasn't frozen!
-            if (i > 0 && i % 256 == 0) $display("  ...Sent %0d words...", i);
+        if (!o_loading) begin
+            $display("[WARN] DUT did not start in LOADING state.");
         end
-        $display("  -> IMEM Load Complete!");
 
-        //-----------------------------------------------------
-        // PHASE 2: CORE EXECUTION
-        //-----------------------------------------------------
-        $display("\n[PHASE 2] Waiting for Core Execution...");
-        // At this point, the HostController enters RUN state, executes, and 
-        // will automatically transition to DUMP state and begin pulling the uart_tx line low.
-        
-        //-----------------------------------------------------
-        // PHASE 3: DUMP DATA MEMORY
-        //-----------------------------------------------------
-        $display("\n[PHASE 3] Receiving Data Memory Dump...");
+        //--------------------------------------------------
+        // PHASE 1: Load instruction memory
+        //--------------------------------------------------
+        $display("\n[PHASE 1] Writing IMEM using host commands...");
+
+        for (i = 0; i < IMEM_WORDS; i = i + 1) begin
+            write_imem(i, expected_imem[i]);
+
+            if (i > 0 && i % 256 == 0)
+                $display("  ...Wrote %0d IMEM words...", i);
+        end
+
+        $display("  -> IMEM write complete.");
+
+        //--------------------------------------------------
+        // PHASE 2: Tell core program load is complete
+        //--------------------------------------------------
+        $display("\n[PHASE 2] Sending WRITE_DONE command...");
+        send_command(CMD_WRITE_DONE, 32'b0, 32'b0);
+
+        //--------------------------------------------------
+        // PHASE 3: Wait for execution
+        //--------------------------------------------------
+        $display("\n[PHASE 3] Waiting for core to enter DUMPING state...");
+
+        wait (o_running == 1'b1);
+        $display("  -> Core entered RUNNING state.");
+
+        wait (o_dumping == 1'b1);
+        $display("  -> Core entered DUMPING state.");
+
+        //--------------------------------------------------
+        // PHASE 4: Read DMEM
+        //--------------------------------------------------
+        $display("\n[PHASE 4] Reading DMEM using host commands...");
+
         for (i = 0; i < DMEM_WORDS; i = i + 1) begin
-            receive_uart_word(captured_word);
-            
-            // We only print mismatches, or the first 32 words since you provided 32
+            read_dmem(i, captured_word);
+
             if (captured_word !== expected_dmem[i]) begin
-                $display("  [FAIL] DMEM[%0d]: Expected %h, Got %h", i, expected_dmem[i], captured_word);
+                $display("  [FAIL] DMEM[%0d]: Expected %h, Got %h",
+                         i, expected_dmem[i], captured_word);
                 errors = errors + 1;
             end else if (i < 32) begin
                 $display("  [PASS] DMEM[%0d]: %h", i, captured_word);
             end
         end
 
-        //-----------------------------------------------------
-        // PHASE 4: DUMP REGISTER FILE
-        //-----------------------------------------------------
-        $display("\n[PHASE 4] Receiving Register File Dump...");
+        //--------------------------------------------------
+        // PHASE 5: Read register file
+        //--------------------------------------------------
+        $display("\n[PHASE 5] Reading register file using host commands...");
+
         for (i = 0; i < REG_WORDS; i = i + 1) begin
-            receive_uart_word(captured_word);
-            
+            read_reg(i, captured_word);
+
             if (captured_word !== expected_reg[i]) begin
-                $display("  [FAIL] REG[%0d]:  Expected %h, Got %h", i, expected_reg[i], captured_word);
+                $display("  [FAIL] REG[%0d]: Expected %h, Got %h",
+                         i, expected_reg[i], captured_word);
                 errors = errors + 1;
             end else begin
-                $display("  [PASS] REG[%0d]:  %h", i, captured_word);
+                $display("  [PASS] REG[%0d]: %h", i, captured_word);
             end
         end
 
-        //-----------------------------------------------------
-        // FINAL VERDICT
-        //-----------------------------------------------------
-        #(CLK_PERIOD * 100);
+        //--------------------------------------------------
+        // PHASE 6: Tell host controller readback is done
+        //--------------------------------------------------
+        $display("\n[PHASE 6] Sending READ_DONE command...");
+        send_command(CMD_READ_DONE, 32'b0, 32'b0);
+
+        wait (o_loading == 1'b1);
+        $display("  -> Core returned to LOADING state.");
+
+        //--------------------------------------------------
+        // Final verdict
+        //--------------------------------------------------
+        repeat (10) @(posedge clk);
+
         $display("\n=================================================");
-        if (errors == 0) begin
-            $display(" E2E SIMULATION COMPLETE: SUCCESS!");
-        end else begin
-            $display(" E2E SIMULATION COMPLETE: FAILED with %0d errors.", errors);
-        end
+        if (errors == 0)
+            $display(" COMMAND E2E SIMULATION COMPLETE: SUCCESS!");
+        else
+            $display(" COMMAND E2E SIMULATION COMPLETE: FAILED with %0d errors.", errors);
         $display("=================================================");
+
         $finish;
     end
 

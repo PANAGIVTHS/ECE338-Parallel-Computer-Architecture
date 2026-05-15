@@ -1,27 +1,31 @@
 module GPGPU (
     input wire i_clk,
     input wire i_rst,
-    (* mark_debug = "true" *) input wire i_uart_rx,
-    output wire o_uart_tx,
-    output wire o_ferror,
-    output wire o_perror,
     output wire o_loading,
     output wire o_running,
     output wire o_dumping,
-    output wire o_rx_activity,
-    output wire o_tx_activity
+    
+    // Host CPU commands
+    input wire [2:0] i_host_command,
+    input wire i_host_command_valid,
+    input wire [31:0] i_host_address,
+    input wire [31:0] i_host_wdata, 
+
+    // Host CPU outputs
+    output wire [31:0] o_host_rdata,
+    output wire o_host_busy,
+    output wire o_host_done
 );
     // tdb was here...
     wire clk;
+    assign clk = i_clk;
     
-    // Host control for the core
+    // Control for the core
+    wire [1:0] core_state;
     wire core_run, core_clear;
-    
-    // Host controller memory signals
-    wire [9:0] host_dmem_addr;
-    wire [4:0] host_reg_addr;
-    wire [$clog2(`IMEM_ENTRIES)-1:0] host_imem_addr;
-    wire [31:0] host_imem_wdata, host_reg_rdata;
+
+    // Host memory signals
+    wire [31:0] host_address, host_wdata;
     wire host_imem_wen;
     
     // Streaming processor memory signals
@@ -33,38 +37,42 @@ module GPGPU (
     // MUX-ed memory signals
     wire [9:0] dmem_addr;
     wire [$clog2(`IMEM_ENTRIES)-1:0] imem_addr;
-    wire [31:0] imem_rdata, dmem_rdata, dmem_wdata;
-    wire imem_ren, dmem_ren, dmem_wen;
+    wire [31:0] imem_rdata, dmem_rdata, reg_rdata, dmem_wdata;
+    wire imem_ren, imem_wen, dmem_ren, dmem_wen;
 
-    assign dmem_addr = core_run ? core_dmem_addr : host_dmem_addr;
-    assign imem_addr = core_run ? core_imem_addr : host_imem_addr;
+    assign core_run = core_state == `CORE_RUNNING;
+    assign core_clear = core_state == `CORE_LOADING;
+    assign dmem_addr = core_run ? core_dmem_addr : host_address;
+    assign imem_addr = core_run ? core_imem_addr : host_address;
     assign dmem_wdata = core_run ? core_dmem_wdata : 32'b0;
     assign imem_ren = core_run ? core_imem_ren : 1'b1;
+    assign imem_wen = core_run ? 1'b0 : host_imem_wen;
     assign dmem_ren = core_run ? core_dmem_ren : 1'b1;
     assign dmem_wen = core_run ? core_dmem_wen : 1'b0;
-    assign o_loading = !core_run && core_clear;
-    assign o_running = core_run;
-    assign o_dumping = !core_run && !core_clear;
-    assign o_rx_activity = i_uart_rx;
-    assign o_tx_activity = o_uart_tx;
+    assign o_loading = core_state == `CORE_LOADING;
+    assign o_running = core_state == `CORE_RUNNING;
+    assign o_dumping = core_state == `CORE_DUMPING;
 
     HostController host_controller (
         .i_clk(clk),
         .i_rst(i_rst),
         .i_core_complete(core_complete),
-        .i_uart_rx(i_uart_rx),
-        .o_uart_tx(o_uart_tx),
-        .o_core_run(core_run),
-        .o_core_clear(core_clear),
-        .o_imem_addr(host_imem_addr),
-        .o_imem_wdata(host_imem_wdata),
-        .o_imem_wen(host_imem_wen),
-        .o_dmem_addr(host_dmem_addr),
+        .i_reg_rdata(reg_rdata),
         .i_dmem_rdata(dmem_rdata),
-        .o_reg_addr(host_reg_addr),
-        .i_reg_rdata(host_reg_rdata),
-        .o_ferror(o_ferror),
-        .o_perror(o_perror)
+
+        .i_host_command(i_host_command),
+        .i_host_command_valid(i_host_command_valid),
+        .i_host_address(i_host_address),
+        .i_host_wdata(i_host_wdata),
+
+        .o_host_address(host_address),
+        .o_host_wdata(host_wdata),
+        .o_host_imem_wen(host_imem_wen),
+        .o_host_rdata(o_host_rdata),
+        .o_host_busy(o_host_busy),
+        .o_host_done(o_host_done),
+
+        .o_core_state(core_state)
     );
 
     StreamingProcessor sp (
@@ -79,8 +87,8 @@ module GPGPU (
         .o_dmem_ren(core_dmem_ren),
         .o_dmem_wen(core_dmem_wen),
         .o_dmem_wdata(core_dmem_wdata),
-        .i_reg_addr(host_reg_addr),
-        .o_reg_rdata(host_reg_rdata),
+        .i_reg_addr(host_address),
+        .o_reg_rdata(reg_rdata),
         .o_core_complete(core_complete)
     );
 
@@ -92,8 +100,8 @@ module GPGPU (
         .clk(clk),
         .i_addr_a(imem_addr),
         .i_ren_a(imem_ren),
-        .i_wen_a(host_imem_wen),
-        .i_data_a(host_imem_wdata),
+        .i_wen_a(imem_wen),
+        .i_data_a(host_wdata),
         .o_out_a(imem_rdata)
     );
 
@@ -115,9 +123,9 @@ module GPGPU (
         .o_out_b()
     );
 
-    clk_wiz_0 clockDivider (
-        .clk_in1(i_clk),
-        .clk_out1(clk)
-    );
+//    clk_wiz_0 clockDivider (
+//        .clk_in1(i_clk),
+//        .clk_out1(clk)
+//    );
 
 endmodule

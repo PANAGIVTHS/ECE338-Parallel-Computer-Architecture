@@ -32,4 +32,8 @@
 `define NOP_INSTR 32'h00000013
 `define TXD_REGISTER 5'h1F
 
+`define CORE_LOADING 2'b00
+`define CORE_RUNNING 2'b01
+`define CORE_DUMPING 2'b10
+
 `define DEBUG "false"
