@@ -6,7 +6,7 @@
 
 module tb_StreamingProcessor ();
     // Configure the number of cores to test
-    parameter NUM_CORES = 2;
+    parameter NUM_CORES = 33;
 
     reg clk, rst;
     reg dummy_wen;
@@ -207,24 +207,24 @@ module tb_StreamingProcessor ();
         $dumpvars(0, tb_StreamingProcessor);
     end
 
-    // Dump multi-core 2D Arrays without throwing Scope Index errors
-    genvar d, c_dump;
-    generate
-        for (d = 0; d < 32; d = d + 1) begin : dump_mems
-            initial begin
-                #0;
-                $dumpvars(0, tb_StreamingProcessor.UUT.instructionMemory.data[d]);
-                $dumpvars(0, tb_StreamingProcessor.UUT.dataMemory.data[d]);
-            end
-        end
-        for (c_dump = 0; c_dump < NUM_CORES; c_dump = c_dump + 1) begin : dump_cores
-            for (d = 0; d < 32; d = d + 1) begin : dump_regs
-                initial begin
-                    #0;
-                    $dumpvars(0, tb_StreamingProcessor.UUT.cores[c_dump].core.regfile.data[d]);
-                end
-            end
-        end
-    endgenerate
+    // // Dump multi-core 2D Arrays without throwing Scope Index errors
+    // genvar d, c_dump;
+    // generate
+    //     for (d = 0; d < 32; d = d + 1) begin : dump_mems
+    //         initial begin
+    //             #0;
+    //             $dumpvars(0, tb_StreamingProcessor.UUT.instructionMemory.data[d]);
+    //             $dumpvars(0, tb_StreamingProcessor.UUT.dataMemory.data[d]);
+    //         end
+    //     end
+    //     for (c_dump = 0; c_dump < NUM_CORES; c_dump = c_dump + 1) begin : dump_cores
+    //         for (d = 0; d < 32; d = d + 1) begin : dump_regs
+    //             initial begin
+    //                 #0;
+    //                 $dumpvars(0, tb_StreamingProcessor.UUT.cores[c_dump].core.regfile.data[d]);
+    //             end
+    //         end
+    //     end
+    // endgenerate
 
 endmodule

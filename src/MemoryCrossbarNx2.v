@@ -169,9 +169,9 @@ module MemoryCrossbarNx2 #(
     assign collision_w = winner_a_valid && winner_b_valid && mux_wen_a && mux_wen_b && (mux_addr_a == mux_addr_b);
     assign collision_addr_w = mux_addr_a;
 
-    always @(posedge clk) begin
-        if (collision_w)
-            $display("[Crossbar] @%0t WARNING: Memory corruption on write address 0x%0h",
-                    $time, collision_addr_w);
-    end
+    // always @(posedge clk) begin
+    //     if (collision_w)
+    //         $display("[Crossbar] @%0t WARNING: Memory corruption on write address 0x%0h",
+    //                 $time, collision_addr_w);
+    // end
 endmodule
