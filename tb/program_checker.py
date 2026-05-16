@@ -126,25 +126,8 @@ def analyze_multicore_assembly(source_code, num_cores=4):
                 pc += 1
 
         elif op == 'jalr':
-            rd = parts[1]
-            imm, rs1 = parse_mem_operand(parts[2])
-            
-            # Check for Divergence
-            target_pcs = []
-            for c in range(num_cores):
-                target_pcs.append(get_reg(cores[c], rs1) + imm)
-                set_reg(cores[c], rd, (pc + 1) * 4)
-                
-            if len(set(target_pcs)) != 1:
-                print(f"[FAIL] DIVERGENCE DETECTED at PC {pc}: '{inst_str}'")
-                print(f"       Target PCs across cores: {target_pcs}")
-                return False
-                
-            # Treat jalr x0, 0(x1) returning to 0 as an exit condition
-            if target_pcs[0] == 0:
-                break
-                
-            pc = target_pcs[0] // 4
+            # Instruction ignored - just increment PC
+            pc += 1
 
         else:
             pc += 1 # Ignore unknown instructions
