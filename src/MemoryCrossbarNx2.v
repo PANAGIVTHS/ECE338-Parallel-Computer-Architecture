@@ -112,7 +112,7 @@ module MemoryCrossbarNx2 #(
     assign o_data_a = mux_data_a;
 
     assign o_addr_b = mux_addr_b;
-    assign o_wen_b = mux_wen_b;
+    assign o_wen_b = mux_wen_b && !collision_w;
     assign o_ren_b = winner_b_valid;
     assign o_data_b = mux_data_b;
 
@@ -123,7 +123,7 @@ module MemoryCrossbarNx2 #(
     always @(*) begin
         grant_comb = {N{1'b0}};
         if (winner_a_valid) grant_comb[winner_a_idx] = 1'b1;
-        if (winner_b_valid) grant_comb[winner_b_idx] = 1'b1;
+        if (winner_b_valid && !collision_w) grant_comb[winner_b_idx] = 1'b1;
     end
 
     assign o_grant = grant_comb;
@@ -171,7 +171,7 @@ module MemoryCrossbarNx2 #(
 
     always @(posedge clk) begin
         if (collision_w)
-            $display("[MemoryCrossbarNx2] @%0t WARNING: Possible corruption on memory write request at address 0x%0h",
+            $display("[Crossbar] @%0t WARNING: Memory corruption on write address 0x%0h",
                     $time, collision_addr_w);
     end
 endmodule

@@ -50,8 +50,8 @@ module StreamingMultiprocessor #(
     wire [NUM_CORES-1:0] active_mem_ren = sp_mem_ren & ~mem_satisfied;
     wire [NUM_CORES-1:0] active_mem_wen = sp_mem_wen & ~mem_satisfied;
 
-    //! If even a single core asks for memory but is denied, stall
-    wire global_stall = |(active_mem_ren & ~sp_mem_grant);
+    //! If even a single core asks for memory but is denied, stall (Handles Reads and Writes)
+    wire global_stall = |(active_mem_ren & ~sp_mem_grant) | |(active_mem_wen & ~sp_mem_grant);
 
     //& ===============
     //& READ DATA LATCHING
@@ -64,7 +64,8 @@ module StreamingMultiprocessor #(
     //! to know exactly when to latch the valid data from the crossbar.
     always @(posedge clk) begin
         if (!rst) mem_grant_delayed <= {NUM_CORES{1'b0}};
-        else mem_grant_delayed <= sp_mem_grant;
+        //! Only delay the grant signal if it belongs to a valid READ request
+        else mem_grant_delayed <= sp_mem_grant & (sp_mem_ren & ~sp_mem_wen);
     end
 
     always @(posedge clk) begin
@@ -146,7 +147,7 @@ module StreamingMultiprocessor #(
         .opcode(id_opcode)
     );
 
-    assign id_wen = !({`INSTR_TYPE_S == id_instr_type && `OP_SW == id_opcode} || {`INSTR_TYPE_S == id_instr_type && `OP_BEQ == id_opcode} || (id_rd == 5'b0));
+    assign id_wen = (id_rd == 5'b0) ? 1'b0 : (id_opcode == `OP_SW || id_opcode == `OP_BEQ) ? 1'b0 : 1'b1;
     assign id_is_mul = (id_opcode == `OP_R_TYPE) && (id_imm_31_25 == `FUNCT7_MULDIV);
 
     assign id_mux_rs1 = id_rs1;
@@ -182,7 +183,7 @@ module StreamingMultiprocessor #(
             idex_rs2 <= 5'b0;
             idex_rd <= 5'b0;
             idex_imm_31_20 <= 12'b0;
-            idex_aluop <= `ALU_ADD;
+            idex_aluop <= `ALU_INVALID;
             idex_instr_type <= `INSTR_TYPE_R;
             idex_opcode <= 7'b0;
             idex_imm_31_25 <= 7'b0;

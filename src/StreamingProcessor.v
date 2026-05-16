@@ -124,7 +124,7 @@ module StreamingProcessor #(
         end else if (i_global_stall) begin
             // Retain state during memory stall
         end else begin
-            mul1_rd <= i_idex_rd;
+            mul1_rd <= (ex_is_mul) ? i_idex_rd : 5'b0;
             mul2_rd <= mul1_rd;
             mul3_rd <= mul2_rd;
             mul1_valid <= ex_is_mul && (i_idex_rd != 5'b0);
@@ -186,7 +186,7 @@ module StreamingProcessor #(
             exmem_mul3_valid <= mul3_valid;
             exmem_rd <= mul3_valid ? mul3_rd : i_idex_rd;
             exmem_opcode <= mul3_valid ? `OP_R_TYPE : i_idex_opcode;
-            exmem_wen <= mul3_valid ? 1'b1 : i_idex_wen;
+            exmem_wen <= mul3_valid ? (mul3_rd != 5'b0) : (i_idex_wen && i_idex_rd != 5'b0);
             exmem_program_counter <= mul3_valid ? mul3_program_counter : i_idex_program_counter;
         end
     end
@@ -234,11 +234,25 @@ module StreamingProcessor #(
     //! =========================================================================
     //! STAGE 5: WRITE BACK
     //! =========================================================================
-    assign wb_wdata = memwb_is_load ? i_mem_rdata : memwb_alu_out;
+    reg [31:0] safe_wb_rdata;
+    reg safe_wb_valid;
 
-    assign o_leds[0] = i_dummy_wen;
-    assign o_leds[1] = ^memwb_alu_out;
-    assign o_leds[2] = ^exmem_reg_b;
+    always @(posedge clk) begin
+        if (!rst) begin
+            safe_wb_rdata <= 32'b0;
+            safe_wb_valid <= 1'b0;
+        end else if (!i_global_stall) begin
+            //! Pipeline is moving normally. Clear the vault for the next instruction.
+            safe_wb_valid <= 1'b0;
+        end else if (memwb_is_load && !safe_wb_valid) begin
+            //! FIX: We are stalled, and we are a load. Latch the memory data immediately 
+            //! before a subsequent load wins the crossbar and overwrites the shared bus.
+            safe_wb_rdata <= i_mem_rdata;
+            safe_wb_valid <= 1'b1;
+        end
+    end
+
+    assign wb_wdata = memwb_is_load ? (safe_wb_valid ? safe_wb_rdata : i_mem_rdata) : memwb_alu_out;
 
     //& ===============
     //& FORWARDING

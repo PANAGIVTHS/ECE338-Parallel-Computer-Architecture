@@ -15,65 +15,115 @@ AVAILABLE_REGS = [f"x{i}" for i in range(2, 31)]
 OPCODES = ['add', 'sub', 'addi', 'mul', 'lw', 'sw', 'beq', 'and', 'andi', 'or', 'sll', 'slli', 'sra', 'srai', 'srl', 'srli', 'slt', 'slti', 'sltu', 'sltiu']
 
 def generate_random_assembly(filepath):
-    """Generates a randomized but safe RISC-V assembly program."""
+    """Generates a highly-biased RISC-V assembly program designed to break hardware pipelines."""
     asm = []
     
     # 1. Initialization
     asm.append("# INITIALIZATION")
     asm.append("addi x1, x0, 0  # Reserved Base Memory Pointer (Address 0)")
     
-    # Initialize a few random registers to prevent propagating too many zeros
-    for i in range(2, 6):
-        asm.append(f"addi x{i}, x0, {random.randint(-50, 50)}")
+    for i in range(2, 31):
+        asm.append(f"addi x{i}, x0, {random.randint(-10, 10)}")
         
-    asm.append("\n# RANDOM OPERATIONS")
+    asm.append("\n# BIASED RANDOM OPERATIONS")
     
     pending_labels = []
     label_counter = 0
+    last_dest_reg = "x2" # Track the last written register for dependency forcing
     
-    for _ in range(INSTRUCTIONS_PER_TEST):
+    instructions_generated = 0
+    
+    while instructions_generated < INSTRUCTIONS_PER_TEST:
+        # ---------------------------------------------------------
+        # STRATEGY 1: INJECT "EVIL SEQUENCES" (20% chance)
+        # ---------------------------------------------------------
+        if random.random() < 0.20 and instructions_generated < INSTRUCTIONS_PER_TEST - 3:
+            sequence_type = random.choice(['load_use', 'store_load', 'mul_trap', 'back_to_back_mem'])
+            rd = random.choice(AVAILABLE_REGS)
+            rs = random.choice(AVAILABLE_REGS)
+            mem_offset = random.choice([0, 4, 8, 12])
+            
+            asm.append(f"\n# --- EVIL SEQUENCE: {sequence_type.upper()} ---")
+            if sequence_type == 'load_use':
+                asm.append(f"lw {rd}, {mem_offset}(x1)")
+                asm.append(f"add {rs}, {rd}, {rd}") # Immediate RAW dependency
+                instructions_generated += 2
+                
+            elif sequence_type == 'store_load':
+                asm.append(f"sw {rs}, {mem_offset}(x1)")
+                asm.append(f"lw {rd}, {mem_offset}(x1)") # BRAM bypass / read-after-write
+                instructions_generated += 2
+                
+            elif sequence_type == 'mul_trap':
+                rd2 = random.choice(AVAILABLE_REGS)
+                asm.append(f"mul {rd}, {rs}, {rs}")
+                asm.append(f"addi {rd2}, x0, 5")     # Independent instruction sneaks into pipeline
+                asm.append(f"add {rs}, {rd}, {rd2}") # Dependent instruction traps the pipeline
+                instructions_generated += 3
+                
+            elif sequence_type == 'back_to_back_mem':
+                asm.append(f"lw {rd}, {mem_offset}(x1)")
+                asm.append(f"lw {rs}, {random.choice([0,4,8,12])}(x1)") # The bug you just fixed!
+                instructions_generated += 2
+                
+            last_dest_reg = rs
+            continue
+
+        # ---------------------------------------------------------
+        # STRATEGY 2: STANDARD GENERATION WITH BIASED DEPENDENCIES
+        # ---------------------------------------------------------
         op = random.choice(OPCODES)
         rd = random.choice(AVAILABLE_REGS)
-        rs1 = random.choice(AVAILABLE_REGS)
-        rs2 = random.choice(AVAILABLE_REGS)
         
+        # 50% chance to force the source register to be the exact destination 
+        # of the previous instruction, forcing the Forwarding Unit to activate.
+        rs1 = last_dest_reg if random.random() < 0.5 else random.choice(AVAILABLE_REGS)
+        rs2 = last_dest_reg if random.random() < 0.5 else random.choice(AVAILABLE_REGS)
+        
+        # Helper to generate evil immediate values
+        def get_evil_imm():
+            if random.random() < 0.3: # 30% chance for an edge-case number
+                return random.choice([0, 1, -1, 2047, -2048])
+            return random.randint(-50, 50)
+
         if op in ['add', 'sub', 'mul', 'and', 'or', 'sll', 'srl', 'sra', 'slt', 'sltu']:
             asm.append(f"{op} {rd}, {rs1}, {rs2}")
+            last_dest_reg = rd
             
         elif op in ['addi', 'andi', 'slti', 'sltiu']:
-            imm = random.randint(-100, 100)
-            asm.append(f"{op} {rd}, {rs1}, {imm}")
+            asm.append(f"{op} {rd}, {rs1}, {get_evil_imm()}")
+            last_dest_reg = rd
 
         elif op in ['slli', 'srli', 'srai']:
-            imm = random.randint(0, 31) # Shifts are bounded between 0 and 31
-            asm.append(f"{op} {rd}, {rs1}, {imm}")
+            asm.append(f"{op} {rd}, {rs1}, {random.randint(0, 31)}")
+            last_dest_reg = rd
             
         elif op in ['lw', 'sw']:
-            # Safe memory access: Word-aligned offset between 0 and 4000 (Max is 4092)
-            # Uses x1 as the base to guarantee it stays in bounds
-            offset = random.randint(0, 1000) * 4
+            # MEMORY HOT-SPOTTING: Only use addresses 0, 4, 8, 12, 16.
+            # This guarantees crossbar collisions and BRAM read/write contention.
+            offset = random.choice([0, 4, 8, 12, 16])
             asm.append(f"{op} {rd}, {offset}(x1)")
+            if op == 'lw':
+                last_dest_reg = rd
             
         elif op == 'beq':
-            # Create a label to jump FORWARD to (prevents infinite loops)
             target = f"skip_{label_counter}"
             pending_labels.append(target)
             label_counter += 1
             asm.append(f"beq {rs1}, {rs2}, {target}")
             
-        # Randomly place one of the pending labels to resolve a branch
         if pending_labels and random.random() < 0.3:
             asm.append(f"{pending_labels.pop(0)}:")
 
-    # Place any remaining unresolved labels at the end of the random block
+        instructions_generated += 1
+
+    # Place any remaining unresolved labels at the end
     for lbl in pending_labels:
         asm.append(f"{lbl}:")
         
-    # 3. Safe End Trap
     asm.append("\n# KERNEL COMPLETE TRAP")
     asm.append("jalr x0, 0(x1)")
     
-    # Write to file
     with open(filepath, 'w') as f:
         f.write("\n".join(asm) + "\n")
 
@@ -115,10 +165,11 @@ def main():
         subprocess.run(["python3", "expected_generator.py", RANDOM_TEST_DIR], capture_output=True)
         
         # 3. Run the Verilog simulation only
-        result = subprocess.run(["make", "simulate"], capture_output=True, text=True)
+        subprocess.run(["make", "compile"], capture_output=True)
+        result = subprocess.run(["vvp", "./main", f"+TEST_IDX=999"], capture_output=True, text=True)
         
         # 4. Check results
-        if "[FAIL]" in result.stdout or "Error" in result.stdout or result.returncode != 0:
+        if "[FAIL]" in result.stdout or "[Error]" in result.stdout or "[PASS]" not in result.stdout:
             print(f"\n[!!!] ITERATION {i} FAILED! [!!!]")
             print("==================================================================")
             # Print the last 30 lines of the simulation output to show the exact mismatch

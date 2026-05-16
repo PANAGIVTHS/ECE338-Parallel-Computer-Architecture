@@ -40,12 +40,14 @@ done
 # EXECUTION LOGIC
 # ==============================================================================
 
+TESTSUITE_FAILED=false
+
 if [ "$MODE" == "standard" ] || [ "$MODE" == "rand" ]; then
     echo -e "\n[Step 1/2] Running Standard Testsuite..."
-    # Call the Makefile to compile and run standard tests
+
     if ! make testsuite; then
-        echo -e "\n[ERROR] Standard testsuite failed! Halting pipeline."
-        exit 1
+        echo -e "\n[WARNING] Standard testsuite failed!"
+        TESTSUITE_FAILED=true
     fi
 fi
 
@@ -58,6 +60,11 @@ if [ "$VISUALIZE" = true ]; then
     else
         echo "  -> [Error] dumpfile.vcd not found. Cannot open GTKWave."
     fi
+fi
+
+if [ "$TESTSUITE_FAILED" = true ]; then
+    echo -e "\n[ERROR] Standard testsuite failed! Halting pipeline."
+    exit 1
 fi
 
 if [ "$MODE" == "rand" ]; then

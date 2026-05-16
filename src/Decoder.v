@@ -54,8 +54,7 @@ module Decoder (
                 case (funct3)
                     `FUNCT3_AND: o_aluop = `ALU_AND;
                     `FUNCT3_SLL: o_aluop = `ALU_SLL;
-                    `FUNCT3_SRA: o_aluop = `ALU_SRA;
-                    `FUNCT3_SLT:  o_aluop = `ALU_SLT;
+                    `FUNCT3_SLT: o_aluop = `ALU_SLT;
                     `FUNCT3_SLTU: o_aluop = `ALU_SLTU;                    
                     `FUNCT3_SRL: begin
                         if (funct7 == `FUNCT7_SUB)

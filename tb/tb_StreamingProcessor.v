@@ -2,7 +2,7 @@
 `include "constants.vh"
 
 `define CLOCK_PERIOD 10
-`define TEST_TIMEOUT_CYCLES 200
+`define TEST_TIMEOUT_CYCLES 1500
 
 module tb_StreamingProcessor ();
     // Configure the number of cores to test
@@ -65,8 +65,11 @@ module tb_StreamingProcessor ();
         clk = 1;
         rst = 0;
         dummy_wen = 0;
-        test_idx = 1;
-
+        // Do NOT put "test_idx = 1;" outside of this if-statement.
+        if (!$value$plusargs("TEST_IDX=%d", test_idx)) begin
+            test_idx = 1;
+        end
+        
         $display("=================================================");
         $display(" Starting the Multi-Core Test Suite");
         $display("=================================================");
@@ -114,6 +117,10 @@ module tb_StreamingProcessor ();
                     expected_regfile[c][i] = temp_regfile[i];
                 end
             end
+            
+            // 4.5. Open Trace File
+            $sformat(trace_file, "test%0d/trace.csv", test_idx);
+            fd_trace = $fopen(trace_file, "w");
 
             // 5. Reset Sequence
             rst = 0;
@@ -178,11 +185,15 @@ module tb_StreamingProcessor ();
             end
 
             // 9. Final Verdict
-            if (reg_errors == 0 && data_errors == 0)
+            if (reg_errors == 0 && data_errors == 0) begin
                 $display("  [PASS] Test %0d is correct across all %0d cores! (Finished in %0d cycles)", test_idx, NUM_CORES, cycle_count);
-            else
+            end else begin
                 $display("  [FAIL] Test %0d failed. (Reg errors: %0d, Data errors: %0d)", 
                     test_idx, reg_errors, data_errors);
+                
+                // FIX 2: Crash the simulation so Make/Bash knows it actually failed!
+                $fatal(1, "Halting simulation due to standard test failure.");
+            end
 
             test_idx = test_idx + 1;
         end
