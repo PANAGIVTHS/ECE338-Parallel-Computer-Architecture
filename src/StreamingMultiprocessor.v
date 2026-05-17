@@ -1,7 +1,8 @@
 `include "constants.vh"
 
 module StreamingMultiprocessor #(
-    parameter NUM_CORES = 2
+    parameter NUM_CORES = 2,
+    parameter NUM_BANKS = 8
 )(
     input i_clk,
     input rst,
@@ -232,13 +233,17 @@ module StreamingMultiprocessor #(
     );
 
     //& ===============
-    //& GLOBAL DATA MEMORY CROSSBAR
+    //& GLOBAL DATA MEMORY CROSSBAR (BANKED)
     //& ===============
-    wire [DMEM_AW-1:0] dmem_addr_a, dmem_addr_b;
-    wire [31:0] dmem_wdata_a, dmem_wdata_b;
-    wire dmem_ren_a, dmem_ren_b;
-    wire dmem_wen_a, dmem_wen_b;
-    wire [31:0] dmem_rdata_a, dmem_rdata_b;
+    localparam BANK_BITS = $clog2(NUM_BANKS);
+    localparam BANK_DEPTH = `DMEM_ENTRIES / NUM_BANKS;
+    localparam BANK_AW = $clog2(BANK_DEPTH);
+
+    wire [NUM_BANKS*DMEM_AW-1:0] bank_addr;
+    wire [NUM_BANKS-1:0] bank_ren;
+    wire [NUM_BANKS-1:0] bank_wen;
+    wire [NUM_BANKS*32-1:0] bank_wdata;
+    wire [NUM_BANKS*32-1:0] bank_rdata;
 
     wire [NUM_CORES*DMEM_AW-1:0] flat_mem_addr;
     wire [NUM_CORES*32-1:0] flat_mem_wdata;
@@ -256,15 +261,16 @@ module StreamingMultiprocessor #(
         end
     endgenerate
 
-    MemoryCrossbarNx2 #(
+    MemoryCrossbarNxM #(
         .N(NUM_CORES),
-        .DEPTH(`DMEM_ENTRIES),
-        .ADDR_W(DMEM_AW)
+        .M(NUM_BANKS),
+        .ADDR_W(DMEM_AW),
+        .BANK_BITS(BANK_BITS)
     ) memCrossbar (
-        .clk(clk),
-        .rst(rst),
+        .i_clk(clk),
+        .i_rst(rst),
         // Cores Interface
-        .i_req   ( active_mem_ren ), 
+        .i_req   ( active_mem_ren | active_mem_wen ), 
         .i_wen   ( active_mem_wen ), 
         .i_addr  ( flat_mem_addr ),
         .i_wdata ( flat_mem_wdata ),
@@ -272,41 +278,41 @@ module StreamingMultiprocessor #(
         .o_rvalid( sp_mem_rvalid ),
         .o_rdata ( flat_mem_rdata ),
         
-        // Memory Port A Interface
-        .o_addr_a(dmem_addr_a),
-        .o_ren_a(dmem_ren_a),
-        .o_wen_a(dmem_wen_a),
-        .o_data_a(dmem_wdata_a),
-        .i_out_a(dmem_rdata_a),
-        
-        // Memory Port B Interface
-        .o_addr_b(dmem_addr_b),
-        .o_ren_b(dmem_ren_b),
-        .o_wen_b(dmem_wen_b),
-        .o_data_b(dmem_wdata_b),
-        .i_out_b(dmem_rdata_b)
+        // Memory Banks Interface
+        .o_bank_addr (bank_addr),
+        .o_bank_ren  (bank_ren),
+        .o_bank_wen  (bank_wen),
+        .o_bank_wdata(bank_wdata),
+        .i_bank_rdata(bank_rdata)
     );
 
     //& ===============
-    //& GLOBAL DATA MEMORY
+    //& GLOBAL DATA MEMORY (BANKS)
     //& ===============
-    (* dont_touch = "true" *)
-    MemoryDualPort #(
-        .DEPTH(`DMEM_ENTRIES),
-        .INIT_FILE("")
-    ) dataMemory (
-        .clk(clk),
-        .i_addr_a(dmem_addr_a),
-        .i_ren_a(dmem_ren_a),
-        .i_wen_a(dmem_wen_a),
-        .i_data_a(dmem_wdata_a),
-        .o_out_a(dmem_rdata_a),
-        .i_addr_b(dmem_addr_b),
-        .i_ren_b(dmem_ren_b),
-        .i_wen_b(dmem_wen_b),
-        .i_data_b(dmem_wdata_b),
-        .o_out_b(dmem_rdata_b)
-    );
+    genvar b;
+    generate
+        for (b = 0; b < NUM_BANKS; b = b + 1) begin : mem_banks
+            wire [DMEM_AW-1:0] full_addr = bank_addr[b*DMEM_AW +: DMEM_AW];
+            // Shift out the interleaving bits to get the index inside the specific bank
+            wire [BANK_AW-1:0] intra_bank_addr = full_addr[DMEM_AW-1 : BANK_BITS];
+            
+            wire [31:0] bank_out;
+            assign bank_rdata[b*32 +: 32] = bank_out;
+
+            (* dont_touch = "true" *)
+            MemorySinglePort #(
+                .DEPTH(BANK_DEPTH),
+                .INIT_FILE("") 
+            ) dataBank (
+                .clk(clk),
+                .i_addr_a(intra_bank_addr),
+                .i_ren_a(bank_ren[b]),
+                .i_wen_a(bank_wen[b]),
+                .i_data_a(bank_wdata[b*32 +: 32]),
+                .o_out_a(bank_out)
+            );
+        end
+    endgenerate
 
     //& ===============
     //& STREAMING PROCESSOR CORES

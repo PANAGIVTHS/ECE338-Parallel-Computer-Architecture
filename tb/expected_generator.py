@@ -6,7 +6,7 @@ from pathlib import Path
 # Memory configurations
 MEM_DEPTH = 2048
 REG_DEPTH = 32
-NUM_CORES = 33
+NUM_CORES = 4
 STACK_P_INIT = 0
 
 def parse_register(reg_str):

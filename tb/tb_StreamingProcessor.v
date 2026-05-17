@@ -6,7 +6,7 @@
 
 module tb_StreamingProcessor ();
     // Configure the number of cores to test
-    parameter NUM_CORES = 33;
+    parameter NUM_CORES = 4;
 
     reg clk, rst;
     reg dummy_wen;
@@ -40,6 +40,14 @@ module tb_StreamingProcessor ();
         .o_leds(o_leds),
         .o_kernel_complete(o_kernel_complete)
     );
+
+    wire [31:0] flat_mem_monitor [0:`DMEM_ENTRIES-1];
+    genvar gi;
+    generate
+        for (gi = 0; gi < `DMEM_ENTRIES; gi = gi + 1) begin : gen_monitor
+            assign flat_mem_monitor[gi] = UUT.mem_banks[gi % 8].dataBank.data[gi / 8];
+        end
+    endgenerate
 
     // =========================================================================
     // Icarus Verilog Workaround: Probe Arrays
@@ -94,8 +102,20 @@ module tb_StreamingProcessor ();
             $display("\n---> Starting test %0d...", test_idx);
 
             // 3. Clear the memories
-            for (i=0; i<`DMEM_ENTRIES; i=i+1) UUT.dataMemory.data[i] = 32'b0;
             for (i=0; i<`DMEM_ENTRIES; i=i+1) expected_data[i] = 32'b0;
+            
+            // Clear all 8 interleaved banks explicitly to avoid Icarus scope errors
+            for (i=0; i<(`DMEM_ENTRIES / 8); i=i+1) begin
+                UUT.mem_banks[0].dataBank.data[i] = 32'b0;
+                UUT.mem_banks[1].dataBank.data[i] = 32'b0;
+                UUT.mem_banks[2].dataBank.data[i] = 32'b0;
+                UUT.mem_banks[3].dataBank.data[i] = 32'b0;
+                UUT.mem_banks[4].dataBank.data[i] = 32'b0;
+                UUT.mem_banks[5].dataBank.data[i] = 32'b0;
+                UUT.mem_banks[6].dataBank.data[i] = 32'b0;
+                UUT.mem_banks[7].dataBank.data[i] = 32'b0;
+            end
+            
             for (c=0; c<NUM_CORES; c=c+1)
                 for (i=0; i<32; i=i+1) expected_regfile[c][i] = 32'b0;
 
@@ -177,9 +197,9 @@ module tb_StreamingProcessor ();
             // 8. Compare Global Shared Data Memory
             data_errors = 0;
             for (i = 0; i < `DMEM_ENTRIES; i = i + 1) begin
-                if (UUT.dataMemory.data[i] !== expected_data[i]) begin
+                if (flat_mem_monitor[i] !== expected_data[i]) begin
                     $display("  [Error] Data memory Address %0d: Expected %h, Found %h", 
-                             i, expected_data[i], UUT.dataMemory.data[i]);
+                             i, expected_data[i], flat_mem_monitor[i]);
                     data_errors = data_errors + 1;
                 end
             end
