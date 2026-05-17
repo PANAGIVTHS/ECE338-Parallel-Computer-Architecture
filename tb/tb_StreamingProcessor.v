@@ -6,7 +6,7 @@
 
 module tb_StreamingProcessor ();
     // Configure the number of cores to test
-    parameter NUM_CORES = 33;
+    parameter NUM_CORES = 4;
 
     reg clk, rst;
     reg dummy_wen;

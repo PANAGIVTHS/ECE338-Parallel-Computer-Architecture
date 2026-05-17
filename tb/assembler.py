@@ -62,7 +62,14 @@ def assemble_line(inst, pc, labels):
         elif op == 'srai': f3 = 0x5; imm = (imm & 0x1F) | 0x400
         imm &= 0xFFF
         return (imm << 20) | (rs1 << 15) | (f3 << 12) | (rd << 7) | opcode
-
+    
+    # AMO
+    elif op == 'amoadd.w':
+        # Syntax: amoadd.w rd, rs2, (rs1)
+        rd, rs2, rs1 = parse_reg(parts[1]), parse_reg(parts[2]), parse_reg(parts[3])
+        opcode, f3, f7 = 0x2F, 0x2, 0x00
+        return (f7 << 25) | (rs2 << 20) | (rs1 << 15) | (f3 << 12) | (rd << 7) | opcode
+    
     # Load
     elif op == 'lw':
         rd = parse_reg(parts[1])

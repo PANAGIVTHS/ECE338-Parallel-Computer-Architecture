@@ -50,3 +50,4 @@ clean:
 	rm -f ./main
 	rm -f ./dumpfile.vcd
 	rm -f ./simulation.log
+	rm -rf ./__pycache__

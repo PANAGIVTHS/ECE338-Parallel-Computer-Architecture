@@ -69,6 +69,10 @@ module Decoder (
                 o_aluop = `ALU_ADD;
                 o_instr_type = `INSTR_TYPE_S;
             end
+            `OP_AMO: begin
+                o_aluop = `ALU_ADD;
+                o_instr_type = `INSTR_TYPE_R;
+            end
             `OP_BEQ: begin 
                 o_aluop = `ALU_SUB;
                 o_instr_type = `INSTR_TYPE_S;

@@ -32,6 +32,7 @@ module StreamingMultiprocessor #(
     wire [31:0] sp_mem_rdata [0:NUM_CORES-1];
     wire [NUM_CORES-1:0] sp_mem_grant;
     wire [NUM_CORES-1:0] sp_mem_rvalid;
+    wire [NUM_CORES-1:0] sp_mem_amo;
     reg [NUM_CORES-1:0] mem_satisfied;
     
     always @(posedge clk) begin
@@ -49,9 +50,11 @@ module StreamingMultiprocessor #(
     //! Only request memory if the core hasn't already been served during this stall
     wire [NUM_CORES-1:0] active_mem_ren = sp_mem_ren & ~mem_satisfied;
     wire [NUM_CORES-1:0] active_mem_wen = sp_mem_wen & ~mem_satisfied;
+    wire [NUM_CORES-1:0] active_mem_amo = sp_mem_amo & ~mem_satisfied;
 
     //! If even a single core asks for memory but is denied, stall (Handles Reads and Writes)
-    wire global_stall = |(active_mem_ren & ~sp_mem_grant) | |(active_mem_wen & ~sp_mem_grant);
+    wire global_stall = |(active_mem_ren & ~sp_mem_grant) | |(active_mem_wen & ~sp_mem_grant) |
+                        |(active_mem_amo & ~sp_mem_grant);
 
     //& ===============
     //& READ DATA LATCHING
@@ -208,7 +211,7 @@ module StreamingMultiprocessor #(
     //& ===============
     wire mul1_valid, mul2_valid, mul3_valid;
     wire [4:0] mul1_rd, mul2_rd, mul3_rd;
-    wire sm_ex_is_load = (idex_opcode == `OP_LW && idex_instr_type == `INSTR_TYPE_I);
+    wire sm_ex_is_load = (idex_opcode == `OP_LW && idex_instr_type == `INSTR_TYPE_I) || (idex_opcode == `OP_AMO);
     wire sm_ex_is_mul = (idex_opcode == `OP_R_TYPE) && (idex_imm_31_25 == `FUNCT7_MULDIV);
 
     (* dont_touch = "true" *)
@@ -264,8 +267,9 @@ module StreamingMultiprocessor #(
         .clk(clk),
         .rst(rst),
         // Cores Interface
-        .i_req   ( active_mem_ren ), 
-        .i_wen   ( active_mem_wen ), 
+        .i_req   ( active_mem_ren | active_mem_wen | active_mem_amo ), 
+        .i_wen   ( active_mem_wen ),
+        .i_amo   ( active_mem_amo ),
         .i_addr  ( flat_mem_addr ),
         .i_wdata ( flat_mem_wdata ),
         .o_grant ( sp_mem_grant ),
@@ -371,6 +375,7 @@ module StreamingMultiprocessor #(
                 .o_mem_wdata(sp_mem_wdata[i]),
                 .o_mem_ren(sp_mem_ren[i]),
                 .o_mem_wen(sp_mem_wen[i]),
+                .o_mem_amo(sp_mem_amo[i]),
                 .i_mem_rdata(sp_mem_rdata[i]),
                 
                 //! New Crossbar Control Pins

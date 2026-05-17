@@ -39,6 +39,7 @@ module StreamingProcessor #(
     output [31:0] o_mem_wdata,
     output o_mem_ren,
     output o_mem_wen,
+    output o_mem_amo,
     input  [31:0] i_mem_rdata,
 
     //! New Memory Queue / Arbiter Interface
@@ -92,6 +93,7 @@ module StreamingProcessor #(
     //? --- Final ALU Input B ---
     assign ex_actual_alu_in_b = (i_idex_opcode == `OP_LW || i_idex_instr_type == `INSTR_TYPE_I) ? ex_imm_i_type :
                                 (i_idex_opcode == `OP_SW) ? ex_imm_s_type :
+                                (i_idex_opcode == `OP_AMO) ? 32'b0 :
                                  forwarded_rs2;
 
     (* dont_touch = "true" *)
@@ -197,11 +199,13 @@ module StreamingProcessor #(
     wire mem_is_load, mem_is_store;
     assign mem_is_load = (exmem_opcode == `OP_LW);
     assign mem_is_store = (exmem_opcode == `OP_SW);
+    assign mem_is_amo = (exmem_opcode == `OP_AMO);
 
     assign o_mem_addr = exmem_alu_out[$clog2(`DMEM_ENTRIES)+1 : 2];
-    assign o_mem_ren = mem_is_load | mem_is_store;
+    assign o_mem_ren = mem_is_load | mem_is_store | mem_is_amo;
     assign o_mem_wen = mem_is_store;
     assign o_mem_wdata = exmem_reg_b;
+    assign o_mem_amo = mem_is_amo;
     assign o_core_complete = (exmem_opcode == `OP_JALR && exmem_rd == 5'b0);
 
     //! =========================================================================
@@ -224,7 +228,7 @@ module StreamingProcessor #(
         end else begin
             memwb_rd <= exmem_rd;
             memwb_is_mul <= exmem_mul3_valid;
-            memwb_is_load <= mem_is_load;
+            memwb_is_load <= mem_is_load | mem_is_amo;
             memwb_alu_out <= exmem_alu_out;
             memwb_wen <= exmem_wen;
             memwb_program_counter <= exmem_program_counter;

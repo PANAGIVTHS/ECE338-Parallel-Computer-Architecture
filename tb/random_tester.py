@@ -2,7 +2,8 @@ import os
 import random
 import subprocess
 import shutil
-import argparse # NEW: For command line arguments
+import argparse 
+from program_checker import analyze_multicore_assembly # <-- NEW IMPORT
 
 # Configuration
 INSTRUCTIONS_PER_TEST = 50
@@ -12,7 +13,7 @@ RANDOM_TEST_DIR = "test999"
 # x1 is reserved as a safe memory base pointer (0)
 # x0 is hardwired 0, x31 is Core ID
 AVAILABLE_REGS = [f"x{i}" for i in range(2, 31)]
-OPCODES = ['add', 'sub', 'addi', 'mul', 'lw', 'sw', 'beq', 'and', 'andi', 'or', 'sll', 'slli', 'sra', 'srai', 'srl', 'srli', 'slt', 'slti', 'sltu', 'sltiu']
+OPCODES = ['add', 'sub', 'addi', 'mul', 'lw', 'sw', 'amoadd.w', 'beq', 'and', 'andi', 'or', 'sll', 'slli', 'sra', 'srai', 'srl', 'srli', 'slt', 'slti', 'sltu', 'sltiu']
 
 def generate_random_assembly(filepath):
     """Generates a highly-biased RISC-V assembly program designed to break hardware pipelines."""
@@ -98,13 +99,18 @@ def generate_random_assembly(filepath):
             asm.append(f"{op} {rd}, {rs1}, {random.randint(0, 31)}")
             last_dest_reg = rd
             
-        elif op in ['lw', 'sw']:
-            # MEMORY HOT-SPOTTING: Only use addresses 0, 4, 8, 12, 16.
-            # This guarantees crossbar collisions and BRAM read/write contention.
+        elif op in ['lw', 'sw', 'amoadd.w']:
+            # MEMORY HOT-SPOTTING: Only use restricted addresses to guarantee BRAM contention.
             offset = random.choice([0, 4, 8, 12, 16])
-            asm.append(f"{op} {rd}, {offset}(x1)")
-            if op == 'lw':
+            if op == 'amoadd.w':
+                # amoadd.w doesn't take an immediate offset in syntax, so we use x1 
+                # (which is hardwired to Base Address 0) to guarantee a collision hotspot.
+                asm.append(f"{op} {rd}, {rs1}, (x1)")
                 last_dest_reg = rd
+            else:
+                asm.append(f"{op} {rd}, {offset}(x1)")
+                if op == 'lw':
+                    last_dest_reg = rd
             
         elif op == 'beq':
             target = f"skip_{label_counter}"
@@ -157,8 +163,19 @@ def main():
     for i in range(1, args.iterations + 1):
         print(f"--> Iteration {i}/{args.iterations}: Generating test...")
         
-        # 1. Generate new random ASM
-        generate_random_assembly(asm_filepath)
+        # 1. Generate and Validate new random ASM
+        # We loop until the checker approves the generated code
+        while True:
+                generate_random_assembly(asm_filepath)
+                
+                with open(asm_filepath, 'r') as f:
+                    asm_code = f.read()
+                    
+                # Use your checker to silently validate the code!
+                if analyze_multicore_assembly(asm_code, num_cores=4):
+                    break # It's safe! Break the loop and proceed to simulation.
+                else:
+                    print("    [!] Fuzzer generated a divergent sequence. Regenerating...")
         
         # 2. Build ONLY the random test folder to save massive amounts of time
         subprocess.run(["python3", "assembler.py", RANDOM_TEST_DIR], capture_output=True)

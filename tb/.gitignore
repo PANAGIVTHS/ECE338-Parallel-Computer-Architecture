@@ -4,3 +4,5 @@ venv
 *.gtkw
 *.mem
 /test999/*.asm
+__pycache__/
+*.pyc
