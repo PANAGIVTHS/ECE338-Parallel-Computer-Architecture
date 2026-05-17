@@ -9,10 +9,25 @@ def parse_mem_operand(op_str):
         return int(match.group(1)), match.group(2)
     raise ValueError(f"Invalid memory operand: {op_str}")
 
+def to_signed_32(val):
+    """Helper to treat 32-bit integer as signed for slt/sra ops."""
+    val = val & 0xFFFFFFFF
+    return val - 0x100000000 if val & 0x80000000 else val
+
 def analyze_multicore_assembly(source_code, num_cores=4):
     print(f"--- Analyzing Program for {num_cores} Cores ---")
     
-    # 1. Clean code and extract labels
+    # Define explicitly supported instructions based on assembler.py
+    SUPPORTED_OPCODES = {
+        'nop', 
+        'add', 'sub', 'mul', 'and', 'or', 'xor', 'sll', 'srl', 'sra', 'slt', 'sltu',
+        'addi', 'andi', 'ori', 'xori', 'slli', 'srli', 'srai', 'slti', 'sltiu',
+        'lw', 'sw', 
+        'beq', 'bne', 
+        'jalr'
+    }
+
+    # 1. Clean code, validate support, and extract labels
     lines = source_code.split('\n')
     instructions = []
     labels = {}
@@ -21,14 +36,23 @@ def analyze_multicore_assembly(source_code, num_cores=4):
         code = line.split('#')[0].split('//')[0].strip()
         if not code:
             continue
+            
         if ':' in code:
             parts = code.split(':', 1)
             label = parts[0].strip()
             labels[label] = len(instructions)
             inst = parts[1].strip()
             if inst:
+                op = inst.replace(',', ' ').split()[0].lower()
+                if op not in SUPPORTED_OPCODES:
+                    print(f"[FAIL] UNSUPPORTED INSTRUCTION DETECTED: '{inst}'")
+                    return False
                 instructions.append(inst)
         else:
+            op = code.replace(',', ' ').split()[0].lower()
+            if op not in SUPPORTED_OPCODES:
+                print(f"[FAIL] UNSUPPORTED INSTRUCTION DETECTED: '{code}'")
+                return False
             instructions.append(code)
 
     # 2. Initialize Register Files for all cores
@@ -60,29 +84,42 @@ def analyze_multicore_assembly(source_code, num_cores=4):
         if op == 'nop':
             pc += 1
             
-        elif op in ['add', 'sub', 'sll', 'srl', 'sra', 'and', 'or', 'xor', 'slt', 'sltu']:
+        elif op in ['add', 'sub', 'mul', 'sll', 'srl', 'sra', 'and', 'or', 'xor', 'slt', 'sltu']:
             rd, rs1, rs2 = parts[1], parts[2], parts[3]
             for c in range(num_cores):
                 v1, v2 = get_reg(cores[c], rs1), get_reg(cores[c], rs2)
                 if op == 'add': set_reg(cores[c], rd, v1 + v2)
                 elif op == 'sub': set_reg(cores[c], rd, v1 - v2)
+                elif op == 'mul': set_reg(cores[c], rd, v1 * v2)
+                elif op == 'and': set_reg(cores[c], rd, v1 & v2)
+                elif op == 'or':  set_reg(cores[c], rd, v1 | v2)
+                elif op == 'xor': set_reg(cores[c], rd, v1 ^ v2)
                 elif op == 'sll': set_reg(cores[c], rd, v1 << (v2 & 0x1F))
+                elif op == 'srl': set_reg(cores[c], rd, v1 >> (v2 & 0x1F))
+                elif op == 'sra': set_reg(cores[c], rd, to_signed_32(v1) >> (v2 & 0x1F))
+                elif op == 'slt': set_reg(cores[c], rd, 1 if to_signed_32(v1) < to_signed_32(v2) else 0)
+                elif op == 'sltu': set_reg(cores[c], rd, 1 if v1 < v2 else 0)
             pc += 1
 
-        elif op in ['addi', 'slli', 'srli', 'srai', 'andi', 'ori', 'xori', 'slti']:
+        elif op in ['addi', 'andi', 'ori', 'xori', 'slli', 'srli', 'srai', 'slti', 'sltiu']:
             rd, rs1, imm = parts[1], parts[2], int(parts[3])
             for c in range(num_cores):
                 v1 = get_reg(cores[c], rs1)
                 if op == 'addi': set_reg(cores[c], rd, v1 + imm)
+                elif op == 'andi': set_reg(cores[c], rd, v1 & imm)
+                elif op == 'ori':  set_reg(cores[c], rd, v1 | imm)
+                elif op == 'xori': set_reg(cores[c], rd, v1 ^ imm)
                 elif op == 'slli': set_reg(cores[c], rd, v1 << (imm & 0x1F))
+                elif op == 'srli': set_reg(cores[c], rd, v1 >> (imm & 0x1F))
+                elif op == 'srai': set_reg(cores[c], rd, to_signed_32(v1) >> (imm & 0x1F))
+                elif op == 'slti': set_reg(cores[c], rd, 1 if to_signed_32(v1) < imm else 0)
+                elif op == 'sltiu': set_reg(cores[c], rd, 1 if v1 < (imm & 0xFFFFFFFF) else 0)
             pc += 1
 
         elif op == 'lw':
             rd = parts[1]
             imm, rs1 = parse_mem_operand(parts[2])
             for c in range(num_cores):
-                # We don't actually load memory in this safety checker, 
-                # we just simulate the register state ignoring memory contents
                 set_reg(cores[c], rd, 0)
             pc += 1
 
@@ -126,11 +163,11 @@ def analyze_multicore_assembly(source_code, num_cores=4):
                 pc += 1
 
         elif op == 'jalr':
-            # Instruction ignored - just increment PC
             pc += 1
 
         else:
-            pc += 1 # Ignore unknown instructions
+            # Should never reach here because of Pass 1 validation, but safe fallback
+            pc += 1
 
         executed_cycles += 1
 
