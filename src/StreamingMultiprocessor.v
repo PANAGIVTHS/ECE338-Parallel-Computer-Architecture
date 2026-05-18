@@ -3,18 +3,16 @@
 module StreamingMultiprocessor #(
     parameter NUM_CORES = 2
 )(
-    input i_clk,
+    input clk,
     input rst,
+    input i_enable,
+    input [31:0] i_ifid_instruction,
+
+    output [`IMEM_AW-1:0] o_imem_addr,
+    output o_imem_en,
+    
     output o_kernel_complete
 );
-    localparam DMEM_AW = $clog2(`DMEM_ENTRIES);
-
-    wire clk;
-    clk_wiz_0 clockDivider (
-        .clk_in1(i_clk),
-        .clk_out1(clk)
-    );
-
     wire ex_branch_taken;
     wire [$clog2(`IMEM_ENTRIES)-1:0] ex_beq_target_idx;
     wire data_hazard, flush;
@@ -23,7 +21,7 @@ module StreamingMultiprocessor #(
     //& ===============
     //& CROSSBAR & STALL LOGIC
     //& ===============
-    wire [DMEM_AW-1:0] sp_mem_addr [0:NUM_CORES-1];
+    wire [`DMEM_AW-1:0] sp_mem_addr [0:NUM_CORES-1];
     wire [31:0] sp_mem_wdata [0:NUM_CORES-1];
     wire [NUM_CORES-1:0] sp_mem_ren;
     wire [NUM_CORES-1:0] sp_mem_wen;
@@ -83,29 +81,16 @@ module StreamingMultiprocessor #(
     //! =========================================================================
     //! STAGE 1: INSTRUCTION FETCH
     //! =========================================================================
-    (* dont_touch = "true" *) wire [$clog2(`IMEM_ENTRIES)+1:0] program_counter;
-    wire [31:0] ifid_instruction;
-    wire [$clog2(`IMEM_ENTRIES)-1:0] instr_idx, instr_mem_addr;
+    (* dont_touch = `DEBUG *) wire [$clog2(`IMEM_ENTRIES)+1:0] program_counter;
+    wire [$clog2(`IMEM_ENTRIES)-1:0] instr_idx;
 
-    (* dont_touch = "true" *)
+    (* dont_touch = `DEBUG *)
     GUCounter #(.BITS($clog2(`IMEM_ENTRIES))) 
         programCounter (.clk(clk), .i_set_reset({rst, ex_branch_taken}), .i_count_enable(!data_hazard && !global_stall), .i_count_set(ex_beq_target_idx), .o_count_cur(instr_idx));
 
     assign program_counter = {instr_idx, 2'b00};
-    assign instr_mem_addr = flush ? `INITIAL_PC : instr_idx;
-
-    (* dont_touch = "true" *)
-    MemorySinglePort #(
-        .DEPTH(`IMEM_ENTRIES),
-        .INIT_FILE("program.mem")
-    ) instructionMemory (
-        .clk(clk),
-        .i_addr_a(instr_mem_addr),
-        .i_ren_a((!data_hazard && !global_stall) | flush),
-        .i_wen_a(1'b0),
-        .i_data_a(32'b0),
-        .o_out_a(ifid_instruction)
-    );
+    assign o_imem_ren = (!data_hazard && !global_stall) | flush;
+    assign o_imem_addr = flush ? `INITIAL_PC : instr_idx;
 
     //* =========================================================================
     //* PIPELINE REGISTER 1: INSTRUCTION FETCH -> INSTRUCTION DECODE
@@ -132,9 +117,9 @@ module StreamingMultiprocessor #(
     wire [4:0] id_mux_rs1, id_mux_rs2;
     wire id_is_mul, id_wen;
 
-    (* dont_touch = "true" *)
+    (* dont_touch = `DEBUG *)
     Decoder decoder (
-        .i_instr(ifid_instruction),
+        .i_instr(i_ifid_instruction),
         .o_rs1(id_rs1), 
         .o_rs2(id_rs2),
         .o_rd(id_rd),
@@ -209,7 +194,7 @@ module StreamingMultiprocessor #(
     wire sm_ex_is_load = (idex_opcode == `OP_LW && idex_instr_type == `INSTR_TYPE_I);
     wire sm_ex_is_mul = (idex_opcode == `OP_R_TYPE) && (idex_imm_31_25 == `FUNCT7_MULDIV);
 
-    (* dont_touch = "true" *)
+    (* dont_touch = `DEBUG *)
     HazardUnit hazardUnit (
         .i_id_rs1(id_rs1),
         .i_id_rs2(id_rs2),
@@ -232,20 +217,20 @@ module StreamingMultiprocessor #(
     //& ===============
     //& GLOBAL DATA MEMORY CROSSBAR
     //& ===============
-    wire [DMEM_AW-1:0] dmem_addr_a, dmem_addr_b;
+    wire [`DMEM_AW-1:0] dmem_addr_a, dmem_addr_b;
     wire [31:0] dmem_wdata_a, dmem_wdata_b;
     wire dmem_ren_a, dmem_ren_b;
     wire dmem_wen_a, dmem_wen_b;
     wire [31:0] dmem_rdata_a, dmem_rdata_b;
 
-    wire [NUM_CORES*DMEM_AW-1:0] flat_mem_addr;
+    wire [NUM_CORES*`DMEM_AW-1:0] flat_mem_addr;
     wire [NUM_CORES*32-1:0] flat_mem_wdata;
     wire [NUM_CORES*32-1:0] flat_mem_rdata;
 
     genvar i;
     generate
         for (i = 0; i < NUM_CORES; i = i + 1) begin : gen_flat
-            assign flat_mem_addr[i*DMEM_AW +: DMEM_AW] = sp_mem_addr[i];
+            assign flat_mem_addr[i*`DMEM_AW +: `DMEM_AW] = sp_mem_addr[i];
             assign flat_mem_wdata[i*32 +: 32] = sp_mem_wdata[i];
             
             //! If granted exactly 1 cycle ago, read live directly from crossbar
@@ -257,7 +242,7 @@ module StreamingMultiprocessor #(
     MemoryCrossbarNx2 #(
         .N(NUM_CORES),
         .DEPTH(`DMEM_ENTRIES),
-        .ADDR_W(DMEM_AW)
+        .ADDR_W(`DMEM_AW)
     ) memCrossbar (
         .clk(clk),
         .rst(rst),
@@ -288,7 +273,7 @@ module StreamingMultiprocessor #(
     //& ===============
     //& GLOBAL DATA MEMORY
     //& ===============
-    (* dont_touch = "true" *)
+    (* dont_touch = `DEBUG *)
     MemoryDualPort #(
         .DEPTH(`DMEM_ENTRIES),
         .INIT_FILE("")
@@ -331,7 +316,7 @@ module StreamingMultiprocessor #(
         for (i = 0; i < NUM_CORES; i = i + 1) begin : cores
 
             StreamingProcessor #(.CORE_ID(i)) core (
-                .i_clk(clk),
+                .clk(clk),
                 .rst(rst),
 
                 //! Regfile Muxes forward

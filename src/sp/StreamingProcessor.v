@@ -3,7 +3,7 @@
 module StreamingProcessor #(
     parameter CORE_ID = 0
 )(
-    input i_clk,
+    input clk,
     input rst,
 
     //! Regfile Read Addresses
@@ -45,7 +45,6 @@ module StreamingProcessor #(
     input i_global_stall,
     output o_core_complete
 );
-    wire clk = i_clk;
 
     //! =========================================================================
     //! STAGE 3: EXECUTE
@@ -68,7 +67,7 @@ module StreamingProcessor #(
     assign ex_imm_i_type = {{20{i_idex_imm_31_20[11]}}, i_idex_imm_31_20};
     assign ex_imm_s_type = {{20{i_idex_imm_31_25[6]}}, i_idex_imm_31_25, i_idex_rd};
 
-    (* dont_touch = "true" *)
+    (* dont_touch = `DEBUG *)
     Regfile #(
         .CORE_ID(CORE_ID)
     ) regfile (
@@ -92,7 +91,7 @@ module StreamingProcessor #(
                                 (i_idex_opcode == `OP_SW) ? ex_imm_s_type :
                                  forwarded_rs2;
 
-    (* dont_touch = "true" *)
+    (* dont_touch = `DEBUG *)
     ALU alu (
         .clk(clk),
         .rst(rst),
@@ -255,7 +254,7 @@ module StreamingProcessor #(
     //& ===============
     //& FORWARDING
     //& ===============
-    (* dont_touch = "true" *)
+    (* dont_touch = `DEBUG *)
     ForwardingUnit forwardingUnit (
         .i_idex_rs1(i_idex_rs1),
         .i_idex_rs2(i_idex_rs2),

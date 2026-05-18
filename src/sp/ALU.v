@@ -34,7 +34,6 @@ module ALU (
             case (i_alu_op)
                 `ALU_ADD: o_alu_out = i_operand_a + i_operand_b;
                 `ALU_SUB: o_alu_out = i_operand_a - i_operand_b;
-                `ALU_DIV: o_alu_out = i_operand_a / i_operand_b;
                 `ALU_AND: o_alu_out = i_operand_a & i_operand_b;
                 `ALU_OR:  o_alu_out = i_operand_a | i_operand_b;
                 `ALU_SLL: o_alu_out = i_operand_a << i_operand_b[4:0];

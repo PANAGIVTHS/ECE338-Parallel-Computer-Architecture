@@ -44,7 +44,15 @@
 `define INITIAL_PC 32'hFFFFFFFC
 `define IMEM_ENTRIES 2048
 `define DMEM_ENTRIES 2048
+`define IMEM_AW ($clog2(`IMEM_ENTRIES))
+`define DMEM_AW ($clog2(`DMEM_ENTRIES))
 
 `define NOP_INSTR 32'h00000013
 `define TXD_REGISTER 5'h1F
 `define STACK_P_INIT 0
+
+`define CORE_LOADING 2'b00
+`define CORE_RUNNING 2'b01
+`define CORE_DUMPING 2'b10
+
+`define DEBUG "false"

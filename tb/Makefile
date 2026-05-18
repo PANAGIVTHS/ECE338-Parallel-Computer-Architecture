@@ -15,18 +15,9 @@ expected:
 
 compile:
 	iverilog -Wall -Wno-timescale -Winfloop -o main -I ../src tb_StreamingProcessor.v \
-                                                       ../src/ALU.v \
-                                                       ../src/Decoder.v \
-                                                       ../src/GUCounter.v \
-                                                       ../src/MemoryDualPort.v \
-                                                       ../src/MemorySinglePort.v \
-                                                       ../src/Regfile.v \
-                                                       ../src/ForwardingUnit.v \
-                                                       ../src/HazardUnit.v \
-                                                       ../src/ClockDivider.v \
-                                                       ../src/StreamingProcessor.v \
-                                                       ../src/MemoryCrossbarNx2.v \
-                                                       ../src/StreamingMultiprocessor.v
+														../src/*.vh ../src/*.v \
+														../src/memory/*.v \
+														../src/sp/*.v
 
 simulate: compile
 	vvp ./main | tee simulation.log

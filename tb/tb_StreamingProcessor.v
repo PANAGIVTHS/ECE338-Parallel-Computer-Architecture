@@ -34,7 +34,7 @@ module tb_StreamingProcessor ();
     StreamingMultiprocessor #(
         .NUM_CORES(NUM_CORES)
     ) UUT (
-        .i_clk(clk), 
+        .clk(clk), 
         .rst(rst), 
         .i_dummy_wen(dummy_wen), 
         .o_leds(o_leds),
