@@ -6,10 +6,16 @@ module StreamingMultiprocessor #(
     input clk,
     input rst,
     input i_enable,
-    input [31:0] i_ifid_instruction,
 
+    input [31:0] i_ifid_instruction,
     output [`IMEM_AW-1:0] o_imem_addr,
-    output o_imem_en,
+    output o_imem_ren,
+
+    input [31:0] i_dmem_rdata_a, i_dmem_rdata_b,
+    output [`DMEM_AW-1:0] o_dmem_addr_a, o_dmem_addr_b,
+    output [31:0] o_dmem_wdata_a, o_dmem_wdata_b,
+    output o_dmem_ren_a, o_dmem_ren_b,
+    output o_dmem_wen_a, o_dmem_wen_b,
     
     output o_kernel_complete
 );
@@ -217,11 +223,6 @@ module StreamingMultiprocessor #(
     //& ===============
     //& GLOBAL DATA MEMORY CROSSBAR
     //& ===============
-    wire [`DMEM_AW-1:0] dmem_addr_a, dmem_addr_b;
-    wire [31:0] dmem_wdata_a, dmem_wdata_b;
-    wire dmem_ren_a, dmem_ren_b;
-    wire dmem_wen_a, dmem_wen_b;
-    wire [31:0] dmem_rdata_a, dmem_rdata_b;
 
     wire [NUM_CORES*`DMEM_AW-1:0] flat_mem_addr;
     wire [NUM_CORES*32-1:0] flat_mem_wdata;
@@ -256,39 +257,18 @@ module StreamingMultiprocessor #(
         .o_rdata ( flat_mem_rdata ),
         
         // Memory Port A Interface
-        .o_addr_a(dmem_addr_a),
-        .o_ren_a(dmem_ren_a),
-        .o_wen_a(dmem_wen_a),
-        .o_data_a(dmem_wdata_a),
-        .i_out_a(dmem_rdata_a),
+        .o_addr_a(o_dmem_addr_a),
+        .o_ren_a(o_dmem_ren_a),
+        .o_wen_a(o_dmem_wen_a),
+        .o_data_a(o_dmem_wdata_a),
+        .i_out_a(i_dmem_rdata_a),
         
         // Memory Port B Interface
-        .o_addr_b(dmem_addr_b),
-        .o_ren_b(dmem_ren_b),
-        .o_wen_b(dmem_wen_b),
-        .o_data_b(dmem_wdata_b),
-        .i_out_b(dmem_rdata_b)
-    );
-
-    //& ===============
-    //& GLOBAL DATA MEMORY
-    //& ===============
-    (* dont_touch = `DEBUG *)
-    MemoryDualPort #(
-        .DEPTH(`DMEM_ENTRIES),
-        .INIT_FILE("")
-    ) dataMemory (
-        .clk(clk),
-        .i_addr_a(dmem_addr_a),
-        .i_ren_a(dmem_ren_a),
-        .i_wen_a(dmem_wen_a),
-        .i_data_a(dmem_wdata_a),
-        .o_out_a(dmem_rdata_a),
-        .i_addr_b(dmem_addr_b),
-        .i_ren_b(dmem_ren_b),
-        .i_wen_b(dmem_wen_b),
-        .i_data_b(dmem_wdata_b),
-        .o_out_b(dmem_rdata_b)
+        .o_addr_b(o_dmem_addr_b),
+        .o_ren_b(o_dmem_ren_b),
+        .o_wen_b(o_dmem_wen_b),
+        .o_data_b(o_dmem_wdata_b),
+        .i_out_b(i_dmem_rdata_b)
     );
 
     //& ===============

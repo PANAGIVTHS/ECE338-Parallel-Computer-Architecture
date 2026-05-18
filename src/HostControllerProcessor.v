@@ -23,6 +23,7 @@ module HostCommandProcessor (
 
     // GPU control signals interface
     output reg o_host_imem_wen,
+    output reg o_host_dmem_wen,
     output reg o_host_done_writing,
     output reg o_host_done_dumping
 );
@@ -83,6 +84,7 @@ module HostCommandProcessor (
         o_host_busy = 1'b0;
         o_host_done = 1'b0;
         o_host_imem_wen = 1'b0;
+        o_host_dmem_wen = 1'b0;
         o_host_done_writing = 1'b0;
         o_host_done_dumping = 1'b0;
 

@@ -15,6 +15,7 @@ module HostController (
     output wire [31:0] o_host_wdata, 
     output wire [31:0] o_host_rdata,
     output wire o_host_imem_wen,
+    output wire o_host_dmem_wen,
     output wire o_host_busy,
     output wire o_host_done,
 
@@ -73,6 +74,7 @@ module HostController (
         .o_host_wdata(o_host_wdata),
         .o_host_rdata(o_host_rdata),
         .o_host_imem_wen(o_host_imem_wen),
+        .o_host_dmem_wen(o_host_dmem_wen),
         .o_host_busy(o_host_busy),
         .o_host_done(o_host_done),
 
