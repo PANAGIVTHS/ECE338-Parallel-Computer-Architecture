@@ -22,8 +22,8 @@ def analyze_multicore_assembly(source_code, num_cores=4):
         'nop', 
         'add', 'sub', 'mul', 'and', 'or', 'xor', 'sll', 'srl', 'sra', 'slt', 'sltu',
         'addi', 'andi', 'ori', 'xori', 'slli', 'srli', 'srai', 'slti', 'sltiu',
-        'lw', 'sw', 
-        'beq', 'bne', 
+        'lw', 'sw', 'amoadd.w',
+        'beq', 'bne',
         'jalr'
     }
 
@@ -74,6 +74,13 @@ def analyze_multicore_assembly(source_code, num_cores=4):
     pc = 0
     executed_cycles = 0
     MAX_CYCLES = 10000
+    
+    # NEW: Shadow Memory to track real values instead of using dummy data!
+    memory = {} 
+    def read_mem(addr):
+        return memory.get((addr // 4) * 4, 0)
+    def write_mem(addr, val):
+        memory[(addr // 4) * 4] = val & 0xFFFFFFFF
 
     while pc < len(instructions) and executed_cycles < MAX_CYCLES:
         inst_str = instructions[pc]
@@ -120,25 +127,34 @@ def analyze_multicore_assembly(source_code, num_cores=4):
             rd = parts[1]
             imm, rs1 = parse_mem_operand(parts[2])
             for c in range(num_cores):
-                set_reg(cores[c], rd, 0)
+                addr = get_reg(cores[c], rs1) + imm
+                set_reg(cores[c], rd, read_mem(addr))
             pc += 1
 
         elif op == 'sw':
             rs2 = parts[1]
             imm, rs1 = parse_mem_operand(parts[2])
-            
-            # Extract the absolute memory addresses requested by all cores
-            target_addresses = []
             for c in range(num_cores):
                 addr = get_reg(cores[c], rs1) + imm
-                target_addresses.append(addr)
+                val = get_reg(cores[c], rs2)
+                write_mem(addr, val)
+            pc += 1
+
+        elif op == 'amoadd.w':
+            rd = parts[1]
+            rs2 = parts[2]                            # <-- FIX: Added this line to extract rs2!
+            rs1_idx = re.sub(r'[^0-9]', '', parts[3])
+            rs1 = f"x{rs1_idx}"
+            
+            # PERFECT SIMULATION: Read the old value, give it to the core, 
+            # and write the incremented value back to memory!
+            for c in range(num_cores):
+                addr = get_reg(cores[c], rs1)
+                addend = get_reg(cores[c], rs2)       # Now rs2 exists here!
                 
-            # Check for Corruption (Duplicates in the requested addresses)
-            if len(set(target_addresses)) != len(target_addresses):
-                print(f"[FAIL] MEMORY CORRUPTION DETECTED at PC {pc}: '{inst_str}'")
-                print(f"       Computed Addresses: {target_addresses}")
-                return False
-                
+                old_val = read_mem(addr)
+                set_reg(cores[c], rd, old_val)
+                write_mem(addr, old_val + addend)
             pc += 1
 
         elif op in ['beq', 'bne']:

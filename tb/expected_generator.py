@@ -6,12 +6,12 @@ from pathlib import Path
 # Memory configurations
 MEM_DEPTH = 2048
 REG_DEPTH = 32
-NUM_CORES = 4
+NUM_CORES = 16
 STACK_P_INIT = 0
 
 def parse_register(reg_str):
     """Extracts the integer index from a register string like 'x1', 'x31'"""
-    return int(reg_str.replace('x', '').replace(',', ''))
+    return int(reg_str.replace('x', '').replace(',', '').replace('(', '').replace(')', '').strip())
 
 def format_hex(val):
     """Formats an integer into an 8-character 32-bit hex string"""
@@ -146,6 +146,25 @@ def generate_expected_memories(asm_text, num_cores=2):
                     elif op == 'sltiu':
                         u_imm = imm & 0xFFFFFFFF 
                         registers[rd] = 1 if v1 < u_imm else 0
+            
+            elif op == 'amoadd.w':
+                rd = parse_register(parts[1])
+                rs2 = parse_register(parts[2])
+                rs1 = parse_register(parts[3])
+                
+                # Fetch target memory word
+                byte_addr = registers[rs1]
+                word_idx = ((byte_addr & 0xFFFFFFFF) // 4) % MEM_DEPTH
+                
+                old_val = memory[word_idx]
+                addend = registers[rs2]
+                
+                # The PIM ALU (Crossbar writes back the sum)
+                memory[word_idx] = (old_val + addend) & 0xFFFFFFFF
+                
+                # The Core gets the old value
+                if rd != 0 and rd != 31:
+                    registers[rd] = old_val
             
             elif op == 'lw' or op == 'sw':
                 reg_a = parse_register(parts[1])

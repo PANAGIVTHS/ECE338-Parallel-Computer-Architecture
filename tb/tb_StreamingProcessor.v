@@ -6,7 +6,7 @@
 
 module tb_StreamingProcessor ();
     // Configure the number of cores to test
-    parameter NUM_CORES = 4;
+    parameter NUM_CORES = 16;
 
     reg clk, rst;
     reg dummy_wen;
@@ -19,6 +19,7 @@ module tb_StreamingProcessor ();
     reg [31:0] temp_regfile [0:31];
 
     integer i, c;
+    integer bank_idx, bank_offset;
     integer test_idx;
     integer fd;
     integer data_errors, reg_errors;
@@ -41,14 +42,6 @@ module tb_StreamingProcessor ();
         .o_kernel_complete(o_kernel_complete)
     );
 
-    wire [31:0] flat_mem_monitor [0:`DMEM_ENTRIES-1];
-    genvar gi;
-    generate
-        for (gi = 0; gi < `DMEM_ENTRIES; gi = gi + 1) begin : gen_monitor
-            assign flat_mem_monitor[gi] = UUT.mem_banks[gi % 8].dataBank.data[gi / 8];
-        end
-    endgenerate
-
     // =========================================================================
     // Icarus Verilog Workaround: Probe Arrays
     // We cannot dynamically index instances (e.g. UUT.cores[c].core...) inside a 
@@ -66,6 +59,19 @@ module tb_StreamingProcessor ();
         end
     endgenerate
 
+    localparam NUM_BANKS = 8;
+    localparam BANK_DEPTH = `DMEM_ENTRIES / NUM_BANKS;
+    
+    wire [31:0] bank_mem_probes [0:NUM_BANKS-1][0:BANK_DEPTH-1];
+    
+    genvar bg, mg;
+    generate
+        for (bg = 0; bg < NUM_BANKS; bg = bg + 1) begin : probe_banks
+            for (mg = 0; mg < BANK_DEPTH; mg = mg + 1) begin : probe_mem
+                assign bank_mem_probes[bg][mg] = UUT.mem_banks[bg].dataBank.data[mg];
+            end
+        end
+    endgenerate
     // Clock Generation
     always #(`CLOCK_PERIOD / 2) clk = ~clk;
 
@@ -102,10 +108,8 @@ module tb_StreamingProcessor ();
             $display("\n---> Starting test %0d...", test_idx);
 
             // 3. Clear the memories
-            for (i=0; i<`DMEM_ENTRIES; i=i+1) expected_data[i] = 32'b0;
-            
-            // Clear all 8 interleaved banks explicitly to avoid Icarus scope errors
-            for (i=0; i<(`DMEM_ENTRIES / 8); i=i+1) begin
+            for (i = 0; i < BANK_DEPTH; i = i + 1) begin
+                // Manually unrolled to bypass Verilog's strict generate-block indexing rules!
                 UUT.mem_banks[0].dataBank.data[i] = 32'b0;
                 UUT.mem_banks[1].dataBank.data[i] = 32'b0;
                 UUT.mem_banks[2].dataBank.data[i] = 32'b0;
@@ -115,7 +119,7 @@ module tb_StreamingProcessor ();
                 UUT.mem_banks[6].dataBank.data[i] = 32'b0;
                 UUT.mem_banks[7].dataBank.data[i] = 32'b0;
             end
-            
+            for (i = 0; i < `DMEM_ENTRIES; i = i + 1) expected_data[i] = 32'b0;
             for (c=0; c<NUM_CORES; c=c+1)
                 for (i=0; i<32; i=i+1) expected_regfile[c][i] = 32'b0;
 
@@ -194,12 +198,16 @@ module tb_StreamingProcessor ();
                 end
             end
 
-            // 8. Compare Global Shared Data Memory
+            // 8. Compare Global Shared Data Memory (Banked)
             data_errors = 0;
             for (i = 0; i < `DMEM_ENTRIES; i = i + 1) begin
-                if (flat_mem_monitor[i] !== expected_data[i]) begin
+                // Reverse the interleaving math to find the specific bank and offset
+                bank_idx = i % NUM_BANKS;
+                bank_offset = i / NUM_BANKS;
+                
+                if (bank_mem_probes[bank_idx][bank_offset] !== expected_data[i]) begin
                     $display("  [Error] Data memory Address %0d: Expected %h, Found %h", 
-                             i, expected_data[i], flat_mem_monitor[i]);
+                             i, expected_data[i], bank_mem_probes[bank_idx][bank_offset]);
                     data_errors = data_errors + 1;
                 end
             end
@@ -230,13 +238,6 @@ module tb_StreamingProcessor ();
     // // Dump multi-core 2D Arrays without throwing Scope Index errors
     // genvar d, c_dump;
     // generate
-    //     for (d = 0; d < 32; d = d + 1) begin : dump_mems
-    //         initial begin
-    //             #0;
-    //             $dumpvars(0, tb_StreamingProcessor.UUT.instructionMemory.data[d]);
-    //             $dumpvars(0, tb_StreamingProcessor.UUT.dataMemory.data[d]);
-    //         end
-    //     end
     //     for (c_dump = 0; c_dump < NUM_CORES; c_dump = c_dump + 1) begin : dump_cores
     //         for (d = 0; d < 32; d = d + 1) begin : dump_regs
     //             initial begin
