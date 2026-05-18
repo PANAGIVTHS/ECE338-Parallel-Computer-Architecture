@@ -5,8 +5,6 @@ module StreamingProcessor #(
 )(
     input i_clk,
     input rst,
-    input i_dummy_wen,
-    output [2:0] o_leds,
 
     //! Regfile Read Addresses
     input [4:0] i_id_mux_rs1,

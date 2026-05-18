@@ -2,3 +2,5 @@
 *.log
 *.str
 *.csv
+*_vitis/
+*_vivado/

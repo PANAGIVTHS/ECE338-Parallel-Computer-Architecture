@@ -5,8 +5,6 @@ module StreamingMultiprocessor #(
 )(
     input i_clk,
     input rst,
-    input i_dummy_wen,
-    output [2:0] o_leds,
     output o_kernel_complete
 );
     localparam DMEM_AW = $clog2(`DMEM_ENTRIES);
@@ -331,14 +329,10 @@ module StreamingMultiprocessor #(
 
     generate
         for (i = 0; i < NUM_CORES; i = i + 1) begin : cores
-            wire [2:0] core_leds;
-            if (i == 0) assign o_leds = core_leds;
 
             StreamingProcessor #(.CORE_ID(i)) core (
                 .i_clk(clk),
                 .rst(rst),
-                .i_dummy_wen(i_dummy_wen),
-                .o_leds(core_leds),
 
                 //! Regfile Muxes forward
                 .i_id_mux_rs1(id_mux_rs1),
