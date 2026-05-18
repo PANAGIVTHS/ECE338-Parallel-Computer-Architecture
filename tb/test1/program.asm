@@ -40,3 +40,4 @@ sw   x15, 4(x13)    # Mem[28] = 400
 # TEST 6: MEMORY OVERWRITE
 addi x16, x0, 999   # x16 = 999
 sw   x16, 28(x1)    # Overwrites Mem[28]. Changes it from 400 to 999.
+jalr x0, 0(x1)

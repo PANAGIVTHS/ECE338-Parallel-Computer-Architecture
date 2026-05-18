@@ -6,3 +6,4 @@ nop
 nop
 nop
 mul x3, x1, x2
+jalr x0, 0(x1)

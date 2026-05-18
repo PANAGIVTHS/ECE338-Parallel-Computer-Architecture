@@ -51,3 +51,4 @@ sw   x18, 16(x0)   # Mem[16] = 138
 lw   x19, 12(x0)   # x19 = 138
 sub  x20, x19, x18 # 1 cycle load-use stall. x20 = 138 - 138 = 0
 sw   x20, 20(x0)   # Mem[20] = 0
+jalr x0, 0(x1)

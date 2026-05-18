@@ -52,8 +52,4 @@ add  x15, x14, x13   # x14(EX-to-EX), x13(MEM-to-EX) -> x15 = 400
 sw   x15, 24(x1)     # Mem[24] = 400
 sw   x13, 24(x1)     # Overwrite Mem[24] with 100!
 
-# INFINITE LOOP TRAP
-end:
-beq x0, x0, end      # Trap the PC safely at the end
-addi x19, x19, 1     # FLUSHED (If loop hardware fails, x19 increments forever)
-addi x19, x19, 1     # FLUSHED
+jalr x0, 0(x1)

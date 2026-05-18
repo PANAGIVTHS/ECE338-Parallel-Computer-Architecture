@@ -236,6 +236,8 @@ module StreamingProcessor #(
         end
     end
 
+    //TODO FIX INSTRUCTIONS UNDER EXIT COMMITING.
+
     //! =========================================================================
     //! STAGE 5: WRITE BACK
     //! =========================================================================

@@ -94,7 +94,7 @@ module StreamingMultiprocessor #(
 
     (* dont_touch = "true" *)
     GUCounter #(.BITS($clog2(`IMEM_ENTRIES))) 
-        programCounter (.clk(clk), .i_set_reset({rst, ex_branch_taken}), .i_count_enable(!data_hazard && !global_stall), .i_count_set(ex_beq_target_idx), .o_count_cur(instr_idx));
+        programCounter (.clk(clk), .i_set_reset({rst, ex_branch_taken}), .i_count_enable(!data_hazard && !global_stall && !is_halted && !exit), .i_count_set(ex_beq_target_idx), .o_count_cur(instr_idx));
 
     assign program_counter = {instr_idx, 2'b00};
     assign instr_mem_addr = flush ? `INITIAL_PC : instr_idx;
@@ -181,7 +181,7 @@ module StreamingMultiprocessor #(
             idex_wen <= 1'b0;
         end else if (global_stall) begin
             // Retain state during memory stall
-        end else if (data_hazard) begin
+        end else if (data_hazard || exit || is_halted) begin
             idex_rs1 <= 5'b0;
             idex_rs2 <= 5'b0;
             idex_rd <= 5'b0;
@@ -233,6 +233,17 @@ module StreamingMultiprocessor #(
         .o_data_hazard(data_hazard),
         .o_flush(flush)
     );
+
+    //& ===============
+    //& EXIT LOGIC
+    //& ===============
+    wire exit = (idex_opcode == `OP_JALR);
+
+    reg is_halted;
+    always @(posedge clk) begin
+        if (!rst) is_halted <= 1'b0;
+        else if (exit) is_halted <= 1'b1;
+    end
 
     //& ===============
     //& GLOBAL DATA MEMORY CROSSBAR (BANKED)

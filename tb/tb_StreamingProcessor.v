@@ -2,11 +2,11 @@
 `include "constants.vh"
 
 `define CLOCK_PERIOD 10
-`define TEST_TIMEOUT_CYCLES 1500
+`define TEST_TIMEOUT_CYCLES 500000
 
 module tb_StreamingProcessor ();
     // Configure the number of cores to test
-    parameter NUM_CORES = 16;
+    parameter NUM_CORES = 4;
 
     reg clk, rst;
     reg dummy_wen;

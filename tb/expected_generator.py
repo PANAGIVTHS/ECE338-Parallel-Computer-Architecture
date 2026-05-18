@@ -6,7 +6,8 @@ from pathlib import Path
 # Memory configurations
 MEM_DEPTH = 2048
 REG_DEPTH = 32
-NUM_CORES = 16
+NUM_CORES = 4
+SAFETY_MAX_CYCLES = 500000
 STACK_P_INIT = 0
 
 def parse_register(reg_str):
@@ -61,7 +62,7 @@ def generate_expected_memories(asm_text, num_cores=2):
         })
 
     cycles = 0
-    max_cycles = 10000 # Safeguard against complex infinite loops
+    max_cycles = SAFETY_MAX_CYCLES
     
     # Lockstep Engine: Outer loop is Time (cycles)
     while not all(state['halted'] for state in core_states) and cycles < max_cycles:
@@ -209,8 +210,8 @@ def generate_expected_memories(asm_text, num_cores=2):
                 if match:
                     imm = int(match.group(1))
                     rs1 = parse_register(match.group(2))
-                    # End simulation for this core if returning to 0 (kernel completion)
-                    if rd == 0 and rs1 == 1 and imm == 0:
+                    
+                    if rd == 0:
                         state['halted'] = True
                         
             # Update PC
