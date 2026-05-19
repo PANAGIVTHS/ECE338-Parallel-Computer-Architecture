@@ -1,7 +1,7 @@
 `define ZYNQ_SOC
 
 module GPGPU #(
-    parameter SP_PER_SM = 16,
+    parameter SP_PER_SM = 32,
     parameter MEMORY_INIT = "empty.mem"
 ) (
     input wire clk_in,

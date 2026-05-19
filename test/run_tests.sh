@@ -1,43 +1,48 @@
 #!/bin/bash
 
-# Default Configuration
 ITERS=100
 MODE="standard"
 VISUALIZE=false
 TB_MODE="e2e"
+TB_FILE="tb_GPGPU_e2e.v"
 
-# Help Message Function
+UART_PORT="/dev/ttyACM0"
+UART_BAUD="115200"
+
 print_help() {
     echo "=================================================================="
-    echo " Streaming Multiprocessor / GPGPU Test & Fuzzer Pipeline"
+    echo " Streaming Multiprocessor / GPGPU Test Pipeline"
     echo "=================================================================="
     echo "Usage: ./run_tests.sh [OPTIONS]"
     echo ""
+    echo "Modes:"
+    echo "  -s,  --standard          Run Verilog simulation testsuite"
+    echo "  -r,  --rand              Run simulation testsuite, then random fuzzer"
+    echo "       --host              Run tests on real board through UART"
+    echo "       --gen-only          Only run assembler and expected generator"
+    echo ""
     echo "Options:"
-    echo "  -h,  --help              Show this help message and exit"
-    echo "  -s,  --standard          Run only the standard testsuite (Default)"
-    echo "  -r,  --rand              Run standard tests, then launch the random fuzzer"
-    echo "  -i,  --iters NUM         Specify random iterations (Default: 100)"
-    echo "  -c,  --clean             Clean generated .mem, .csv, .vcd, logs"
-    echo "  -v,  --visualize         Open GTKWave after running standard tests"
+    echo "  -h,  --help              Show this help message"
+    echo "  -i,  --iters NUM         Random fuzzer iterations"
+    echo "  -c,  --clean             Clean generated files"
+    echo "  -v,  --visualize         Open GTKWave after simulation"
     echo ""
     echo "Testbench selection:"
-    echo "       --tb smx            Use tb_GPGPU.v (Default)"
+    echo "       --tb smx            Use tb_GPGPU.v"
     echo "       --tb e2e            Use tb_GPGPU_e2e.v"
     echo "       --tb-file FILE      Use a custom testbench file"
     echo ""
+    echo "UART options:"
+    echo "       --port PORT         Serial port, default: /dev/ttyACM0"
+    echo "       --baud BAUD         Baud rate, default: 115200"
+    echo ""
     echo "Examples:"
-    echo "  ./run_tests.sh --standard --tb smx"
     echo "  ./run_tests.sh --standard --tb e2e"
-    echo "  ./run_tests.sh --rand --iters 500 --tb smx"
-    echo "  ./run_tests.sh --tb-file tb_custom.v"
+    echo "  ./run_tests.sh --host --port /dev/ttyUSB1"
+    echo "  ./run_tests.sh --gen-only"
     echo "=================================================================="
 }
 
-# Default testbench file
-TB_FILE="tb_GPGPU_e2e.v"
-
-# Parse Command Line Arguments
 while [[ "$#" -gt 0 ]]; do
     case $1 in
         -h|--help)
@@ -51,6 +56,14 @@ while [[ "$#" -gt 0 ]]; do
 
         -r|--rand)
             MODE="rand"
+            ;;
+
+        --host)
+            MODE="host"
+            ;;
+
+        --gen-only)
+            MODE="gen-only"
             ;;
 
         -i|--iters)
@@ -70,7 +83,6 @@ while [[ "$#" -gt 0 ]]; do
         --tb)
             TB_MODE="$2"
             shift
-
             case "$TB_MODE" in
                 smx)
                     TB_FILE="tb_GPGPU.v"
@@ -91,6 +103,16 @@ while [[ "$#" -gt 0 ]]; do
             shift
             ;;
 
+        --port)
+            UART_PORT="$2"
+            shift
+            ;;
+
+        --baud)
+            UART_BAUD="$2"
+            shift
+            ;;
+
         *)
             echo "Unknown parameter passed: $1"
             print_help
@@ -100,10 +122,11 @@ while [[ "$#" -gt 0 ]]; do
     shift
 done
 
-# Validate selected testbench exists
-if [ ! -f "$TB_FILE" ]; then
-    echo "[ERROR] Testbench file not found: $TB_FILE"
-    exit 1
+if [[ "$MODE" != "host" && "$MODE" != "gen-only" ]]; then
+    if [ ! -f "$TB_FILE" ]; then
+        echo "[ERROR] Testbench file not found: $TB_FILE"
+        exit 1
+    fi
 fi
 
 echo "=================================================================="
@@ -111,45 +134,60 @@ echo " Configuration"
 echo "=================================================================="
 echo " Mode:       $MODE"
 echo " Testbench:  $TB_FILE"
+echo " UART Port:  $UART_PORT"
+echo " UART Baud:  $UART_BAUD"
 echo " Iterations: $ITERS"
 echo " Visualize:  $VISUALIZE"
 echo "=================================================================="
 
-# ==============================================================================
-# EXECUTION LOGIC
-# ==============================================================================
+case "$MODE" in
+    gen-only)
+        make gen
+        exit $?
+        ;;
 
-TESTSUITE_FAILED=false
+    host)
+        make host UART_PORT="$UART_PORT" UART_BAUD="$UART_BAUD"
+        exit $?
+        ;;
 
-if [ "$MODE" == "standard" ] || [ "$MODE" == "rand" ]; then
-    echo -e "\n[Step 1/2] Running Standard Testsuite with $TB_FILE..."
+    standard|rand)
+        TESTSUITE_FAILED=false
 
-    if ! make testsuite TB="$TB_FILE" IVERILOG_FLAGS="-Wall -Wno-timescale -Winfloop -I ../src -DSIM"; then
-        echo -e "\n[WARNING] Standard testsuite failed!"
-        TESTSUITE_FAILED=true
-    fi
-fi
+        echo -e "\n[Step 1/2] Running Verilog testsuite with $TB_FILE..."
 
-if [ "$VISUALIZE" = true ]; then
-    echo -e "\n[Optional] Opening GTKWave..."
+        if ! make testsuite TB="$TB_FILE" IVERILOG_FLAGS="-Wall -Wno-timescale -Winfloop -I ../src -DSIM"; then
+            echo -e "\n[WARNING] Standard testsuite failed!"
+            TESTSUITE_FAILED=true
+        fi
 
-    if [ -f "./dumpfile.vcd" ]; then
-        (gtkwave ./dumpfile.vcd ./waveform.gtkw > /dev/shm/gtkwave.log 2>&1 &)
-        echo "  -> GTKWave launched in background."
-    else
-        echo "  -> [Error] dumpfile.vcd not found. Cannot open GTKWave."
-    fi
-fi
+        if [ "$VISUALIZE" = true ]; then
+            echo -e "\n[Optional] Opening GTKWave..."
 
-if [ "$TESTSUITE_FAILED" = true ]; then
-    echo -e "\n[ERROR] Standard testsuite failed! Halting pipeline."
-    exit 1
-fi
+            if [ -f "./dumpfile.vcd" ]; then
+                (gtkwave ./dumpfile.vcd ./waveform.gtkw > /dev/shm/gtkwave.log 2>&1 &)
+                echo "  -> GTKWave launched in background."
+            else
+                echo "  -> [Error] dumpfile.vcd not found. Cannot open GTKWave."
+            fi
+        fi
 
-if [ "$MODE" == "rand" ]; then
-    echo -e "\n=================================================================="
-    echo " Standard Testsuite Passed! Launching Random Fuzzer..."
-    echo "=================================================================="
+        if [ "$TESTSUITE_FAILED" = true ]; then
+            echo -e "\n[ERROR] Standard testsuite failed! Halting pipeline."
+            exit 1
+        fi
 
-    python3 random_tester.py --iterations "$ITERS"
-fi
+        if [ "$MODE" == "rand" ]; then
+            echo -e "\n=================================================================="
+            echo " Standard Testsuite Passed! Launching Random Fuzzer..."
+            echo "=================================================================="
+
+            python3 random_tester.py --iterations "$ITERS"
+        fi
+        ;;
+
+    *)
+        echo "[ERROR] Unknown mode: $MODE"
+        exit 1
+        ;;
+esac
