@@ -228,7 +228,7 @@ module tb_GPGPU_smx_only ();
             end
 
             if (reg_errors == 0 && data_errors == 0) begin
-                $display("  [INFO] Test %0d is correct across all %0d cores!",
+                $display("  [SUCCESS] Test %0d is correct across all %0d cores!",
                          test_idx, NUM_CORES, cycle_count);
             end else begin
                 $display("  [WARNING] Test %0d failed. Reg errors: %0d, Data errors: %0d",

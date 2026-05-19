@@ -6,7 +6,7 @@ import argparse # NEW: For command line arguments
 
 # Configuration
 INSTRUCTIONS_PER_TEST = 50
-RANDOM_TEST_DIR = "test999"
+RANDOM_TEST_DIR = "tests/test999"
 
 # Register pools
 # x1 is reserved as a safe memory base pointer (0)
@@ -169,7 +169,7 @@ def main():
         result = subprocess.run(["vvp", "./main", f"+TEST_IDX=999"], capture_output=True, text=True)
         
         # 4. Check results
-        if "[FAIL]" in result.stdout or "[Error]" in result.stdout or "[PASS]" not in result.stdout:
+        if "[WARNING]" in result.stdout or "[ERROR]" in result.stdout or "[SUCCESS]" not in result.stdout:
             print(f"\n[!!!] ITERATION {i} FAILED! [!!!]")
             print("==================================================================")
             # Print the last 30 lines of the simulation output to show the exact mismatch

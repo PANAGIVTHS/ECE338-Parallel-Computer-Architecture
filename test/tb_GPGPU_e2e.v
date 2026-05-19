@@ -241,10 +241,10 @@ module tb_GPGPU_e2e ();
             test_idx = 1;
         end
 
-        $display("=================================================");
-        $display(" Starting GPGPU Public-Interface E2E Test Suite");
-        $display(" NUM_CORES = %0d", NUM_CORES);
-        $display("=================================================");
+        $display("[INFO] =================================================");
+        $display("[INFO]  Starting GPGPU Public-Interface E2E Test Suite");
+        $display("[INFO]  NUM_CORES = %0d", NUM_CORES);
+        $display("[INFO] =================================================");
 
         forever begin
             // ----------------------------------------------------
@@ -258,7 +258,7 @@ module tb_GPGPU_e2e ();
                 if (test_idx == 1) begin
                     $display("[ERROR] No tests were found");
                 end else begin
-                    $display("\nSimulation finished successfully!");
+                    $display("\n[INFO] Simulation finished successfully!");
                 end
 
                 #(`CLOCK_PERIOD * 20);
@@ -266,7 +266,7 @@ module tb_GPGPU_e2e ();
             end
             $fclose(fd);
 
-            $display("\n---> Starting test %0d...", test_idx);
+            $display("\n[INFO] ---> Starting test %0d...", test_idx);
 
             // ----------------------------------------------------
             // Initialize expected arrays
@@ -296,7 +296,7 @@ module tb_GPGPU_e2e ();
             // ----------------------------------------------------
             // Clear DMEM through host interface
             // ----------------------------------------------------
-            $display("  Clearing DMEM through host command interface...");
+            $display("[INFO]  Clearing DMEM through host command interface...");
 
             for (i = 0; i < `DMEM_ENTRIES; i = i + 1) begin
                 write_dmem(i, 32'b0);
@@ -308,19 +308,19 @@ module tb_GPGPU_e2e ();
             // ----------------------------------------------------
             // Load IMEM through host interface
             // ----------------------------------------------------
-            $display("  Loading IMEM through host command interface...");
+            $display("[INFO]  Loading IMEM through host command interface...");
 
             for (i = 0; i < `IMEM_ENTRIES; i = i + 1) begin
                 write_imem(i, expected_imem[i]);
 
                 if (i > 0 && i % 256 == 0)
-                    $display("    ...loaded %0d IMEM words", i);
+                    $display("[INFO]    ...loaded %0d IMEM words", i);
             end
 
             // ----------------------------------------------------
             // Read back IMEM and verify
             // ----------------------------------------------------
-            $display("  Verifying IMEM through host command interface...");
+            $display("[INFO]  Verifying IMEM through host command interface...");
 
             imem_errors = 0;
 
@@ -328,20 +328,20 @@ module tb_GPGPU_e2e ();
                 read_imem(i, captured_word);
 
                 if (captured_word !== expected_imem[i]) begin
-                    $display("  [Error] IMEM[%0d]: Expected %h, Found %h",
+                    $display("  [ERROR] IMEM[%0d]: Expected %h, Found %h",
                              i, expected_imem[i], captured_word);
                     imem_errors = imem_errors + 1;
                 end
             end
 
             if (imem_errors == 0) begin
-                $display("  IMEM verification passed.");
+                $display("[INFO]  IMEM verification passed.");
             end
 
             // ----------------------------------------------------
             // Start core
             // ----------------------------------------------------
-            $display("  Starting core...");
+            $display("[INFO]  Starting core...");
             start_core();
 
             // ----------------------------------------------------
@@ -358,7 +358,7 @@ module tb_GPGPU_e2e ();
                 $display("  [WARNING] Test %0d reached timeout of %0d cycles!",
                          test_idx, `TEST_TIMEOUT_CYCLES);
             end else begin
-                $display("  Core reached dumping state in %0d cycles.", cycle_count);
+                $display("[INFO]  Core reached dumping state in %0d cycles.", cycle_count);
             end
 
             repeat (10) @(posedge clk_in);
@@ -366,7 +366,7 @@ module tb_GPGPU_e2e ();
             // ----------------------------------------------------
             // Read back and verify DMEM
             // ----------------------------------------------------
-            $display("  Verifying DMEM through host command interface...");
+            $display("[INFO]  Verifying DMEM through host command interface...");
 
             dmem_errors = 0;
 
@@ -374,7 +374,7 @@ module tb_GPGPU_e2e ();
                 read_dmem(i, captured_word);
 
                 if (captured_word !== expected_dmem[i]) begin
-                    $display("  [Error] DMEM[%0d]: Expected %h, Found %h",
+                    $display("  [ERROR] DMEM[%0d]: Expected %h, Found %h",
                              i, expected_dmem[i], captured_word);
                     dmem_errors = dmem_errors + 1;
                 end
@@ -389,13 +389,13 @@ module tb_GPGPU_e2e ();
             // Verdict
             // ----------------------------------------------------
             if (imem_errors == 0 && dmem_errors == 0) begin
-                $display("  [PASS] Test %0d passed. IMEM and DMEM matched. Finished in %0d cycles.",
+                $display("  [SUCCESS] Test %0d passed. IMEM and DMEM matched. Finished in %0d cycles.",
                          test_idx, cycle_count);
             end else begin
-                $display("  [FAIL] Test %0d failed. IMEM errors: %0d, DMEM errors: %0d",
+                $display("  [INFO] Test %0d failed. IMEM errors: %0d, DMEM errors: %0d",
                          test_idx, imem_errors, dmem_errors);
 
-                $fatal(1, "Halting simulation due to public-interface GPGPU test failure.");
+                $fatal(1, "[ERROR] Halting simulation due to public-interface GPGPU test failure.");
             end
 
             test_idx = test_idx + 1;
