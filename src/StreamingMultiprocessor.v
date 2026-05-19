@@ -2,7 +2,7 @@
 
 module StreamingMultiprocessor #(
     parameter NUM_CORES = 2
-)(
+) (
     input clk,
     input rst,
     input i_enable,
@@ -53,7 +53,7 @@ module StreamingMultiprocessor #(
     wire [NUM_CORES-1:0] active_mem_wen = sp_mem_wen & ~mem_satisfied;
 
     //! If even a single core asks for memory but is denied, stall (Handles Reads and Writes)
-    wire global_stall = |(active_mem_ren & ~sp_mem_grant) | |(active_mem_wen & ~sp_mem_grant);
+    wire global_stall = (|(active_mem_ren & ~sp_mem_grant) | |(active_mem_wen & ~sp_mem_grant)) || !i_enable;
 
     //& ===============
     //& READ DATA LATCHING
@@ -122,6 +122,15 @@ module StreamingMultiprocessor #(
     wire [4:0] id_rs1, id_rs2, id_rd;
     wire [4:0] id_mux_rs1, id_mux_rs2;
     wire id_is_mul, id_wen;
+    reg decode_enabled;
+
+    always @(posedge clk) begin
+        if (!rst) begin
+            decode_enabled <= 1'b0;
+        end else begin
+            decode_enabled <= i_enable;
+        end
+    end
 
     (* dont_touch = `DEBUG *)
     Decoder decoder (
@@ -167,7 +176,7 @@ module StreamingMultiprocessor #(
             idex_wen <= 1'b0;
         end else if (global_stall) begin
             // Retain state during memory stall
-        end else if (data_hazard) begin
+        end else if (!decode_enabled || data_hazard) begin
             idex_rs1 <= 5'b0;
             idex_rs2 <= 5'b0;
             idex_rd <= 5'b0;

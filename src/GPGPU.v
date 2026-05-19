@@ -1,4 +1,6 @@
-module GPGPU (
+module GPGPU #(
+    parameter SP_PER_SM = 2
+) (
     input wire clk_in,
     input wire rst,
     output wire o_loading,
@@ -66,8 +68,9 @@ module GPGPU (
         .clk(clk),
         .rst(rst),
         .i_core_complete(core_complete),
-        .i_reg_rdata(reg_rdata),
+        .i_imem_rdata(imem_rdata),
         .i_dmem_rdata(dmem_rdata_a),
+        .i_reg_rdata(reg_rdata),
 
         .i_host_command(i_host_command),
         .i_host_command_valid(i_host_command_valid),
@@ -86,10 +89,10 @@ module GPGPU (
     );
 
     StreamingMultiprocessor #(
-        .NUM_CORES(2)
+        .NUM_CORES(SP_PER_SM)
     ) smx (
         .clk(clk),
-        .rst(rst),
+        .rst(rst && !core_clear),
         .i_enable(core_run),
         .i_ifid_instruction(imem_rdata),
         .o_imem_addr(core_imem_addr),
@@ -112,8 +115,7 @@ module GPGPU (
 
     (* dont_touch = `DEBUG *)
     MemorySinglePort #(
-        .DEPTH(`IMEM_ENTRIES),
-        .INIT_FILE("program.mem")
+        .DEPTH(`IMEM_ENTRIES)
     ) instructionMemory (
         .clk(clk),
         .i_addr_a(imem_addr),
@@ -125,8 +127,7 @@ module GPGPU (
 
     (* dont_touch = `DEBUG *)
     MemoryDualPort #(
-        .DEPTH(`DMEM_ENTRIES),
-        .INIT_FILE("")
+        .DEPTH(`DMEM_ENTRIES)
     ) dataMemory (
         .clk(clk),
         .i_addr_a(dmem_addr_a),

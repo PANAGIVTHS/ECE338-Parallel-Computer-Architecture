@@ -100,7 +100,7 @@ def assemble_line(inst, pc, labels):
 
 def compile_all_tests():
     current_dir = Path('.')
-    asm_files = [Path(sys.argv[1]) / 'program.asm'] if len(sys.argv) > 1 else list(current_dir.glob('test*/program.asm'))
+    asm_files = [Path(sys.argv[1]) / 'program.asm'] if len(sys.argv) > 1 else list(current_dir.glob('tests/test*/program.asm'))
 
     if not asm_files:
         print("No 'program.asm' files found.")

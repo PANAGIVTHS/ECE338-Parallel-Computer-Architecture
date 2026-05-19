@@ -33,13 +33,13 @@ module GUCounter #(
     wire count_set = i_set_reset[0]; 
 
     initial begin
-        o_count_cur <= {BITS{1'b1}};
+        o_count_cur <= {BITS{1'b0}};
     end
 
     //! Counter logic
     always @(posedge clk) begin
         if (!reset) begin
-            o_count_cur <= {BITS{1'b1}};
+            o_count_cur <= {BITS{1'b0}};
         end else if (count_set) begin 
             o_count_cur <= i_count_set; 
         end else if (i_count_enable) begin

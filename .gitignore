@@ -4,3 +4,4 @@
 *.csv
 *_vitis/
 *_vivado/
+venv/

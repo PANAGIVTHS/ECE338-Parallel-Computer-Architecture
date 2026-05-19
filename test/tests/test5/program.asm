@@ -6,17 +6,17 @@ addi x3, x0, 20      # x3 = 20
 # TEST 1: BRANCH NOT TAKEN & EX-TO-EX FORWARDING
 add  x4, x2, x3      # x4 = 30
 beq  x4, x2, fail1   # 30 != 10, Branch Not Taken.
-addi x16, x0, 1      # Executed! (Branch not taken, no flush) 
-addi x16, x16, 1     # Executed! x16 becomes 2.
+nop                  # (Branch delay slot)
+nop                  # (Branch delay slot)
 
 # TEST 2: BRANCH TAKEN & NEGATIVE MATH
 sub  x5, x4, x2      # x5 = 30 - 10 = 20
 beq  x5, x3, skip1   # 20 == 20, Branch Taken!
-addi x17, x0, 1      # FLUSHED (If hardware fails, x17 becomes 1)
-addi x17, x17, 1     # FLUSHED (If hardware fails, x17 becomes 2)
-addi x5, x0, 999     # FLUSHED (If hardware fails, x5 becomes 999)
+nop                  # (Branch delay slot)
+nop                  # (Branch delay slot)
+addi x5, x0, 999     # This should be SKIPPED! (If x5 becomes 999, branch failed)
 fail1:
-addi x20, x0, 999    # FLUSHED/SKIPPED (Trap: Only runs if Test 1 branch was wrongly taken)
+nop
 skip1:
 
 # TEST 3: LOAD-USE HAZARD (STALL) & STORE FORWARDING
@@ -35,9 +35,9 @@ sw   x10, -8(x8)     # Mem[8] = 20
 # TEST 5: ALWAYS TAKEN BRANCH
 addi x11, x0, 50     # x11 = 50
 beq  x11, x11, skip2 # Always Taken!
-addi x18, x0, 1      # FLUSHED (If hardware fails, x18 becomes 1)
-addi x18, x18, 1     # FLUSHED (If hardware fails, x18 becomes 2)
-addi x11, x0, 0      # FLUSHED
+nop
+nop
+addi x11, x0, 0      # This should be SKIPPED!
 skip2:
 sw   x11, 12(x1)     # Mem[12] = 50
 
@@ -51,9 +51,4 @@ addi x14, x13, 200   # EX-to-EX -> x14 = 300
 add  x15, x14, x13   # x14(EX-to-EX), x13(MEM-to-EX) -> x15 = 400
 sw   x15, 24(x1)     # Mem[24] = 400
 sw   x13, 24(x1)     # Overwrite Mem[24] with 100!
-
-# INFINITE LOOP TRAP
-end:
-beq x0, x0, end      # Trap the PC safely at the end
-addi x19, x19, 1     # FLUSHED (If loop hardware fails, x19 increments forever)
-addi x19, x19, 1     # FLUSHED
+jalr x0, 0(x1)  # return

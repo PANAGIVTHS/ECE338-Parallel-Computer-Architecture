@@ -2,6 +2,7 @@ module HostController (
     input clk,
     input rst,
     input i_core_complete,
+    input [31:0] i_imem_rdata,
     input [31:0] i_dmem_rdata,
     input [31:0] i_reg_rdata,
 
@@ -63,6 +64,7 @@ module HostController (
         .clk(clk),
         .rst(rst),
         .i_core_state(o_core_state),
+        .i_imem_rdata(i_imem_rdata),
         .i_dmem_rdata(i_dmem_rdata),
         .i_reg_rdata(i_reg_rdata),
         .i_host_command(i_host_command),

@@ -2,6 +2,27 @@
 all: testsuite
 
 # ==============================================================================
+# CONFIGURATION
+# ==============================================================================
+
+# Default testbench
+TB ?= tb_GPGPU.v
+
+# Output executable
+OUT ?= main
+
+# Include/source directories
+SRC_DIR := ../src
+
+VERILOG_SOURCES := \
+	$(SRC_DIR)/*.vh \
+	$(SRC_DIR)/*.v \
+	$(SRC_DIR)/memory/*.v \
+	$(SRC_DIR)/sp/*.v
+
+IVERILOG_FLAGS := -Wall -Wno-timescale -Winfloop -I $(SRC_DIR)
+
+# ==============================================================================
 # MODULAR TEST SUITE PIPELINE
 # ==============================================================================
 
@@ -14,10 +35,8 @@ expected:
 	python3 expected_generator.py
 
 compile:
-	iverilog -Wall -Wno-timescale -Winfloop -o main -I ../src tb_StreamingProcessor.v \
-														../src/*.vh ../src/*.v \
-														../src/memory/*.v \
-														../src/sp/*.v
+	@echo "Compiling testbench: $(TB)"
+	iverilog $(IVERILOG_FLAGS) -o $(OUT) $(TB) $(VERILOG_SOURCES)
 
 simulate: compile
 	vvp ./main | tee simulation.log
@@ -34,10 +53,11 @@ visualize:
 	python3 -m http.server
 
 clean:
-	rm -f ./test*/program.mem
-	rm -f ./test*/trace.csv
-	rm -f ./test*/data.mem          
-	rm -f ./test*/regfile_c*.mem    
+	rm -f ./tests/test*/program.mem
+	rm -f ./tests/test*/trace.csv
+	rm -f ./tests/test*/data.mem          
+	rm -f ./tests/test*/regfile_c*.mem    
 	rm -f ./main
 	rm -f ./dumpfile.vcd
-	rm -f ./simulation.log
+	rm -f ./*.log
+	rm -f ./*.jou

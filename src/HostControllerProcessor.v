@@ -6,6 +6,7 @@ module HostCommandProcessor (
     input [1:0] i_core_state,
 
     // Read data signals
+    input [31:0] i_imem_rdata,
     input [31:0] i_dmem_rdata,
     input [31:0] i_reg_rdata,
 
@@ -28,10 +29,12 @@ module HostCommandProcessor (
     output reg o_host_done_dumping
 );
     localparam CMD_IMEM_WRITE = 3'd0;
-    localparam CMD_WRITE_DONE = 3'd1;
-    localparam CMD_DMEM_READ = 3'd2;
-    localparam CMD_REG_READ = 3'd3;
-    localparam CMD_READ_DONE = 3'd4;
+    localparam CMD_DMEM_WRITE = 3'd1;
+    localparam CMD_WRITE_DONE = 3'd2;
+    localparam CMD_DMEM_READ = 3'd3;
+    localparam CMD_IMEM_READ = 3'd4;
+    localparam CMD_REG_READ = 3'd5;
+    localparam CMD_READ_DONE = 3'd6;
 
     localparam S_IDLE = 3'd0;
     localparam S_ACCEPT = 3'd1;
@@ -56,12 +59,14 @@ module HostCommandProcessor (
             S_ACCEPT: begin
                 case (host_command)
 
+                    CMD_DMEM_WRITE,
                     CMD_IMEM_WRITE,
                     CMD_WRITE_DONE,
                     CMD_READ_DONE: begin
                         next_state = S_WRITE;
                     end
 
+                    CMD_IMEM_READ,
                     CMD_DMEM_READ,
                     CMD_REG_READ: begin
                         next_state = S_READ;
@@ -95,6 +100,10 @@ module HostCommandProcessor (
             S_WRITE: begin
                 o_host_busy = 1'b1;
                 case (host_command)
+                    CMD_DMEM_WRITE: begin
+                        if (i_core_state == `CORE_LOADING)
+                            o_host_dmem_wen = 1'b1;
+                    end
                     CMD_IMEM_WRITE: begin
                         if (i_core_state == `CORE_LOADING)
                             o_host_imem_wen = 1'b1;
@@ -136,6 +145,7 @@ module HostCommandProcessor (
             o_host_rdata <= 32'b0;
         end else if (current_state == S_READ) begin
             case (host_command)
+                CMD_IMEM_READ: o_host_rdata <= i_imem_rdata; 
                 CMD_DMEM_READ: o_host_rdata <= i_dmem_rdata; 
                 CMD_REG_READ: o_host_rdata <= i_reg_rdata;
             endcase

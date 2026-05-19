@@ -214,7 +214,7 @@ def main():
         target_dir = sys.argv[1]
         asm_files = [Path(target_dir) / 'program.asm']
     else:
-        for path in current_dir.glob('test*/program.asm'):
+        for path in current_dir.glob('tests/test*/program.asm'):
             if re.fullmatch(r'test\d+', path.parent.name):
                 asm_files.append(path)
         asm_files.sort(key=lambda p: int(p.parent.name.replace('test', '')))
