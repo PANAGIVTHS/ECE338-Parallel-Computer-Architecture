@@ -7,7 +7,7 @@
 
 module tb_GPGPU_e2e ();
 
-    parameter NUM_CORES = 33;
+    parameter NUM_CORES = 16;
 
     // Host command encodings
     localparam CMD_IMEM_WRITE = 3'd0;
