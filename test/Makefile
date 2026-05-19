@@ -22,11 +22,16 @@ VERILOG_SOURCES := \
 
 IVERILOG_FLAGS := -Wall -Wno-timescale -Winfloop -I $(SRC_DIR)
 
+UART_PORT ?= /dev/ttyACM0
+UART_BAUD ?= 115200
+
 # ==============================================================================
 # MODULAR TEST SUITE PIPELINE
 # ==============================================================================
 
 testsuite: assemble expected simulate
+
+gen: assemble expected
 
 assemble:
 	python3 assembler.py
@@ -43,6 +48,9 @@ simulate: compile
 	@if grep -qE "\[FAIL\]|\[Error\]" simulation.log; then \
 		exit 1; \
 	fi
+
+host: gen
+	python3 host_uart_tester.py --port $(UART_PORT) --baud $(UART_BAUD)
 
 # ==============================================================================
 # UTILITY TARGETS
