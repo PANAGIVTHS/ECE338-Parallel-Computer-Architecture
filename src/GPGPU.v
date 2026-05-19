@@ -1,5 +1,6 @@
 module GPGPU #(
-    parameter SP_PER_SM = 2
+    parameter SP_PER_SM = 2,
+    parameter MEMORY_INIT = "empty.mem"
 ) (
     input wire clk_in,
     input wire rst,
@@ -114,7 +115,8 @@ module GPGPU #(
 
     (* dont_touch = `DEBUG *)
     MemorySinglePort #(
-        .DEPTH(`IMEM_ENTRIES)
+        .DEPTH(`IMEM_ENTRIES),
+        .INIT_FILE(MEMORY_INIT)
     ) instructionMemory (
         .clk(clk),
         .i_addr_a(imem_addr),
@@ -126,7 +128,8 @@ module GPGPU #(
 
     (* dont_touch = `DEBUG *)
     MemoryDualPort #(
-        .DEPTH(`DMEM_ENTRIES)
+        .DEPTH(`DMEM_ENTRIES),
+        .INIT_FILE(MEMORY_INIT)
     ) dataMemory (
         .clk(clk),
         .i_addr_a(dmem_addr_a),

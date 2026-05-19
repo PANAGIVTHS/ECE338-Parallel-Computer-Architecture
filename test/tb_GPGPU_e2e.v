@@ -17,6 +17,7 @@ module tb_GPGPU_e2e ();
     localparam CMD_IMEM_READ  = 3'd4;
     localparam CMD_REG_READ   = 3'd5;
     localparam CMD_READ_DONE  = 3'd6;
+    localparam RET_INSTR = 32'h00008067;
 
     reg clk_in;
     reg rst;
@@ -44,9 +45,12 @@ module tb_GPGPU_e2e ();
     integer dmem_errors;
     integer cycle_count;
     integer timeout_count;
+    integer program_words;
+    integer found_ret;
 
     reg [31:0] captured_word;
 
+    reg [8*255:0] test_root;
     reg [8*255:0] prog_file;
     reg [8*255:0] data_file;
 
@@ -55,7 +59,8 @@ module tb_GPGPU_e2e ();
     // ============================================================
 
     GPGPU #(
-        .SP_PER_SM(NUM_CORES)
+        .SP_PER_SM(NUM_CORES),
+        .MEMORY_INIT("../src/memory/empty.mem")
     ) UUT (
         .clk_in(clk_in),
         .rst(rst),
@@ -237,6 +242,12 @@ module tb_GPGPU_e2e ();
         host_address       = 32'b0;
         host_wdata         = 32'b0;
 
+        if (!$value$plusargs("TEST_ROOT=%s", test_root)) begin
+            test_root = "tests";
+        end
+
+        $display("[INFO] TEST_ROOT = %0s", test_root);
+
         if (!$value$plusargs("TEST_IDX=%d", test_idx)) begin
             test_idx = 1;
         end
@@ -250,8 +261,8 @@ module tb_GPGPU_e2e ();
             // ----------------------------------------------------
             // Find test files
             // ----------------------------------------------------
-            $sformat(prog_file, "tests/test%0d/program.mem", test_idx);
-            $sformat(data_file, "tests/test%0d/data.mem", test_idx);
+            $sformat(prog_file, "%0s/test%0d/program.mem", test_root, test_idx);
+            $sformat(data_file, "%0s/test%0d/data.mem", test_root, test_idx);
 
             fd = $fopen(prog_file, "r");
             if (fd == 0) begin
@@ -279,6 +290,23 @@ module tb_GPGPU_e2e ();
 
             $readmemh(prog_file, expected_imem);
             $readmemh(data_file, expected_dmem);
+            program_words = `IMEM_ENTRIES;
+            found_ret = 0;
+
+            for (i = 0; i < `IMEM_ENTRIES; i = i + 1) begin
+                if (!found_ret && expected_imem[i] == RET_INSTR) begin
+                    program_words = i + 1;
+                    found_ret = 1;
+                end
+            end
+
+            if (!found_ret) begin
+                $display("[WARNING] No RET instruction 0x%08h found in %0s. Loading full IMEM.",
+                        RET_INSTR, prog_file);
+            end else begin
+                $display("[INFO]  Program length detected: %0d words. RET at IMEM[%0d].",
+                        program_words, program_words - 1);
+            end
 
             // ----------------------------------------------------
             // Reset
@@ -310,12 +338,14 @@ module tb_GPGPU_e2e ();
             // ----------------------------------------------------
             $display("[INFO]  Loading IMEM through host command interface...");
 
-            for (i = 0; i < `IMEM_ENTRIES; i = i + 1) begin
+            for (i = 0; i < program_words; i = i + 1) begin
                 write_imem(i, expected_imem[i]);
 
                 if (i > 0 && i % 256 == 0)
                     $display("[INFO]    ...loaded %0d IMEM words", i);
             end
+
+            $display("[INFO]  Loaded %0d IMEM words.", program_words);
 
             // ----------------------------------------------------
             // Read back IMEM and verify
@@ -324,12 +354,12 @@ module tb_GPGPU_e2e ();
 
             imem_errors = 0;
 
-            for (i = 0; i < `IMEM_ENTRIES; i = i + 1) begin
+            for (i = 0; i < program_words; i = i + 1) begin
                 read_imem(i, captured_word);
 
                 if (captured_word !== expected_imem[i]) begin
                     $display("  [ERROR] IMEM[%0d]: Expected %h, Found %h",
-                             i, expected_imem[i], captured_word);
+                            i, expected_imem[i], captured_word);
                     imem_errors = imem_errors + 1;
                 end
             end
