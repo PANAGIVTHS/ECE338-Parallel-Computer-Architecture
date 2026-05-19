@@ -1,3 +1,5 @@
+`define ZYNQ_SOC
+
 module GPGPU #(
     parameter SP_PER_SM = 16,
     parameter MEMORY_INIT = "empty.mem"
@@ -145,6 +147,8 @@ module GPGPU #(
     );
 
     `ifdef SIM
+        assign clk = clk_in;
+    `elsif ZYNQ_SOC
         assign clk = clk_in;
     `else
         clk_wiz_0 clockDivider (
