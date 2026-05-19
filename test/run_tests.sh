@@ -124,7 +124,7 @@ TESTSUITE_FAILED=false
 if [ "$MODE" == "standard" ] || [ "$MODE" == "rand" ]; then
     echo -e "\n[Step 1/2] Running Standard Testsuite with $TB_FILE..."
 
-    if ! make testsuite TB="$TB_FILE"; then
+    if ! make testsuite TB="$TB_FILE" IVERILOG_FLAGS="-Wall -Wno-timescale -Winfloop -I ../src -DSIM"; then
         echo -e "\n[WARNING] Standard testsuite failed!"
         TESTSUITE_FAILED=true
     fi

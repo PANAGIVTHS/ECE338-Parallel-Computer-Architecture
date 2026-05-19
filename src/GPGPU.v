@@ -20,7 +20,6 @@ module GPGPU #(
 );
     // tdb was here...
     wire clk;
-    // assign clk = clk_in;
     
     // Control for the core
     wire [1:0] core_state;
@@ -142,9 +141,13 @@ module GPGPU #(
         .o_out_b(dmem_rdata_b)
     );
 
-    clk_wiz_0 clockDivider (
-        .clk_in1(clk_in),
-        .clk_out1(clk)
-    );
+    `ifdef SIM
+        assign clk = clk_in;
+    `else
+        clk_wiz_0 clockDivider (
+            .clk_in1(clk_in),
+            .clk_out1(clk)
+        );
+    `endif
 
 endmodule
