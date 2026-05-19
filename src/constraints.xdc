@@ -6,6 +6,6 @@ create_clock -period 10.000 -name sys_clk -waveform {0.000 5.000} -add [get_port
 set_property -dict {PACKAGE_PIN F22 IOSTANDARD LVCMOS33} [get_ports rst]
 
 # Connect to leds (Bank 33, 3.3V)
-set_property -dict {PACKAGE_PIN T22 IOSTANDARD LVCMOS33} [get_ports o_loading]
-set_property -dict {PACKAGE_PIN T21 IOSTANDARD LVCMOS33} [get_ports o_running]
-set_property -dict {PACKAGE_PIN U22 IOSTANDARD LVCMOS33} [get_ports o_dumping]
+set_property -dict {PACKAGE_PIN T22 IOSTANDARD LVCMOS33} [get_ports o_loading_0]
+set_property -dict {PACKAGE_PIN T21 IOSTANDARD LVCMOS33} [get_ports o_running_0]
+set_property -dict {PACKAGE_PIN U22 IOSTANDARD LVCMOS33} [get_ports o_dumping_0]

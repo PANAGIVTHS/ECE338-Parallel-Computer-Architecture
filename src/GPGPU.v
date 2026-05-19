@@ -1,5 +1,5 @@
 module GPGPU #(
-    parameter SP_PER_SM = 2,
+    parameter SP_PER_SM = 16,
     parameter MEMORY_INIT = "empty.mem"
 ) (
     input wire clk_in,
