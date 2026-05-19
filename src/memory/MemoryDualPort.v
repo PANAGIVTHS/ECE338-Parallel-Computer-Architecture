@@ -4,7 +4,7 @@
 */
 module MemoryDualPort #(
     parameter DEPTH = 1024,
-    parameter INIT_FILE = ""
+    parameter INIT_FILE = "empty.mem"
 )(
     input clk,
 

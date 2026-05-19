@@ -1,6 +1,6 @@
 module MemorySinglePort #(
     parameter DEPTH = 1024,
-    parameter INIT_FILE = ""
+    parameter INIT_FILE = "empty.mem"
 )(
     input clk,
     input [$clog2(DEPTH)-1:0] i_addr_a, // Read or write address
