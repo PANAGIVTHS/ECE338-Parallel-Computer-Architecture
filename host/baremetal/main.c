@@ -1,5 +1,7 @@
 #include "gpgpu_host.h"
 
+#include "xuartps.h"
+#include "xparameters.h"
 #include "xil_printf.h"
 #include "xil_types.h"
 
@@ -7,6 +9,7 @@
 #include <string.h>
 #include <ctype.h>
 
+static u32 rx_buffer[MAX_WORDS];
 extern char inbyte(void);
 
 static void read_line(char *buf, int max_len) {
@@ -96,39 +99,36 @@ static int parse_count(const char *s, u32 *out) {
 
 static int load_imem_from_uart(u32 count) {
     char line[128];
-    u32 word;
 
     if (count > IMEM_WORDS) {
         xil_printf("ERROR: count %u exceeds IMEM_WORDS=%d\r\n", count, IMEM_WORDS);
         return -1;
     }
 
-    xil_printf("Paste %u IMEM words as ASCII hex, one per line.\r\n", count);
+    xil_printf("READY_FOR_BULK_IMEM\r\n");
+    for (u32 i = 0; i < count; i++) {
+        read_line(line, sizeof(line));
+        trim(line);
+
+        if (parse_u32_hex(line, &rx_buffer[i]) != 0) {
+            xil_printf("ERROR_INVALID_HEX\r\n");
+            return -1;
+        }
+    }
 
     for (u32 i = 0; i < count; i++) {
-        while (1) {
-            xil_printf("IMEM[%u] > ", i);
-            read_line(line, sizeof(line));
-            trim(line);
-
-            if (parse_u32_hex(line, &word) == 0)
-                break;
-
-            xil_printf("Invalid hex word. Try again.\r\n");
-        }
-
-        if (gpgpu_write_imem(i, word) != 0)
+        if (gpgpu_write_imem(i, rx_buffer[i]) != 0) {
+            xil_printf("ERROR_AXI_WRITE\r\n");
             return -1;
-
-        xil_printf("  wrote IMEM[%u] = 0x%08x\r\n", i, word);
+        }
     }
+    xil_printf("IMEM_LOAD_COMPLETE\r\n");
 
     return 0;
 }
 
 static int load_dmem_from_uart(u32 count) {
     char line[128];
-    u32 word;
 
     if (count > DMEM_WORDS) {
         xil_printf("ERROR: count %u exceeds DMEM_WORDS=%d\r\n", count, DMEM_WORDS);
@@ -137,39 +137,108 @@ static int load_dmem_from_uart(u32 count) {
 
     xil_printf("Paste %u DMEM words as ASCII hex, one per line.\r\n", count);
 
+    xil_printf("READY_FOR_BULK_DMEM\r\n");
     for (u32 i = 0; i < count; i++) {
-        while (1) {
-            xil_printf("DMEM[%u] > ", i);
-            read_line(line, sizeof(line));
-            trim(line);
+        read_line(line, sizeof(line));
+        trim(line);
 
-            if (parse_u32_hex(line, &word) == 0)
-                break;
-
-            xil_printf("Invalid hex word. Try again.\r\n");
-        }
-
-        if (gpgpu_write_dmem(i, word) != 0)
+        if (parse_u32_hex(line, &rx_buffer[i]) != 0) {
+            xil_printf("ERROR_INVALID_HEX\r\n");
             return -1;
-
-        xil_printf("  wrote DMEM[%u] = 0x%08x\r\n", i, word);
+        }
     }
 
+    for (u32 i = 0; i < count; i++) {
+        if (gpgpu_write_dmem(i, rx_buffer[i]) != 0) {
+            xil_printf("ERROR_AXI_WRITE\r\n");
+            return -1;
+        }
+    }
+    xil_printf("DMEM_LOAD_COMPLETE\r\n");
+
+    return 0;
+}
+
+static int load_imem_binary(u32 count) {
+    if (count > MAX_WORDS) return -1;
+
+    xil_printf("READY_IMEM_BIN\n");
+    for (u32 i = 0; i < count; i++) {
+        u32 val = 0;
+        val |= ((u32)inbyte() & 0xFF) << 0;  // Byte 0 (LSB)
+        val |= ((u32)inbyte() & 0xFF) << 8;  // Byte 1
+        val |= ((u32)inbyte() & 0xFF) << 16; // Byte 2
+        val |= ((u32)inbyte() & 0xFF) << 24; // Byte 3 (MSB)
+        rx_buffer[i] = val;
+    }
+
+    for (u32 i = 0; i < count; i++) {
+        gpgpu_write_imem(i, rx_buffer[i]);
+    }
+    xil_printf("IMEM_LOAD_COMPLETE\n");
+    return 0;
+}
+
+static int load_dmem_binary(u32 count) {
+    if (count > MAX_WORDS) return -1;
+
+    xil_printf("READY_DMEM_BIN\n");
+    for (u32 i = 0; i < count; i++) {
+        u32 val = 0;
+        val |= ((u32)inbyte() & 0xFF) << 0;
+        val |= ((u32)inbyte() & 0xFF) << 8;
+        val |= ((u32)inbyte() & 0xFF) << 16;
+        val |= ((u32)inbyte() & 0xFF) << 24;
+        rx_buffer[i] = val;
+    }
+
+    for (u32 i = 0; i < count; i++) {
+        gpgpu_write_dmem(i, rx_buffer[i]);
+    }
+    
+    xil_printf("DMEM_LOAD_COMPLETE\n");
+    return 0;
+}
+
+static int gpgpu_dump_dmem_binary(u32 count) {
+    if (count > DMEM_WORDS) count = DMEM_WORDS;
+
+    xil_printf("BEGIN_DMEM_BIN\n");
+
+    for (u32 i = 0; i < count; i++) {
+        u32 val;
+        gpgpu_read_dmem(i, &val);
+
+        outbyte((val >> 0)  & 0xFF);
+        outbyte((val >> 8)  & 0xFF);
+        outbyte((val >> 16) & 0xFF);
+        outbyte((val >> 24) & 0xFF);
+    }
+
+    xil_printf("\r\n");
+    
     return 0;
 }
 
 static void print_help(void) {
     xil_printf("\r\nCommands:\r\n");
+    xil_printf("  --------- GENERAL ---------\r\n");
     xil_printf("  help\r\n");
     xil_printf("  status\r\n");
     xil_printf("  wimem <addr_hex> <word_hex>\r\n");
     xil_printf("  wdmem <addr_hex> <word_hex>\r\n");
     xil_printf("  rimem <addr_hex>\r\n");
     xil_printf("  rdmem <addr_hex>\r\n");
+    xil_printf("  --------- DUMPING ---------\r\n");
     xil_printf("  dumpimem <count>\r\n");
     xil_printf("  dumpdmem <count>\r\n");
+    xil_printf("  dumpdmem_bin <count>\r\n");
+    xil_printf("  --------- LOADING ---------\r\n");
     xil_printf("  loadimem <count>\r\n");
     xil_printf("  loaddmem <count>\r\n");
+    xil_printf("  loadimem_bin <count>\r\n");
+    xil_printf("  loaddmem_bin <count>\r\n");
+    xil_printf("  --------- CONTROL ---------\r\n");
     xil_printf("  run\r\n");
     xil_printf("  done\r\n");
     xil_printf("\r\n");
@@ -177,7 +246,6 @@ static void print_help(void) {
 
 int main(void) {
     char line[128];
-
     xil_printf("\r\nGPGPU UART Host Monitor\r\n");
 
     gpgpu_init();
@@ -281,6 +349,17 @@ int main(void) {
 
             gpgpu_dump_dmem_ascii(count);
 
+        }  else if (strcmp(cmd, "dumpdmem_bin") == 0) {
+            u32 count;
+
+            arg1 = strtok(NULL, " \t");
+            if (parse_count(arg1, &count) != 0) {
+                xil_printf("Usage: dumpdmem_bin <count>\r\n");
+                continue;
+            }
+
+            gpgpu_dump_dmem_binary(count);
+
         } else if (strcmp(cmd, "loadimem") == 0) {
             u32 count;
 
@@ -302,6 +381,28 @@ int main(void) {
             }
 
             load_dmem_from_uart(count);
+
+        }  else if (strcmp(cmd, "loadimem_bin") == 0) {
+            u32 count;
+
+            arg1 = strtok(NULL, " \t");
+            if (parse_count(arg1, &count) != 0) {
+                xil_printf("Usage: loadimem_bin <count>\r\n");
+                continue;
+            }
+
+            load_imem_binary(count);
+
+        } else if (strcmp(cmd, "loaddmem_bin") == 0) {
+            u32 count;
+
+            arg1 = strtok(NULL, " \t");
+            if (parse_count(arg1, &count) != 0) {
+                xil_printf("Usage: loaddmem_bin <count>\r\n");
+                continue;
+            }
+
+            load_dmem_binary(count);
 
         } else if (strcmp(cmd, "run") == 0) {
             gpgpu_start_and_wait();

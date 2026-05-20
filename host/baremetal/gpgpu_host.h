@@ -6,6 +6,7 @@
 #define IMEM_WORDS 2048
 #define DMEM_WORDS 2048
 #define REG_WORDS  32
+#define MAX_WORDS (IMEM_WORDS > DMEM_WORDS ? IMEM_WORDS : DMEM_WORDS)
 
 int gpgpu_init(void);
 
