@@ -9,6 +9,7 @@ from pathlib import Path
 import serial
 
 RET_INSTR = "00008067"
+DEPTH = 2048
 
 def read_mem_file(path: Path):
     words = []
@@ -125,6 +126,20 @@ class GpgpuUart:
 
         output += self.wait_prompt(timeout=30.0)
         return output
+    
+
+    def load_dmem(self, data_words):
+        self.write_line(f"loaddmem {len(data_words)}")
+
+        output = ""
+        for i, word in enumerate(data_words):
+            # Wait for DMEM[i] prompt, then send word.
+            chunk, _ = self.read_until(f"DMEM[{i}]", timeout=10.0)
+            output += chunk
+            self.write_line(word)
+
+        output += self.wait_prompt(timeout=30.0)
+        return output
 
     def run(self):
         self.write_line("run")
@@ -192,9 +207,10 @@ def main():
     parser.add_argument("--port", required=True, help="Serial port, e.g. /dev/ttyUSB1 or COM5")
     parser.add_argument("--baud", type=int, default=115200)
     parser.add_argument("--tests-root", default="tests")
-    parser.add_argument("--dmem-words", type=int, default=1024)
+    parser.add_argument("--dmem-words", type=int, default=2048)
     parser.add_argument("--check-words", type=int, default=None,
                         help="Only compare first N DMEM words. Default: compare all expected words.")
+    parser.add_argument("--start-at", type=int, default=1, help="Test index to start running from (default: 1)")
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()
 
@@ -213,13 +229,14 @@ def main():
     total_errors = 0
 
     try:
-        uart.wait_prompt(timeout=30.0)
-
         for test_idx, test_dir, program_path, expected_path in tests:
+            if test_idx < args.start_at:
+                continue
             print(f"\n[INFO] Running test{test_idx} through UART...")
 
             program = read_mem_file(program_path)
             program = trim_program_at_ret(program)
+            data_words = ["00000000"] * DEPTH
 
             expected = read_mem_file(expected_path)
             if len(expected) < args.dmem_words:
@@ -227,6 +244,9 @@ def main():
 
             print(f"[INFO] Loading {len(program)} IMEM words...")
             uart.load_imem(program)
+
+            print(f"[INFO] Loading {len(data_words)} DMEM words...")
+            uart.load_dmem(data_words)
 
             print("[INFO] Starting core...")
             uart.run()

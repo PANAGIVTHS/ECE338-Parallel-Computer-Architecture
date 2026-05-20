@@ -3,8 +3,8 @@
 
 #include "xil_types.h"
 
-#define IMEM_WORDS 1024
-#define DMEM_WORDS 1024
+#define IMEM_WORDS 2048
+#define DMEM_WORDS 2048
 #define REG_WORDS  32
 
 int gpgpu_init(void);

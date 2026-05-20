@@ -6,7 +6,7 @@
 
 module tb_GPGPU_smx_only ();
 
-    parameter NUM_CORES = 33;
+    parameter NUM_CORES = 32;
 
     reg clk_in, rst;
 

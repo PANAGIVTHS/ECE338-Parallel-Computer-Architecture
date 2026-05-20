@@ -43,12 +43,12 @@ u32 gpgpu_read_status(void) {
 void gpgpu_print_status(void) {
     u32 s = gpgpu_read_status();
 
-    xil_printf("STATUS = 0x%08lx\r\n", s);
-    xil_printf("  loading = %lu\r\n", (s & STATUS_LOADING) ? 1UL : 0UL);
-    xil_printf("  running = %lu\r\n", (s & STATUS_RUNNING) ? 1UL : 0UL);
-    xil_printf("  dumping = %lu\r\n", (s & STATUS_DUMPING) ? 1UL : 0UL);
-    xil_printf("  busy    = %lu\r\n", (s & STATUS_BUSY) ? 1UL : 0UL);
-    xil_printf("  done    = %lu\r\n", (s & STATUS_DONE) ? 1UL : 0UL);
+    xil_printf("STATUS = 0x%08x\r\n", s);
+    xil_printf("  loading = %u\r\n", (s & STATUS_LOADING) ? 1UL : 0UL);
+    xil_printf("  running = %u\r\n", (s & STATUS_RUNNING) ? 1UL : 0UL);
+    xil_printf("  dumping = %u\r\n", (s & STATUS_DUMPING) ? 1UL : 0UL);
+    xil_printf("  busy    = %u\r\n", (s & STATUS_BUSY) ? 1UL : 0UL);
+    xil_printf("  done    = %u\r\n", (s & STATUS_DONE) ? 1UL : 0UL);
 }
 
 int gpgpu_init(void) {
@@ -58,12 +58,26 @@ int gpgpu_init(void) {
     return 0;
 }
 
+static int is_running(void) {
+    return (gpgpu_read_status() & STATUS_RUNNING) != 0;
+}
+
 static int is_loading(void) {
     return (gpgpu_read_status() & STATUS_LOADING) != 0;
 }
 
 static int is_dumping(void) {
     return (gpgpu_read_status() & STATUS_DUMPING) != 0;
+}
+
+static int require_not_running(const char *op) {
+    if (is_running()) {
+        xil_printf("ERROR: %s is only allowed when not in RUNNING state.\r\n", op);
+        gpgpu_print_status();
+        return -1;
+    }
+
+    return 0;
 }
 
 static int require_loading(const char *op) {
@@ -124,7 +138,7 @@ static int wait_until_dumping(u32 timeout) {
 
 static int begin_command(u32 cmd, u32 addr, u32 wdata) {
     if (wait_until_not_busy(TIMEOUT_COUNT) != 0) {
-        xil_printf("ERROR: timeout waiting for busy=0 before cmd %lu\r\n", cmd);
+        xil_printf("ERROR: timeout waiting for busy=0 before cmd %u\r\n", cmd);
         gpgpu_print_status();
         return -1;
     }
@@ -134,7 +148,7 @@ static int begin_command(u32 cmd, u32 addr, u32 wdata) {
     gpio_write(GPIO_CMD_BASE, cmd | VALID_BIT);
 
     if (wait_until_done(TIMEOUT_COUNT) != 0) {
-        xil_printf("ERROR: timeout waiting for done=1 after cmd %lu\r\n", cmd);
+        xil_printf("ERROR: timeout waiting for done=1 after cmd %u\r\n", cmd);
         gpgpu_print_status();
         return -1;
     }
@@ -146,7 +160,7 @@ static int end_command(u32 cmd) {
     gpio_write(GPIO_CMD_BASE, cmd);
 
     if (wait_until_done_cleared(TIMEOUT_COUNT) != 0) {
-        xil_printf("ERROR: timeout waiting for done=0 after cmd %lu\r\n", cmd);
+        xil_printf("ERROR: timeout waiting for done=0 after cmd %u\r\n", cmd);
         gpgpu_print_status();
         return -1;
     }
@@ -176,9 +190,9 @@ int gpgpu_write_dmem(u32 addr, u32 word) {
 }
 
 int gpgpu_read_imem(u32 addr, u32 *data) {
-    if (require_dumping("IMEM read") != 0)
+    if (require_not_running("IMEM read") != 0)
         return -1;
-
+    
     if (begin_command(CMD_IMEM_READ, addr, 0) != 0)
         return -1;
 
@@ -188,9 +202,9 @@ int gpgpu_read_imem(u32 addr, u32 *data) {
 }
 
 int gpgpu_read_dmem(u32 addr, u32 *data) {
-    if (require_dumping("DMEM read") != 0)
+    if (require_not_running("DMEM read") != 0)
         return -1;
-
+    
     if (begin_command(CMD_DMEM_READ, addr, 0) != 0)
         return -1;
 
@@ -255,7 +269,7 @@ int gpgpu_dump_imem_ascii(u32 count) {
     if (count > IMEM_WORDS)
         count = IMEM_WORDS;
 
-    if (require_dumping("IMEM dump") != 0)
+    if (require_not_running("IMEM dump") != 0)
         return -1;
 
     xil_printf("BEGIN_IMEM_DUMP\r\n");
@@ -264,7 +278,7 @@ int gpgpu_dump_imem_ascii(u32 count) {
         if (gpgpu_read_imem(i, &data) != 0)
             return -1;
 
-        xil_printf("%04lu: %08lx\r\n", i, data);
+        xil_printf("%04u: %08x\r\n", i, data);
     }
 
     xil_printf("END_IMEM_DUMP\r\n");
@@ -277,7 +291,7 @@ int gpgpu_dump_dmem_ascii(u32 count) {
     if (count > DMEM_WORDS)
         count = DMEM_WORDS;
 
-    if (require_dumping("DMEM dump") != 0)
+    if (require_not_running("DMEM dump") != 0)
         return -1;
 
     xil_printf("BEGIN_DMEM_DUMP\r\n");
@@ -286,7 +300,7 @@ int gpgpu_dump_dmem_ascii(u32 count) {
         if (gpgpu_read_dmem(i, &data) != 0)
             return -1;
 
-        xil_printf("%04lu: %08lx\r\n", i, data);
+        xil_printf("%04u: %08x\r\n", i, data);
     }
 
     xil_printf("END_DMEM_DUMP\r\n");
@@ -305,7 +319,7 @@ int gpgpu_dump_regfile_ascii(void) {
         if (gpgpu_read_regfile(i, &data) != 0)
             return -1;
 
-        xil_printf("x%02lu: %08lx\r\n", i, data);
+        xil_printf("x%02u: %08x\r\n", i, data);
     }
 
     xil_printf("END_REG_DUMP\r\n");

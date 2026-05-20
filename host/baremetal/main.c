@@ -99,15 +99,15 @@ static int load_imem_from_uart(u32 count) {
     u32 word;
 
     if (count > IMEM_WORDS) {
-        xil_printf("ERROR: count %lu exceeds IMEM_WORDS=%d\r\n", count, IMEM_WORDS);
+        xil_printf("ERROR: count %u exceeds IMEM_WORDS=%d\r\n", count, IMEM_WORDS);
         return -1;
     }
 
-    xil_printf("Paste %lu IMEM words as ASCII hex, one per line.\r\n", count);
+    xil_printf("Paste %u IMEM words as ASCII hex, one per line.\r\n", count);
 
     for (u32 i = 0; i < count; i++) {
         while (1) {
-            xil_printf("IMEM[%lu] > ", i);
+            xil_printf("IMEM[%u] > ", i);
             read_line(line, sizeof(line));
             trim(line);
 
@@ -120,7 +120,7 @@ static int load_imem_from_uart(u32 count) {
         if (gpgpu_write_imem(i, word) != 0)
             return -1;
 
-        xil_printf("  wrote IMEM[%lu] = 0x%08lx\r\n", i, word);
+        xil_printf("  wrote IMEM[%u] = 0x%08x\r\n", i, word);
     }
 
     return 0;
@@ -131,15 +131,15 @@ static int load_dmem_from_uart(u32 count) {
     u32 word;
 
     if (count > DMEM_WORDS) {
-        xil_printf("ERROR: count %lu exceeds DMEM_WORDS=%d\r\n", count, DMEM_WORDS);
+        xil_printf("ERROR: count %u exceeds DMEM_WORDS=%d\r\n", count, DMEM_WORDS);
         return -1;
     }
 
-    xil_printf("Paste %lu DMEM words as ASCII hex, one per line.\r\n", count);
+    xil_printf("Paste %u DMEM words as ASCII hex, one per line.\r\n", count);
 
     for (u32 i = 0; i < count; i++) {
         while (1) {
-            xil_printf("DMEM[%lu] > ", i);
+            xil_printf("DMEM[%u] > ", i);
             read_line(line, sizeof(line));
             trim(line);
 
@@ -152,7 +152,7 @@ static int load_dmem_from_uart(u32 count) {
         if (gpgpu_write_dmem(i, word) != 0)
             return -1;
 
-        xil_printf("  wrote DMEM[%lu] = 0x%08lx\r\n", i, word);
+        xil_printf("  wrote DMEM[%u] = 0x%08x\r\n", i, word);
     }
 
     return 0;
@@ -244,7 +244,7 @@ int main(void) {
             }
 
             if (gpgpu_read_imem(addr, &data) == 0)
-                xil_printf("IMEM[%lu] = 0x%08lx\r\n", addr, data);
+                xil_printf("IMEM[%u] = 0x%08x\r\n", addr, data);
 
         } else if (strcmp(cmd, "rdmem") == 0) {
             u32 addr, data;
@@ -257,7 +257,7 @@ int main(void) {
             }
 
             if (gpgpu_read_dmem(addr, &data) == 0)
-                xil_printf("DMEM[%lu] = 0x%08lx\r\n", addr, data);
+                xil_printf("DMEM[%u] = 0x%08x\r\n", addr, data);
 
         } else if (strcmp(cmd, "dumpimem") == 0) {
             u32 count;

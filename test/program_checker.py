@@ -186,7 +186,7 @@ if __name__ == "__main__":
     file_path = sys.argv[1]
     
     # Default to 4 cores, unless specified as the second argument
-    num_cores = 4
+    num_cores = 32
     if len(sys.argv) >= 3:
         try:
             num_cores = int(sys.argv[2])

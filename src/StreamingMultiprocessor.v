@@ -1,7 +1,7 @@
 `include "constants.vh"
 
 module StreamingMultiprocessor #(
-    parameter NUM_CORES = 2
+    parameter NUM_CORES = 32
 ) (
     input clk,
     input rst,
