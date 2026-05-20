@@ -14,6 +14,7 @@ module StreamingProcessor #(
     input [4:0] i_idex_rs1,
     input [4:0] i_idex_rs2,
     input [4:0] i_idex_rd,
+    input [19:0] i_idex_imm_31_12,
     input [11:0] i_idex_imm_31_20,
     input [6:0] i_idex_imm_31_25,
     input [3:0] i_idex_aluop,
@@ -52,7 +53,7 @@ module StreamingProcessor #(
     wire [31:0] ex_alu_out;
     wire ex_zero, ex_is_beq;
     wire [31:0] ex_beq_offset;
-    wire [31:0] ex_imm_i_type, ex_imm_s_type;
+    wire [31:0] ex_imm_i_type, ex_imm_s_type, ex_imm_u_type;
     wire [31:0] ex_reg_a, ex_reg_b;
     wire [31:0] forwarded_rs2;
     wire [31:0] ex_actual_alu_in_a;
@@ -66,6 +67,7 @@ module StreamingProcessor #(
     assign ex_is_mul = (i_idex_opcode == `OP_R_TYPE) && (i_idex_imm_31_25 == `FUNCT7_MULDIV);
     assign ex_imm_i_type = {{20{i_idex_imm_31_20[11]}}, i_idex_imm_31_20};
     assign ex_imm_s_type = {{20{i_idex_imm_31_25[6]}}, i_idex_imm_31_25, i_idex_rd};
+    assign ex_imm_u_type = {i_idex_imm_31_12, 12'b0};
 
     (* dont_touch = `DEBUG *)
     Regfile #(
@@ -87,9 +89,13 @@ module StreamingProcessor #(
                                  ex_reg_a;
 
     //? --- Final ALU Input B ---
-    assign ex_actual_alu_in_b = (i_idex_opcode == `OP_LW || i_idex_instr_type == `INSTR_TYPE_I) ? ex_imm_i_type :
-                                (i_idex_opcode == `OP_SW) ? ex_imm_s_type :
-                                 forwarded_rs2;
+    assign ex_actual_alu_in_b = (i_idex_opcode == `OP_LW || i_idex_instr_type == `INSTR_TYPE_I)
+                                 ? ex_imm_i_type
+                                 : (i_idex_opcode == `OP_SW)
+                                    ? ex_imm_s_type
+                                    : (i_idex_instr_type == `INSTR_TYPE_U)
+                                        ? ex_imm_u_type
+                                        : forwarded_rs2;
 
     (* dont_touch = `DEBUG *)
     ALU alu (

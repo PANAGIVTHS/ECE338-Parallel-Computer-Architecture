@@ -115,6 +115,7 @@ module StreamingMultiprocessor #(
     //! =========================================================================
     //! STAGE 2: INSTRUCTION DECODE
     //! =========================================================================
+    wire [19:0] id_imm_31_12;
     wire [6:0] id_imm_31_25, id_opcode;
     wire [11:0] id_imm_31_20;
     wire [3:0] id_aluop;
@@ -138,6 +139,7 @@ module StreamingMultiprocessor #(
         .o_rs1(id_rs1), 
         .o_rs2(id_rs2),
         .o_rd(id_rd),
+        .o_imm_31_12(id_imm_31_12),
         .o_imm_31_25(id_imm_31_25),
         .o_imm_31_20(id_imm_31_20),
         .o_aluop(id_aluop),
@@ -155,6 +157,7 @@ module StreamingMultiprocessor #(
     //* PIPELINE REGISTER 2: INSTRUCTION DECODE -> EXECUTE (Feeds into SP)
     //* =========================================================================
     reg [4:0] idex_rs1, idex_rs2;
+    reg [19:0] idex_imm_31_12;
     reg [11:0] idex_imm_31_20;
     reg [3:0] idex_aluop;
     reg [1:0] idex_instr_type;
@@ -167,6 +170,7 @@ module StreamingMultiprocessor #(
             idex_rs1 <= 5'b0;
             idex_rs2 <= 5'b0;
             idex_rd <= 5'b0;
+            idex_imm_31_12 <= 20'b0;
             idex_imm_31_20 <= 12'b0;
             idex_aluop <= 2'b0;
             idex_instr_type <= 2'b0;
@@ -180,6 +184,7 @@ module StreamingMultiprocessor #(
             idex_rs1 <= 5'b0;
             idex_rs2 <= 5'b0;
             idex_rd <= 5'b0;
+            idex_imm_31_12 <= 20'b0;
             idex_imm_31_20 <= 12'b0;
             idex_aluop <= `ALU_INVALID;
             idex_instr_type <= `INSTR_TYPE_R;
@@ -191,6 +196,7 @@ module StreamingMultiprocessor #(
             idex_rs1 <= id_rs1;
             idex_rs2 <= id_rs2;
             idex_rd <= id_rd;
+            idex_imm_31_12 <= id_imm_31_12;
             idex_imm_31_20 <= id_imm_31_20;
             idex_imm_31_25 <= id_imm_31_25;
             idex_aluop <= id_aluop;
@@ -316,6 +322,7 @@ module StreamingMultiprocessor #(
                 .i_idex_rs1(idex_rs1),
                 .i_idex_rs2(idex_rs2),
                 .i_idex_rd(idex_rd),
+                .i_idex_imm_31_12(idex_imm_31_12),
                 .i_idex_imm_31_20(idex_imm_31_20),
                 .i_idex_imm_31_25(idex_imm_31_25),
                 .i_idex_aluop(idex_aluop),

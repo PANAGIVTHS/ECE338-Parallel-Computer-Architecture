@@ -41,6 +41,7 @@ module ALU (
                 `ALU_SRL:  o_alu_out = i_operand_a >> i_operand_b[4:0];
                 `ALU_SLT:  o_alu_out = ($signed(i_operand_a) < $signed(i_operand_b)) ? 32'b1 : 32'b0;
                 `ALU_SLTU: o_alu_out = (i_operand_a < i_operand_b) ? 32'b1 : 32'b0;
+                `ALU_LUI: o_alu_out = i_operand_b;
                 default: o_alu_out = 32'b0;
             endcase
         end

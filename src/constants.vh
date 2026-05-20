@@ -4,6 +4,7 @@
 `define OP_BEQ    7'b1100011
 `define OP_ADDI   7'b0010011
 `define OP_JALR   7'b1100111
+`define OP_LUI    7'b0110111
 
 `define FUNCT3_ADD_SUB_MUL 3'b000
 `define FUNCT3_MEM 3'b010
@@ -31,11 +32,13 @@
 `define ALU_SRL 4'b1000
 `define ALU_SLT 4'b1001
 `define ALU_SLTU 4'b1010
+`define ALU_LUI 4'b1011
 `define ALU_INVALID 4'b1111
 
 `define INSTR_TYPE_R 2'b00
 `define INSTR_TYPE_I 2'b01
 `define INSTR_TYPE_S 2'b10
+`define INSTR_TYPE_U 2'b11
 
 `define EXALU_MEMALU_DEP 2'b10
 `define MEMWB_EXALU_DEP 2'b01

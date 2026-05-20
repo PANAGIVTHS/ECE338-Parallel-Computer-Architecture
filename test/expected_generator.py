@@ -184,6 +184,13 @@ def generate_expected_memories(asm_text, num_cores=2):
                     else:
                         next_pc = target_pc
 
+            elif op == 'lui':
+                rd = parse_register(parts[1])
+                imm = int(parts[2], 0)
+
+                if rd != 0 and rd != 31:
+                    registers[rd] = (imm << 12) & 0xFFFFFFFF
+
             elif op == 'jalr':
                 rd = parse_register(parts[1])
                 match = re.match(r'(-?\d+)\s*\(\s*(x\d+)\s*\)', parts[2])

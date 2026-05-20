@@ -63,6 +63,18 @@ def assemble_line(inst, pc, labels):
         imm &= 0xFFF
         return (imm << 20) | (rs1 << 15) | (f3 << 12) | (rd << 7) | opcode
 
+    # U-Type
+    elif op == 'lui':
+        rd = parse_reg(parts[1])
+        imm = parse_imm(parts[2])
+
+        opcode = 0x37
+
+        # LUI stores upper 20 bits directly
+        imm &= 0xFFFFF
+
+        return (imm << 12) | (rd << 7) | opcode
+
     # Load
     elif op == 'lw':
         rd = parse_reg(parts[1])

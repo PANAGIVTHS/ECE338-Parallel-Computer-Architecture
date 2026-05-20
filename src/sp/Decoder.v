@@ -5,6 +5,7 @@ module Decoder (
     output [4:0] o_rs1,
     output [4:0] o_rs2,
     output [4:0] o_rd,
+    output [19:0] o_imm_31_12,
     output [6:0] o_imm_31_25,
     output [11:0] o_imm_31_20,
     output reg [3:0] o_aluop,
@@ -17,6 +18,7 @@ module Decoder (
     //! Extract fields from instruction
     assign o_imm_31_25 = i_instr[31:25];
     assign o_imm_31_20 = i_instr[31:20];
+    assign o_imm_31_12 = i_instr[31:12];
     assign o_rs2 = i_instr[24:20];
     assign o_rs1 = i_instr[19:15];
     assign o_rd = i_instr[11:7];
@@ -72,6 +74,10 @@ module Decoder (
             `OP_BEQ: begin 
                 o_aluop = `ALU_SUB;
                 o_instr_type = `INSTR_TYPE_S;
+            end
+            `OP_LUI: begin
+                o_aluop = `ALU_LUI;
+                o_instr_type = `INSTR_TYPE_U;
             end
             default: begin
                 o_aluop = `ALU_ADD; 
