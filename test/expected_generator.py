@@ -11,7 +11,7 @@ STACK_P_INIT = 0
 
 def parse_register(reg_str):
     """Extracts the integer index from a register string like 'x1', 'x31'"""
-    return int(reg_str.replace('x', '').replace(',', ''))
+    return int(reg_str.replace('x', '').replace(',', ''), 0)
 
 def format_hex(val):
     """Formats an integer into an 8-character 32-bit hex string"""
@@ -125,7 +125,7 @@ def generate_expected_memories(asm_text, num_cores=2):
             elif op in ['addi', 'andi', 'slli', 'srli', 'srai', 'slti', 'sltiu']:
                 rd = parse_register(parts[1])
                 rs1 = parse_register(parts[2])
-                imm = int(parts[3])
+                imm = int(parts[3], 0)
                 if rd != 0 and rd != 31:
                     v1 = registers[rs1]
                     
@@ -153,7 +153,7 @@ def generate_expected_memories(asm_text, num_cores=2):
                 if not match:
                     raise ValueError(f"Failed to parse memory offset in: {inst}")
                 
-                imm = int(match.group(1))
+                imm = int(match.group(1), 0)
                 base_reg = parse_register(match.group(2))
                 
                 # Modulo Math: Accurately replicates BRAM index wrapping
@@ -175,7 +175,7 @@ def generate_expected_memories(asm_text, num_cores=2):
                     if target in labels:
                         target_pc = labels[target]
                     else:
-                        imm = int(target)
+                        imm = int(target, 0)
                         target_pc = pc + (imm // 4)
                         
                     # Trap logic: Halt if jumping to the exact same instruction
@@ -188,7 +188,7 @@ def generate_expected_memories(asm_text, num_cores=2):
                 rd = parse_register(parts[1])
                 match = re.match(r'(-?\d+)\s*\(\s*(x\d+)\s*\)', parts[2])
                 if match:
-                    imm = int(match.group(1))
+                    imm = int(match.group(1), 0)
                     rs1 = parse_register(match.group(2))
                     # End simulation for this core if returning to 0 (kernel completion)
                     if rd == 0 and rs1 == 1 and imm == 0:
@@ -217,7 +217,7 @@ def main():
         for path in current_dir.glob('tests/test*/program.asm'):
             if re.fullmatch(r'test\d+', path.parent.name):
                 asm_files.append(path)
-        asm_files.sort(key=lambda p: int(p.parent.name.replace('test', '')))
+        asm_files.sort(key=lambda p: int(p.parent.name.replace('test', ''), 0))
 
     if not asm_files:
         print("No 'program.asm' files found in strict 'test[number]' directories.")

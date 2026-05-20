@@ -2,3 +2,4 @@
 *.asm
 *_x86
 *.csv
+!*_program.asm
