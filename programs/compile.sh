@@ -8,8 +8,12 @@ PROGRAMS_DIR="."
 # Discover available programs
 # ==========================================
 mapfile -t PROGRAMS < <(
-    find "$PROGRAMS_DIR" -mindepth 1 -maxdepth 1 -type d \
-    | xargs -n1 basename \
+    find "$PROGRAMS_DIR" \
+        -mindepth 1 \
+        -maxdepth 1 \
+        -type d \
+        ! -name runtime \
+        -printf "%f\n" \
     | sort
 )
 
