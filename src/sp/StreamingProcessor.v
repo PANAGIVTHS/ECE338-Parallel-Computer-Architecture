@@ -14,8 +14,10 @@ module StreamingProcessor #(
     input [4:0] i_idex_rs1,
     input [4:0] i_idex_rs2,
     input [4:0] i_idex_rd,
+    input [19:0] i_idex_imm_31_12,
     input [11:0] i_idex_imm_31_20,
     input [6:0] i_idex_imm_31_25,
+    input [2:0] i_idex_funct3,
     input [3:0] i_idex_aluop,
     input [1:0] i_idex_instr_type,
     input [6:0] i_idex_opcode,
@@ -50,9 +52,10 @@ module StreamingProcessor #(
     //! STAGE 3: EXECUTE
     //! =========================================================================
     wire [31:0] ex_alu_out;
-    wire ex_zero, ex_is_beq;
-    wire [31:0] ex_beq_offset;
-    wire [31:0] ex_imm_i_type, ex_imm_s_type;
+    wire ex_zero, ex_is_branch, ex_is_jal, ex_is_jalr;
+    wire ex_branch_condition_met;
+    wire [31:0] ex_beq_offset, ex_jal_offset, ex_jal_link_addr, ex_jalr_target_addr;
+    wire [31:0] ex_imm_i_type, ex_imm_s_type, ex_imm_u_type;
     wire [31:0] ex_reg_a, ex_reg_b;
     wire [31:0] forwarded_rs2;
     wire [31:0] ex_actual_alu_in_a;
@@ -66,6 +69,7 @@ module StreamingProcessor #(
     assign ex_is_mul = (i_idex_opcode == `OP_R_TYPE) && (i_idex_imm_31_25 == `FUNCT7_MULDIV);
     assign ex_imm_i_type = {{20{i_idex_imm_31_20[11]}}, i_idex_imm_31_20};
     assign ex_imm_s_type = {{20{i_idex_imm_31_25[6]}}, i_idex_imm_31_25, i_idex_rd};
+    assign ex_imm_u_type = {i_idex_imm_31_12, 12'b0};
 
     (* dont_touch = `DEBUG *)
     Regfile #(
@@ -87,9 +91,13 @@ module StreamingProcessor #(
                                  ex_reg_a;
 
     //? --- Final ALU Input B ---
-    assign ex_actual_alu_in_b = (i_idex_opcode == `OP_LW || i_idex_instr_type == `INSTR_TYPE_I) ? ex_imm_i_type :
-                                (i_idex_opcode == `OP_SW) ? ex_imm_s_type :
-                                 forwarded_rs2;
+    assign ex_actual_alu_in_b = (i_idex_opcode == `OP_LW || i_idex_instr_type == `INSTR_TYPE_I)
+                                 ? ex_imm_i_type
+                                 : (i_idex_opcode == `OP_SW)
+                                    ? ex_imm_s_type
+                                    : (i_idex_instr_type == `INSTR_TYPE_U)
+                                        ? ex_imm_u_type
+                                        : forwarded_rs2;
 
     (* dont_touch = `DEBUG *)
     ALU alu (
@@ -141,11 +149,25 @@ module StreamingProcessor #(
     assign o_mul3_valid = mul3_valid;
     assign o_mul3_rd = mul3_rd;
 
-    assign ex_is_beq = (i_idex_opcode == `OP_BEQ);
-    assign o_ex_branch_taken = ex_is_beq && ex_zero;
+    assign ex_is_branch = (i_idex_opcode == `OP_BEQ);
+    assign ex_is_jal = (i_idex_opcode == `OP_JAL);
+    assign ex_is_jalr = (i_idex_opcode == `OP_JALR);
+    assign ex_branch_condition_met =
+        (i_idex_funct3 == `FUNCT3_BEQ) ? (ex_actual_alu_in_a == ex_actual_alu_in_b) :
+        (i_idex_funct3 == `FUNCT3_BLT) ? ($signed(ex_actual_alu_in_a) < $signed(ex_actual_alu_in_b)) :
+        (i_idex_funct3 == `FUNCT3_BGE) ? ($signed(ex_actual_alu_in_a) >= $signed(ex_actual_alu_in_b)) :
+        (i_idex_funct3 == `FUNCT3_BLTU) ? (ex_actual_alu_in_a < ex_actual_alu_in_b) :
+        (i_idex_funct3 == `FUNCT3_BGEU) ? (ex_actual_alu_in_a >= ex_actual_alu_in_b) :
+        1'b0;
+    assign o_ex_branch_taken = (ex_is_branch && ex_branch_condition_met) || ex_is_jal || ex_is_jalr;
 
     assign ex_beq_offset = {{20{i_idex_imm_31_25[6]}}, i_idex_rd[0], i_idex_imm_31_25[5:0], i_idex_rd[4:1], 1'b0};
-    assign o_ex_beq_target_idx = i_idex_program_counter[$clog2(`IMEM_ENTRIES)+1:2] + ex_beq_offset[31:2];
+    assign ex_jal_offset = {{12{i_idex_imm_31_12[19]}}, i_idex_imm_31_12[7:0], i_idex_imm_31_12[8], i_idex_imm_31_12[18:9], 1'b0};
+    assign ex_jal_link_addr = i_idex_program_counter + 32'd4;
+    assign ex_jalr_target_addr = (ex_actual_alu_in_a + ex_imm_i_type) & 32'hFFFF_FFFE;
+    assign o_ex_beq_target_idx = ex_is_jalr
+        ? ex_jalr_target_addr[$clog2(`IMEM_ENTRIES)+1:2]
+        : i_idex_program_counter[$clog2(`IMEM_ENTRIES)+1:2] + (ex_is_jal ? ex_jal_offset[31:2] : ex_beq_offset[31:2]);
     assign mul_not_ready = (ex_is_mul || mul1_valid || mul2_valid) && !mul3_valid;
 
     //* =========================================================================
@@ -156,7 +178,7 @@ module StreamingProcessor #(
     reg [6:0] exmem_opcode;
     reg [1:0] exmem_instr_type;
     reg [4:0] exmem_rd;
-    reg exmem_mul3_valid, exmem_wen;
+    reg exmem_mul3_valid, exmem_wen, exmem_core_complete;
 
     always @(posedge clk) begin
         if (!rst) begin
@@ -166,6 +188,7 @@ module StreamingProcessor #(
             exmem_opcode <= 7'b0;
             exmem_wen <= 1'b0;
             exmem_mul3_valid <= 1'b0;
+            exmem_core_complete <= 1'b0;
             exmem_program_counter <= `INITIAL_PC;
         end else if (i_global_stall) begin
             // Retain state during memory stall
@@ -176,14 +199,19 @@ module StreamingProcessor #(
             exmem_opcode <= 7'b0;
             exmem_wen <= 1'b0;
             exmem_mul3_valid <= 1'b0;
+            exmem_core_complete <= 1'b0;
             exmem_program_counter <= `INITIAL_PC;
         end else begin
-            exmem_alu_out <= ex_alu_out;
+            exmem_alu_out <= (ex_is_jal || ex_is_jalr) ? ex_jal_link_addr : ex_alu_out;
             exmem_reg_b <= forwarded_rs2;
             exmem_mul3_valid <= mul3_valid;
             exmem_rd <= mul3_valid ? mul3_rd : i_idex_rd;
             exmem_opcode <= mul3_valid ? `OP_R_TYPE : i_idex_opcode;
             exmem_wen <= mul3_valid ? (mul3_rd != 5'b0) : (i_idex_wen && i_idex_rd != 5'b0);
+            exmem_core_complete <= ex_is_jalr &&
+                                   (i_idex_rd == 5'b0) &&
+                                   (i_idex_rs1 == 5'd1) &&
+                                   (ex_imm_i_type == 32'b0);
             exmem_program_counter <= mul3_valid ? mul3_program_counter : i_idex_program_counter;
         end
     end
@@ -199,7 +227,7 @@ module StreamingProcessor #(
     assign o_mem_ren = mem_is_load | mem_is_store;
     assign o_mem_wen = mem_is_store;
     assign o_mem_wdata = exmem_reg_b;
-    assign o_core_complete = (exmem_opcode == `OP_JALR && exmem_rd == 5'b0);
+    assign o_core_complete = exmem_core_complete;
 
     //! =========================================================================
     //! PIPELINE REGISTER 4: MEMORY -> WRITE BACK

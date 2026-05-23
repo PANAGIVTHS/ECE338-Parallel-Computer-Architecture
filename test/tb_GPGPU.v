@@ -30,6 +30,8 @@ module tb_GPGPU_smx_only ();
 
     integer i, c;
     integer test_idx;
+    integer test_end;
+    integer has_test_end;
     integer fd;
     integer data_errors, reg_errors;
     integer cycle_count;
@@ -93,12 +95,20 @@ module tb_GPGPU_smx_only ();
             test_idx = 1;
         end
 
+        has_test_end = $value$plusargs("TEST_END=%d", test_end);
+
         $display("[INFO] =================================================");
         $display("[INFO]  Starting GPGPU SMX-Only Test Suite");
         $display("[INFO]  NUM_CORES = %0d", NUM_CORES);
         $display("[INFO] =================================================");
 
         forever begin
+            if (has_test_end && test_idx > test_end) begin
+                $display("\n[INFO] Reached requested TEST_END=%0d. Simulation finished successfully!", test_end);
+                #(`CLOCK_PERIOD * 20);
+                $finish;
+            end
+
             $sformat(prog_file, "tests/test%0d/program.mem", test_idx);
             $sformat(data_file, "tests/test%0d/data.mem", test_idx);
 

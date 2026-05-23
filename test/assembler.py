@@ -33,7 +33,7 @@ def assemble_line(inst, pc, labels):
         return 0x00000013
         
     # R-Type
-    if op in ['add', 'sub', 'mul', 'and', 'or', 'sll', 'srl', 'sra', 'slt', 'sltu']:
+    if op in ['add', 'sub', 'mul', 'and', 'or', 'xor', 'sll', 'srl', 'sra', 'slt', 'sltu']:
         rd, rs1, rs2 = parse_reg(parts[1]), parse_reg(parts[2]), parse_reg(parts[3])
         opcode = 0x33
         f3, f7 = 0x0, 0x00
@@ -44,17 +44,19 @@ def assemble_line(inst, pc, labels):
         elif op == 'sltu': f3 = 0x3
         elif op == 'srl': f3 = 0x5
         elif op == 'sra': f3 = 0x5; f7 = 0x20
+        elif op == 'xor': f3 = 0x4
         elif op == 'or': f3 = 0x6
         elif op == 'and': f3 = 0x7
         return (f7 << 25) | (rs2 << 20) | (rs1 << 15) | (f3 << 12) | (rd << 7) | opcode
 
     # I-Type
-    elif op in ['addi', 'andi', 'ori', 'slli', 'srli', 'srai', 'slti', 'sltiu']:
+    elif op in ['addi', 'andi', 'ori', 'xori', 'slli', 'srli', 'srai', 'slti', 'sltiu']:
         rd, rs1, imm = parse_reg(parts[1]), parse_reg(parts[2]), parse_imm(parts[3])
         opcode = 0x13
         f3 = 0x0
         if op == 'slti': f3 = 0x2
         elif op == 'sltiu': f3 = 0x3
+        elif op == 'xori': f3 = 0x4
         elif op == 'ori': f3 = 0x6
         elif op == 'andi': f3 = 0x7
         elif op == 'slli': f3 = 0x1; imm &= 0x1F
@@ -62,6 +64,18 @@ def assemble_line(inst, pc, labels):
         elif op == 'srai': f3 = 0x5; imm = (imm & 0x1F) | 0x400
         imm &= 0xFFF
         return (imm << 20) | (rs1 << 15) | (f3 << 12) | (rd << 7) | opcode
+
+    # U-Type
+    elif op == 'lui':
+        rd = parse_reg(parts[1])
+        imm = parse_imm(parts[2])
+
+        opcode = 0x37
+
+        # LUI stores upper 20 bits directly
+        imm &= 0xFFFFF
+
+        return (imm << 12) | (rd << 7) | opcode
 
     # Load
     elif op == 'lw':
@@ -79,13 +93,22 @@ def assemble_line(inst, pc, labels):
         return (((imm >> 5) & 0x7F) << 25) | (rs2 << 20) | (rs1 << 15) | (f3 << 12) | ((imm & 0x1F) << 7) | opcode
 
     # Branch
-    elif op in ['beq', 'bne']:
+    elif op in ['beq', 'bne', 'blt', 'bge', 'bltu', 'bgeu']:
         rs1, rs2, target = parse_reg(parts[1]), parse_reg(parts[2]), parts[3]
         # Dynamically calculate the PC-relative offset using our Pass 1 labels map
         offset = (labels[target] - pc) * 4 if target in labels else parse_imm(target)
-        opcode, f3 = 0x63, 0x0 if op == 'beq' else 0x1
+        opcode = 0x63
+        f3 = {'beq': 0x0, 'bne': 0x1, 'blt': 0x4, 'bge': 0x5, 'bltu': 0x6, 'bgeu': 0x7}[op]
         offset &= 0x1FFF
         return (((offset >> 12) & 1) << 31) | (((offset >> 5) & 0x3F) << 25) | (rs2 << 20) | (rs1 << 15) | (f3 << 12) | (((offset >> 1) & 0xF) << 8) | (((offset >> 11) & 1) << 7) | opcode
+
+    # JAL
+    elif op == 'jal':
+        rd, target = parse_reg(parts[1]), parts[2]
+        offset = (labels[target] - pc) * 4 if target in labels else parse_imm(target)
+        opcode = 0x6F
+        offset &= 0x1FFFFF
+        return (((offset >> 20) & 1) << 31) | (((offset >> 1) & 0x3FF) << 21) | (((offset >> 11) & 1) << 20) | (((offset >> 12) & 0xFF) << 12) | (rd << 7) | opcode
 
     # JALR
     elif op == 'jalr':

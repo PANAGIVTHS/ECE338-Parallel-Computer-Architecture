@@ -4,6 +4,7 @@ import argparse
 import re
 import sys
 import time
+import struct
 from pathlib import Path
 
 import serial
@@ -69,7 +70,7 @@ class GpgpuUart:
     def write_line(self, line: str):
         if self.verbose:
             print(f">>> {line}")
-        self.ser.write((line + "\r\n").encode("ascii"))
+        self.ser.write((line + "\n").encode("ascii"))
         self.ser.flush()
 
     def read_available(self, delay=0.05):
@@ -113,32 +114,41 @@ class GpgpuUart:
         if wait_for_prompt:
             return self.wait_prompt(timeout=timeout)
         return ""
-
-    def load_imem(self, program_words):
-        self.write_line(f"loadimem {len(program_words)}")
-
-        output = ""
-        for i, word in enumerate(program_words):
-            # Wait for IMEM[i] prompt, then send word.
-            chunk, _ = self.read_until(f"IMEM[{i}]", timeout=10.0)
-            output += chunk
-            self.write_line(word)
-
-        output += self.wait_prompt(timeout=30.0)
-        return output
     
+    def load_imem(self, program_words):
+        self.write_line(f"loadimem_bin {len(program_words)}")
+        self.read_until("READY_IMEM_BIN", timeout=5.0)
+
+        byte_data = bytearray()
+        for w in program_words:
+            val = int(w, 16)
+            byte_data.extend(struct.pack('<I', val))
+
+        if self.verbose:
+            print(f"[INFO] Bursting {len(byte_data)} raw bytes to IMEM...")
+
+        self.ser.write(byte_data)
+        self.ser.flush()
+
+        output, _ = self.read_until("IMEM_LOAD_COMPLETE", timeout=10.0)
+        return output
 
     def load_dmem(self, data_words):
-        self.write_line(f"loaddmem {len(data_words)}")
+        self.write_line(f"loaddmem_bin {len(data_words)}")
+        self.read_until("READY_DMEM_BIN", timeout=5.0)
 
-        output = ""
-        for i, word in enumerate(data_words):
-            # Wait for DMEM[i] prompt, then send word.
-            chunk, _ = self.read_until(f"DMEM[{i}]", timeout=10.0)
-            output += chunk
-            self.write_line(word)
+        byte_data = bytearray()
+        for w in data_words:
+            val = int(w, 16)
+            byte_data.extend(struct.pack('<I', val))
 
-        output += self.wait_prompt(timeout=30.0)
+        if self.verbose:
+            print(f"[INFO] Bursting {len(byte_data)} raw bytes to DMEM...")
+
+        self.ser.write(byte_data)
+        self.ser.flush()
+
+        output, _ = self.read_until("DMEM_LOAD_COMPLETE", timeout=10.0)
         return output
 
     def run(self):
@@ -158,10 +168,23 @@ class GpgpuUart:
         return output
 
     def dump_dmem(self, count):
-        self.write_line(f"dumpdmem {count}")
-        output, _ = self.read_until("END_DMEM_DUMP", timeout=max(20.0, count * 0.05))
-        output += self.wait_prompt(timeout=10.0)
-        return parse_dmem_dump(output)
+        self.write_line(f"dumpdmem_bin {count}")
+        self.read_until("BEGIN_DMEM_BIN\n", timeout=5.0)
+
+        expected_bytes = count * 4
+        raw_bytes = self.ser.read(expected_bytes)
+        if len(raw_bytes) != expected_bytes:
+            raise RuntimeError(f"Binary dump failed! Expected {expected_bytes} bytes, got {len(raw_bytes)}")
+
+        result = {}
+        for i in range(count):
+            chunk = raw_bytes[i*4 : (i+1)*4]
+            val = struct.unpack('<I', chunk)[0]
+
+            result[i] = f"{val:08x}"
+
+        self.wait_prompt(timeout=5.0)
+        return result
 
 
 def parse_dmem_dump(text):

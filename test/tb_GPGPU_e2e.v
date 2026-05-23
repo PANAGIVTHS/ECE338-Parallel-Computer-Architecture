@@ -40,6 +40,8 @@ module tb_GPGPU_e2e ();
 
     integer i;
     integer test_idx;
+    integer test_end;
+    integer has_test_end;
     integer fd;
     integer imem_errors;
     integer dmem_errors;
@@ -252,12 +254,20 @@ module tb_GPGPU_e2e ();
             test_idx = 1;
         end
 
+        has_test_end = $value$plusargs("TEST_END=%d", test_end);
+
         $display("[INFO] =================================================");
         $display("[INFO]  Starting GPGPU Public-Interface E2E Test Suite");
         $display("[INFO]  NUM_CORES = %0d", NUM_CORES);
         $display("[INFO] =================================================");
 
         forever begin
+            if (has_test_end && test_idx > test_end) begin
+                $display("\n[INFO] Reached requested TEST_END=%0d. Simulation finished successfully!", test_end);
+                #(`CLOCK_PERIOD * 20);
+                $finish;
+            end
+
             // ----------------------------------------------------
             // Find test files
             // ----------------------------------------------------
