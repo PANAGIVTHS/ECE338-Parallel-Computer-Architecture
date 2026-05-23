@@ -8,6 +8,7 @@ module Decoder (
     output [19:0] o_imm_31_12,
     output [6:0] o_imm_31_25,
     output [11:0] o_imm_31_20,
+    output [2:0] o_funct3,
     output reg [3:0] o_aluop,
     output reg [1:0] o_instr_type,
     output [6:0] opcode
@@ -24,6 +25,7 @@ module Decoder (
     assign o_rd = i_instr[11:7];
     assign funct7 = i_instr[31:25];
     assign funct3 = i_instr[14:12];
+    assign o_funct3 = funct3;
     assign opcode = i_instr[6:0];
 
     //! Determine ALU operation based on opcode and funct fields
@@ -74,6 +76,10 @@ module Decoder (
             `OP_BEQ: begin 
                 o_aluop = `ALU_SUB;
                 o_instr_type = `INSTR_TYPE_S;
+            end
+            `OP_JAL: begin
+                o_aluop = `ALU_ADD;
+                o_instr_type = `INSTR_TYPE_U;
             end
             `OP_LUI: begin
                 o_aluop = `ALU_LUI;

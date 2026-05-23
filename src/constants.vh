@@ -3,10 +3,14 @@
 `define OP_SW     7'b0100011
 `define OP_BEQ    7'b1100011
 `define OP_ADDI   7'b0010011
+`define OP_JAL    7'b1101111
 `define OP_JALR   7'b1100111
 `define OP_LUI    7'b0110111
 
 `define FUNCT3_ADD_SUB_MUL 3'b000
+`define FUNCT3_BEQ 3'b000
+`define FUNCT3_BLT 3'b100
+`define FUNCT3_BGE 3'b101
 `define FUNCT3_MEM 3'b010
 `define FUNCT3_DIV 3'b100
 `define FUNCT3_SLL 3'b001

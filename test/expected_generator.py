@@ -166,12 +166,20 @@ def generate_expected_memories(asm_text, num_cores=2):
                 elif op == 'sw':
                     memory[word_idx] = registers[reg_a]
                         
-            elif op == 'beq':
+            elif op in ['beq', 'blt', 'bge']:
                 rs1 = parse_register(parts[1])
                 rs2 = parse_register(parts[2])
                 target = parts[3]
-                
-                if registers[rs1] == registers[rs2]:
+                v1 = registers[rs1]
+                v2 = registers[rs2]
+                sv1 = v1 if v1 < 0x80000000 else v1 - 0x100000000
+                sv2 = v2 if v2 < 0x80000000 else v2 - 0x100000000
+                take_branch = (
+                    (op == 'beq' and v1 == v2) or
+                    (op == 'blt' and sv1 < sv2) or
+                    (op == 'bge' and sv1 >= sv2)
+                )
+                if take_branch:
                     if target in labels:
                         target_pc = labels[target]
                     else:
@@ -183,6 +191,17 @@ def generate_expected_memories(asm_text, num_cores=2):
                         state['halted'] = True
                     else:
                         next_pc = target_pc
+
+            elif op == 'jal':
+                rd = parse_register(parts[1])
+                target = parts[2]
+                if rd != 0 and rd != 31:
+                    registers[rd] = ((pc + 1) * 4) & 0xFFFFFFFF
+                if target in labels:
+                    next_pc = labels[target]
+                else:
+                    imm = int(target, 0)
+                    next_pc = pc + (imm // 4)
 
             elif op == 'lui':
                 rd = parse_register(parts[1])

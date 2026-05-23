@@ -96,7 +96,7 @@ module StreamingMultiprocessor #(
 
     assign program_counter = {instr_idx, 2'b00};
     assign o_imem_ren = (!data_hazard && !global_stall) | flush;
-    assign o_imem_addr = flush ? `INITIAL_PC : instr_idx;
+    assign o_imem_addr = flush ? ex_beq_target_idx : instr_idx;
 
     //* =========================================================================
     //* PIPELINE REGISTER 1: INSTRUCTION FETCH -> INSTRUCTION DECODE
@@ -119,6 +119,7 @@ module StreamingMultiprocessor #(
     wire [6:0] id_imm_31_25, id_opcode;
     wire [11:0] id_imm_31_20;
     wire [3:0] id_aluop;
+    wire [2:0] id_funct3;
     wire [1:0] id_instr_type;
     wire [4:0] id_rs1, id_rs2, id_rd;
     wire [4:0] id_mux_rs1, id_mux_rs2;
@@ -142,6 +143,7 @@ module StreamingMultiprocessor #(
         .o_imm_31_12(id_imm_31_12),
         .o_imm_31_25(id_imm_31_25),
         .o_imm_31_20(id_imm_31_20),
+        .o_funct3(id_funct3),
         .o_aluop(id_aluop),
         .o_instr_type(id_instr_type),
         .opcode(id_opcode)
@@ -160,6 +162,7 @@ module StreamingMultiprocessor #(
     reg [19:0] idex_imm_31_12;
     reg [11:0] idex_imm_31_20;
     reg [3:0] idex_aluop;
+    reg [2:0] idex_funct3;
     reg [1:0] idex_instr_type;
     reg [6:0] idex_opcode, idex_imm_31_25;
     reg [$clog2(`IMEM_ENTRIES)+1:0] idex_program_counter;
@@ -173,6 +176,7 @@ module StreamingMultiprocessor #(
             idex_imm_31_12 <= 20'b0;
             idex_imm_31_20 <= 12'b0;
             idex_aluop <= 2'b0;
+            idex_funct3 <= 3'b0;
             idex_instr_type <= 2'b0;
             idex_opcode <= 7'b0;
             idex_imm_31_25 <= 7'b0;
@@ -187,6 +191,7 @@ module StreamingMultiprocessor #(
             idex_imm_31_12 <= 20'b0;
             idex_imm_31_20 <= 12'b0;
             idex_aluop <= `ALU_INVALID;
+            idex_funct3 <= 3'b0;
             idex_instr_type <= `INSTR_TYPE_R;
             idex_opcode <= 7'b0;
             idex_imm_31_25 <= 7'b0;
@@ -200,6 +205,7 @@ module StreamingMultiprocessor #(
             idex_imm_31_20 <= id_imm_31_20;
             idex_imm_31_25 <= id_imm_31_25;
             idex_aluop <= id_aluop;
+            idex_funct3 <= id_funct3;
             idex_instr_type <= id_instr_type;
             idex_opcode <= id_opcode;
             idex_program_counter <= ifid_program_counter;
@@ -325,6 +331,7 @@ module StreamingMultiprocessor #(
                 .i_idex_imm_31_12(idex_imm_31_12),
                 .i_idex_imm_31_20(idex_imm_31_20),
                 .i_idex_imm_31_25(idex_imm_31_25),
+                .i_idex_funct3(idex_funct3),
                 .i_idex_aluop(idex_aluop),
                 .i_idex_instr_type(idex_instr_type),
                 .i_idex_opcode(idex_opcode),
