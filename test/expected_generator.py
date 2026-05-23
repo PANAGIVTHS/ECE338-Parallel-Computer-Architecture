@@ -212,13 +212,26 @@ def generate_expected_memories(asm_text, num_cores=2):
 
             elif op == 'jalr':
                 rd = parse_register(parts[1])
-                match = re.match(r'(-?\d+)\s*\(\s*(x\d+)\s*\)', parts[2])
-                if match:
+                if '(' in parts[2]:
+                    match = re.match(r'(-?\d+)\s*\(\s*(x\d+)\s*\)', parts[2])
+                    if not match:
+                        raise ValueError(f"Failed to parse JALR operand in: {inst}")
                     imm = int(match.group(1), 0)
                     rs1 = parse_register(match.group(2))
-                    # End simulation for this core if returning to 0 (kernel completion)
-                    if rd == 0 and rs1 == 1 and imm == 0:
-                        state['halted'] = True
+                else:
+                    rs1 = parse_register(parts[2])
+                    imm = int(parts[3], 0)
+
+                target_byte_addr = (registers[rs1] + imm) & 0xFFFFFFFE
+
+                if rd != 0 and rd != 31:
+                    registers[rd] = ((pc + 1) * 4) & 0xFFFFFFFF
+
+                # convention: jalr x0, 0(x1) is reserved as the stop signal.
+                if rd == 0 and rs1 == 1 and imm == 0:
+                    state['halted'] = True
+                else:
+                    next_pc = (target_byte_addr // 4) % MEM_DEPTH
                         
             # Update PC
             state['pc'] = next_pc
