@@ -33,7 +33,7 @@ def assemble_line(inst, pc, labels):
         return 0x00000013
         
     # R-Type
-    if op in ['add', 'sub', 'mul', 'and', 'or', 'sll', 'srl', 'sra', 'slt', 'sltu']:
+    if op in ['add', 'sub', 'mul', 'and', 'or', 'xor', 'sll', 'srl', 'sra', 'slt', 'sltu']:
         rd, rs1, rs2 = parse_reg(parts[1]), parse_reg(parts[2]), parse_reg(parts[3])
         opcode = 0x33
         f3, f7 = 0x0, 0x00
@@ -44,17 +44,19 @@ def assemble_line(inst, pc, labels):
         elif op == 'sltu': f3 = 0x3
         elif op == 'srl': f3 = 0x5
         elif op == 'sra': f3 = 0x5; f7 = 0x20
+        elif op == 'xor': f3 = 0x4
         elif op == 'or': f3 = 0x6
         elif op == 'and': f3 = 0x7
         return (f7 << 25) | (rs2 << 20) | (rs1 << 15) | (f3 << 12) | (rd << 7) | opcode
 
     # I-Type
-    elif op in ['addi', 'andi', 'ori', 'slli', 'srli', 'srai', 'slti', 'sltiu']:
+    elif op in ['addi', 'andi', 'ori', 'xori', 'slli', 'srli', 'srai', 'slti', 'sltiu']:
         rd, rs1, imm = parse_reg(parts[1]), parse_reg(parts[2]), parse_imm(parts[3])
         opcode = 0x13
         f3 = 0x0
         if op == 'slti': f3 = 0x2
         elif op == 'sltiu': f3 = 0x3
+        elif op == 'xori': f3 = 0x4
         elif op == 'ori': f3 = 0x6
         elif op == 'andi': f3 = 0x7
         elif op == 'slli': f3 = 0x1; imm &= 0x1F

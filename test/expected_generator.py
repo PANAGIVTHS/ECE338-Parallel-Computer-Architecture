@@ -90,7 +90,7 @@ def generate_expected_memories(asm_text, num_cores=2):
             if op == 'nop':
                 pass
                 
-            elif op in ['add', 'sub', 'mul', 'and', 'or', 'sll', 'srl', 'sra', 'slt', 'sltu']:
+            elif op in ['add', 'sub', 'mul', 'and', 'or', 'xor', 'sll', 'srl', 'sra', 'slt', 'sltu']:
                 rd = parse_register(parts[1])
                 rs1 = parse_register(parts[2])
                 rs2 = parse_register(parts[3])
@@ -108,6 +108,8 @@ def generate_expected_memories(asm_text, num_cores=2):
                         registers[rd] = v1 & v2
                     elif op == 'or':
                         registers[rd] = v1 | v2
+                    elif op == 'xor':
+                        registers[rd] = v1 ^ v2
                     elif op == 'sll':
                         registers[rd] = (v1 << (v2 & 0x1F)) & 0xFFFFFFFF
                     elif op == 'srl':
@@ -122,7 +124,7 @@ def generate_expected_memories(asm_text, num_cores=2):
                     elif op == 'sltu':
                         registers[rd] = 1 if v1 < v2 else 0
                         
-            elif op in ['addi', 'andi', 'slli', 'srli', 'srai', 'slti', 'sltiu']:
+            elif op in ['addi', 'andi', 'ori', 'xori', 'slli', 'srli', 'srai', 'slti', 'sltiu']:
                 rd = parse_register(parts[1])
                 rs1 = parse_register(parts[2])
                 imm = int(parts[3], 0)
@@ -133,6 +135,10 @@ def generate_expected_memories(asm_text, num_cores=2):
                         registers[rd] = (v1 + imm) & 0xFFFFFFFF
                     elif op == 'andi':
                         registers[rd] = (v1 & imm) & 0xFFFFFFFF
+                    elif op == 'ori':
+                        registers[rd] = (v1 | imm) & 0xFFFFFFFF
+                    elif op == 'xori':
+                        registers[rd] = (v1 ^ imm) & 0xFFFFFFFF
                     elif op == 'slli':
                         registers[rd] = (v1 << (imm & 0x1F)) & 0xFFFFFFFF
                     elif op == 'srli':
