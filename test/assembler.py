@@ -93,12 +93,12 @@ def assemble_line(inst, pc, labels):
         return (((imm >> 5) & 0x7F) << 25) | (rs2 << 20) | (rs1 << 15) | (f3 << 12) | ((imm & 0x1F) << 7) | opcode
 
     # Branch
-    elif op in ['beq', 'bne', 'blt', 'bge']:
+    elif op in ['beq', 'bne', 'blt', 'bge', 'bltu', 'bgeu']:
         rs1, rs2, target = parse_reg(parts[1]), parse_reg(parts[2]), parts[3]
         # Dynamically calculate the PC-relative offset using our Pass 1 labels map
         offset = (labels[target] - pc) * 4 if target in labels else parse_imm(target)
         opcode = 0x63
-        f3 = {'beq': 0x0, 'bne': 0x1, 'blt': 0x4, 'bge': 0x5}[op]
+        f3 = {'beq': 0x0, 'bne': 0x1, 'blt': 0x4, 'bge': 0x5, 'bltu': 0x6, 'bgeu': 0x7}[op]
         offset &= 0x1FFF
         return (((offset >> 12) & 1) << 31) | (((offset >> 5) & 0x3F) << 25) | (rs2 << 20) | (rs1 << 15) | (f3 << 12) | (((offset >> 1) & 0xF) << 8) | (((offset >> 11) & 1) << 7) | opcode
 

@@ -156,6 +156,8 @@ module StreamingProcessor #(
         (i_idex_funct3 == `FUNCT3_BEQ) ? (ex_actual_alu_in_a == ex_actual_alu_in_b) :
         (i_idex_funct3 == `FUNCT3_BLT) ? ($signed(ex_actual_alu_in_a) < $signed(ex_actual_alu_in_b)) :
         (i_idex_funct3 == `FUNCT3_BGE) ? ($signed(ex_actual_alu_in_a) >= $signed(ex_actual_alu_in_b)) :
+        (i_idex_funct3 == `FUNCT3_BLTU) ? (ex_actual_alu_in_a < ex_actual_alu_in_b) :
+        (i_idex_funct3 == `FUNCT3_BGEU) ? (ex_actual_alu_in_a >= ex_actual_alu_in_b) :
         1'b0;
     assign o_ex_branch_taken = (ex_is_branch && ex_branch_condition_met) || ex_is_jal || ex_is_jalr;
 

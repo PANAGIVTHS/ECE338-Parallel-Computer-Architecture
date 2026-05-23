@@ -172,7 +172,7 @@ def generate_expected_memories(asm_text, num_cores=2):
                 elif op == 'sw':
                     memory[word_idx] = registers[reg_a]
                         
-            elif op in ['beq', 'blt', 'bge']:
+            elif op in ['beq', 'blt', 'bge', 'bltu', 'bgeu']:
                 rs1 = parse_register(parts[1])
                 rs2 = parse_register(parts[2])
                 target = parts[3]
@@ -183,7 +183,9 @@ def generate_expected_memories(asm_text, num_cores=2):
                 take_branch = (
                     (op == 'beq' and v1 == v2) or
                     (op == 'blt' and sv1 < sv2) or
-                    (op == 'bge' and sv1 >= sv2)
+                    (op == 'bge' and sv1 >= sv2) or
+                    (op == 'bltu' and v1 < v2) or
+                    (op == 'bgeu' and v1 >= v2)
                 )
                 if take_branch:
                     if target in labels:

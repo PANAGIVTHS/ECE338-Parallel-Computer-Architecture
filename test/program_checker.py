@@ -23,7 +23,7 @@ def analyze_multicore_assembly(source_code, num_cores=4):
         'add', 'sub', 'mul', 'and', 'or', 'xor', 'sll', 'srl', 'sra', 'slt', 'sltu',
         'addi', 'andi', 'ori', 'xori', 'slli', 'srli', 'srai', 'slti', 'sltiu',
         'lw', 'sw', 
-        'beq', 'bne', 
+        'beq', 'bne', 'blt', 'bge', 'bltu', 'bgeu', 
         'jalr'
     }
 
@@ -141,7 +141,7 @@ def analyze_multicore_assembly(source_code, num_cores=4):
                 
             pc += 1
 
-        elif op in ['beq', 'bne']:
+        elif op in ['beq', 'bne', 'blt', 'bge', 'bltu', 'bgeu']:
             rs1, rs2, target = parts[1], parts[2], parts[3]
             
             # Check for Divergence
@@ -150,6 +150,10 @@ def analyze_multicore_assembly(source_code, num_cores=4):
                 v1, v2 = get_reg(cores[c], rs1), get_reg(cores[c], rs2)
                 if op == 'beq': decisions.append(v1 == v2)
                 elif op == 'bne': decisions.append(v1 != v2)
+                elif op == 'blt': decisions.append(to_signed_32(v1) < to_signed_32(v2))
+                elif op == 'bge': decisions.append(to_signed_32(v1) >= to_signed_32(v2))
+                elif op == 'bltu': decisions.append(v1 < v2)
+                elif op == 'bgeu': decisions.append(v1 >= v2)
                 
             if len(set(decisions)) != 1:
                 print(f"[FAIL] DIVERGENCE DETECTED at PC {pc}: '{inst_str}'")
