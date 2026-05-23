@@ -61,7 +61,7 @@ def generate_expected_memories(asm_text, num_cores=2):
         })
 
     cycles = 0
-    max_cycles = 10000 # Safeguard against complex infinite loops
+    max_cycles = 100000 # Safeguard against complex infinite loops
     
     # Lockstep Engine: Outer loop is Time (cycles)
     while not all(state['halted'] for state in core_states) and cycles < max_cycles:
