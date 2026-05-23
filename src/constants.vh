@@ -15,6 +15,7 @@
 `define FUNCT3_DIV 3'b100
 `define FUNCT3_SLL 3'b001
 `define FUNCT3_SRA 3'b101
+`define FUNCT3_XOR 3'b100
 `define FUNCT3_OR  3'b110
 `define FUNCT3_AND 3'b111
 `define FUNCT3_SLT  3'b010
@@ -37,6 +38,7 @@
 `define ALU_SLT 4'b1001
 `define ALU_SLTU 4'b1010
 `define ALU_LUI 4'b1011
+`define ALU_XOR 4'b1100
 `define ALU_INVALID 4'b1111
 
 `define INSTR_TYPE_R 2'b00

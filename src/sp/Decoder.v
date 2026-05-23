@@ -37,6 +37,7 @@ module Decoder (
                     {`FUNCT7_SUB, `FUNCT3_ADD_SUB_MUL}: o_aluop = `ALU_SUB;
                     {`FUNCT7_MULDIV, `FUNCT3_ADD_SUB_MUL}: o_aluop = `ALU_MUL;
                     {`FUNCT7_MULDIV, `FUNCT3_DIV}: o_aluop = `ALU_DIV;
+                    {`FUNCT7_ADD, `FUNCT3_XOR}: o_aluop = `ALU_XOR;
                     {`FUNCT7_ADD, `FUNCT3_OR}:  o_aluop = `ALU_OR;
                     {`FUNCT7_ADD, `FUNCT3_SLL}: o_aluop = `ALU_SLL;
                     {`FUNCT7_SUB, `FUNCT3_SRA}: o_aluop = `ALU_SRA;
@@ -57,6 +58,8 @@ module Decoder (
                 o_instr_type = `INSTR_TYPE_I;
                 case (funct3)
                     `FUNCT3_AND: o_aluop = `ALU_AND;
+                    `FUNCT3_XOR: o_aluop = `ALU_XOR;
+                    `FUNCT3_OR: o_aluop = `ALU_OR;
                     `FUNCT3_SLL: o_aluop = `ALU_SLL;
                     `FUNCT3_SLT: o_aluop = `ALU_SLT;
                     `FUNCT3_SLTU: o_aluop = `ALU_SLTU;                    

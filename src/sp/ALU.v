@@ -36,6 +36,7 @@ module ALU (
                 `ALU_SUB: o_alu_out = i_operand_a - i_operand_b;
                 `ALU_AND: o_alu_out = i_operand_a & i_operand_b;
                 `ALU_OR:  o_alu_out = i_operand_a | i_operand_b;
+                `ALU_XOR: o_alu_out = i_operand_a ^ i_operand_b;
                 `ALU_SLL: o_alu_out = i_operand_a << i_operand_b[4:0];
                 `ALU_SRA: o_alu_out = $signed(i_operand_a) >>> i_operand_b[4:0];
                 `ALU_SRL:  o_alu_out = i_operand_a >> i_operand_b[4:0];
