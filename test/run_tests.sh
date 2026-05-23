@@ -5,6 +5,8 @@ MODE="standard"
 VISUALIZE=false
 TB_MODE="e2e"
 TB_FILE="tb_GPGPU_e2e.v"
+RANGE_START=""
+RANGE_END=""
 
 UART_PORT="/dev/ttyACM0"
 UART_BAUD="115200"
@@ -24,6 +26,8 @@ print_help() {
     echo "Options:"
     echo "  -h,  --help              Show this help message"
     echo "  -i,  --iters NUM         Random fuzzer iterations"
+    echo "       --range N           Run only test N"
+    echo "       --range A-B         Run tests A through B inclusive"
     echo "  -c,  --clean             Clean generated files"
     echo "  -v,  --visualize         Open GTKWave after simulation"
     echo ""
@@ -38,6 +42,8 @@ print_help() {
     echo ""
     echo "Examples:"
     echo "  ./run_tests.sh --standard --tb e2e"
+    echo "  ./run_tests.sh --standard --tb smx --range 14"
+    echo "  ./run_tests.sh --standard --tb smx --range 10-14"
     echo "  ./run_tests.sh --host --port /dev/ttyUSB1"
     echo "  ./run_tests.sh --gen-only"
     echo "=================================================================="
@@ -68,6 +74,32 @@ while [[ "$#" -gt 0 ]]; do
 
         -i|--iters)
             ITERS="$2"
+            shift
+            ;;
+
+        --range)
+            if [[ -z "$2" || "$2" == -* ]]; then
+                echo "[ERROR] --range requires N or A-B"
+                exit 1
+            fi
+
+            if [[ "$2" =~ ^[0-9]+$ ]]; then
+                RANGE_START="$2"
+                RANGE_END="$2"
+            elif [[ "$2" =~ ^([0-9]+)-([0-9]+)$ ]]; then
+                RANGE_START="${BASH_REMATCH[1]}"
+                RANGE_END="${BASH_REMATCH[2]}"
+            else
+                echo "[ERROR] Invalid --range value: $2"
+                echo "        Expected N or A-B, e.g. --range 14 or --range 10-14"
+                exit 1
+            fi
+
+            if (( RANGE_START < 1 || RANGE_END < RANGE_START )); then
+                echo "[ERROR] Invalid --range bounds: $2"
+                exit 1
+            fi
+
             shift
             ;;
 
@@ -134,6 +166,11 @@ echo " Configuration"
 echo "=================================================================="
 echo " Mode:       $MODE"
 echo " Testbench:  $TB_FILE"
+if [[ -n "$RANGE_START" ]]; then
+    echo " Test Range: $RANGE_START-$RANGE_END"
+else
+    echo " Test Range: all"
+fi
 echo " UART Port:  $UART_PORT"
 echo " UART Baud:  $UART_BAUD"
 echo " Iterations: $ITERS"
@@ -142,8 +179,22 @@ echo "=================================================================="
 
 case "$MODE" in
     gen-only)
-        make gen
-        exit $?
+        if [[ -n "$RANGE_START" ]]; then
+            for ((test_num = RANGE_START; test_num <= RANGE_END; test_num++)); do
+                test_dir="tests/test${test_num}"
+                if [[ ! -f "$test_dir/program.asm" ]]; then
+                    echo "[ERROR] Test not found: $test_dir/program.asm"
+                    exit 1
+                fi
+
+                python3 assembler.py "$test_dir" || exit $?
+                python3 expected_generator.py "$test_dir" || exit $?
+            done
+            exit 0
+        else
+            make gen
+            exit $?
+        fi
         ;;
 
     host)
@@ -156,7 +207,26 @@ case "$MODE" in
 
         echo -e "\n[Step 1/2] Running Verilog testsuite with $TB_FILE..."
 
-        if ! make testsuite TB="$TB_FILE" IVERILOG_FLAGS="-Wall -Wno-timescale -Winfloop -I ../src -DSIM"; then
+        if [[ -n "$RANGE_START" ]]; then
+            for ((test_num = RANGE_START; test_num <= RANGE_END; test_num++)); do
+                test_dir="tests/test${test_num}"
+                if [[ ! -f "$test_dir/program.asm" ]]; then
+                    echo "[ERROR] Test not found: $test_dir/program.asm"
+                    exit 1
+                fi
+
+                python3 assembler.py "$test_dir" || TESTSUITE_FAILED=true
+                python3 expected_generator.py "$test_dir" || TESTSUITE_FAILED=true
+            done
+
+            if [ "$TESTSUITE_FAILED" = false ]; then
+                make compile TB="$TB_FILE" IVERILOG_FLAGS="-Wall -Wno-timescale -Winfloop -I ../src -DSIM" && \
+                    vvp ./main +TEST_IDX="$RANGE_START" +TEST_END="$RANGE_END" | tee simulation.log
+                if [[ ${PIPESTATUS[0]} -ne 0 ]] || grep -qE "\[FAIL\]|\[Error\]" simulation.log; then
+                    TESTSUITE_FAILED=true
+                fi
+            fi
+        elif ! make testsuite TB="$TB_FILE" IVERILOG_FLAGS="-Wall -Wno-timescale -Winfloop -I ../src -DSIM"; then
             echo -e "\n[WARNING] Standard testsuite failed!"
             TESTSUITE_FAILED=true
         fi

@@ -90,7 +90,7 @@ def generate_expected_memories(asm_text, num_cores=2):
             if op == 'nop':
                 pass
                 
-            elif op in ['add', 'sub', 'mul', 'and', 'or', 'sll', 'srl', 'sra', 'slt', 'sltu']:
+            elif op in ['add', 'sub', 'mul', 'and', 'or', 'xor', 'sll', 'srl', 'sra', 'slt', 'sltu']:
                 rd = parse_register(parts[1])
                 rs1 = parse_register(parts[2])
                 rs2 = parse_register(parts[3])
@@ -108,6 +108,8 @@ def generate_expected_memories(asm_text, num_cores=2):
                         registers[rd] = v1 & v2
                     elif op == 'or':
                         registers[rd] = v1 | v2
+                    elif op == 'xor':
+                        registers[rd] = v1 ^ v2
                     elif op == 'sll':
                         registers[rd] = (v1 << (v2 & 0x1F)) & 0xFFFFFFFF
                     elif op == 'srl':
@@ -122,7 +124,7 @@ def generate_expected_memories(asm_text, num_cores=2):
                     elif op == 'sltu':
                         registers[rd] = 1 if v1 < v2 else 0
                         
-            elif op in ['addi', 'andi', 'slli', 'srli', 'srai', 'slti', 'sltiu']:
+            elif op in ['addi', 'andi', 'ori', 'xori', 'slli', 'srli', 'srai', 'slti', 'sltiu']:
                 rd = parse_register(parts[1])
                 rs1 = parse_register(parts[2])
                 imm = int(parts[3], 0)
@@ -133,6 +135,10 @@ def generate_expected_memories(asm_text, num_cores=2):
                         registers[rd] = (v1 + imm) & 0xFFFFFFFF
                     elif op == 'andi':
                         registers[rd] = (v1 & imm) & 0xFFFFFFFF
+                    elif op == 'ori':
+                        registers[rd] = (v1 | imm) & 0xFFFFFFFF
+                    elif op == 'xori':
+                        registers[rd] = (v1 ^ imm) & 0xFFFFFFFF
                     elif op == 'slli':
                         registers[rd] = (v1 << (imm & 0x1F)) & 0xFFFFFFFF
                     elif op == 'srli':
@@ -166,12 +172,22 @@ def generate_expected_memories(asm_text, num_cores=2):
                 elif op == 'sw':
                     memory[word_idx] = registers[reg_a]
                         
-            elif op == 'beq':
+            elif op in ['beq', 'blt', 'bge', 'bltu', 'bgeu']:
                 rs1 = parse_register(parts[1])
                 rs2 = parse_register(parts[2])
                 target = parts[3]
-                
-                if registers[rs1] == registers[rs2]:
+                v1 = registers[rs1]
+                v2 = registers[rs2]
+                sv1 = v1 if v1 < 0x80000000 else v1 - 0x100000000
+                sv2 = v2 if v2 < 0x80000000 else v2 - 0x100000000
+                take_branch = (
+                    (op == 'beq' and v1 == v2) or
+                    (op == 'blt' and sv1 < sv2) or
+                    (op == 'bge' and sv1 >= sv2) or
+                    (op == 'bltu' and v1 < v2) or
+                    (op == 'bgeu' and v1 >= v2)
+                )
+                if take_branch:
                     if target in labels:
                         target_pc = labels[target]
                     else:
@@ -184,6 +200,17 @@ def generate_expected_memories(asm_text, num_cores=2):
                     else:
                         next_pc = target_pc
 
+            elif op == 'jal':
+                rd = parse_register(parts[1])
+                target = parts[2]
+                if rd != 0 and rd != 31:
+                    registers[rd] = ((pc + 1) * 4) & 0xFFFFFFFF
+                if target in labels:
+                    next_pc = labels[target]
+                else:
+                    imm = int(target, 0)
+                    next_pc = pc + (imm // 4)
+
             elif op == 'lui':
                 rd = parse_register(parts[1])
                 imm = int(parts[2], 0)
@@ -193,13 +220,26 @@ def generate_expected_memories(asm_text, num_cores=2):
 
             elif op == 'jalr':
                 rd = parse_register(parts[1])
-                match = re.match(r'(-?\d+)\s*\(\s*(x\d+)\s*\)', parts[2])
-                if match:
+                if '(' in parts[2]:
+                    match = re.match(r'(-?\d+)\s*\(\s*(x\d+)\s*\)', parts[2])
+                    if not match:
+                        raise ValueError(f"Failed to parse JALR operand in: {inst}")
                     imm = int(match.group(1), 0)
                     rs1 = parse_register(match.group(2))
-                    # End simulation for this core if returning to 0 (kernel completion)
-                    if rd == 0 and rs1 == 1 and imm == 0:
-                        state['halted'] = True
+                else:
+                    rs1 = parse_register(parts[2])
+                    imm = int(parts[3], 0)
+
+                target_byte_addr = (registers[rs1] + imm) & 0xFFFFFFFE
+
+                if rd != 0 and rd != 31:
+                    registers[rd] = ((pc + 1) * 4) & 0xFFFFFFFF
+
+                # convention: jalr x0, 0(x1) is reserved as the stop signal.
+                if rd == 0 and rs1 == 1 and imm == 0:
+                    state['halted'] = True
+                else:
+                    next_pc = (target_byte_addr // 4) % MEM_DEPTH
                         
             # Update PC
             state['pc'] = next_pc

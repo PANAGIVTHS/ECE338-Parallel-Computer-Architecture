@@ -5,6 +5,7 @@ import sys
 import time
 from pathlib import Path
 import serial
+import struct
 
 RET_INSTR = "00008067"
 
@@ -83,23 +84,39 @@ class GpgpuUart:
         return self.read_until("gpgpu>", timeout=timeout)[0]
 
     def load_imem(self, program_words):
-        self.write_line(f"loadimem {len(program_words)}")
-        output = ""
-        for i, word in enumerate(program_words):
-            chunk, _ = self.read_until(f"IMEM[{i}]", timeout=10.0)
-            output += chunk
-            self.write_line(word)
-        output += self.wait_prompt(timeout=30.0)
+        self.write_line(f"loadimem_bin {len(program_words)}")
+        self.read_until("READY_IMEM_BIN", timeout=5.0)
+
+        byte_data = bytearray()
+        for w in program_words:
+            val = int(w, 16)
+            byte_data.extend(struct.pack('<I', val))
+
+        if self.verbose:
+            print(f"[INFO] Bursting {len(byte_data)} raw bytes to IMEM...")
+
+        self.ser.write(byte_data)
+        self.ser.flush()
+
+        output, _ = self.read_until("IMEM_LOAD_COMPLETE", timeout=10.0)
         return output
-    
+
     def load_dmem(self, data_words):
-        self.write_line(f"loaddmem {len(data_words)}")
-        output = ""
-        for i, word in enumerate(data_words):
-            chunk, _ = self.read_until(f"DMEM[{i}]", timeout=10.0)
-            output += chunk
-            self.write_line(word)
-        output += self.wait_prompt(timeout=30.0)
+        self.write_line(f"loaddmem_bin {len(data_words)}")
+        self.read_until("READY_DMEM_BIN", timeout=5.0)
+
+        byte_data = bytearray()
+        for w in data_words:
+            val = int(w, 16)
+            byte_data.extend(struct.pack('<I', val))
+
+        if self.verbose:
+            print(f"[INFO] Bursting {len(byte_data)} raw bytes to DMEM...")
+
+        self.ser.write(byte_data)
+        self.ser.flush()
+
+        output, _ = self.read_until("DMEM_LOAD_COMPLETE", timeout=10.0)
         return output
 
 def main():
