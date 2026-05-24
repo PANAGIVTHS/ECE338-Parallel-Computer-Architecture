@@ -1,0 +1,74 @@
+addi x15,x31,0
+addi x27,x15,0
+addi x1,x0,0
+jal x0,11c <_start+0x11c>
+slli x15,x1,0x5
+add x23,x27,x15
+addi x9,x27,0
+addi x8,x1,0
+addi x15,x9,0
+slli x15,x15,0x1
+add x15,x15,x9
+slli x14,x15,0x5
+add x15,x15,x14
+addi x24,x15,-2048
+addi x15,x8,0
+slli x15,x15,0x4
+add x15,x15,x8
+slli x15,x15,0x3
+addi x25,x15,-1024
+addi x8,x0,0
+addi x9,x0,0
+addi x20,x0,0
+addi x19,x0,1
+addi x18,x0,0
+jal x0,f8 <_start+0xf8>
+mul x15,x8,x8
+srai x22,x15,0xa
+mul x15,x9,x9
+srai x21,x15,0xa
+add x26,x22,x21
+lui x15,0x1
+addi x15,x15,1 # 1001 <_start+0x1001>
+slt x15,x26,x15
+xori x15,x15,1
+andi x15,x15,255
+addi x26,x15,0
+xori x26,x26,1
+and x19,x26,x19
+mul x15,x8,x9
+srai x26,x15,0x9
+add x26,x25,x26
+sub x15,x22,x21
+add x21,x24,x15
+add x20,x20,x19
+addi x22,x8,0
+addi x8,x19,0
+sub x8,x0,x8
+xori x15,x8,-1
+and x14,x22,x15
+and x15,x21,x8
+or x15,x14,x15
+addi x8,x15,0
+addi x22,x9,0
+addi x21,x26,0
+addi x9,x19,0
+sub x9,x0,x9
+xori x15,x9,-1
+and x14,x22,x15
+and x15,x21,x9
+or x15,x14,x15
+addi x9,x15,0
+addi x18,x18,1
+addi x15,x0,31
+bge x15,x18,64 <_start+0x64>
+addi x13,x20,0
+lui x15,0x1
+addi x14,x15,296 # 1128 <__DATA_BEGIN__>
+slli x15,x23,0x2
+add x15,x14,x15
+sw x13,0(x15)
+addi x1,x1,1
+addi x15,x0,15
+bge x15,x1,10 <_start+0x10>
+jalr x0,0(x1)

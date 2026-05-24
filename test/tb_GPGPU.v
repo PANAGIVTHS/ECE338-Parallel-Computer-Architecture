@@ -2,7 +2,7 @@
 `include "constants.vh"
 
 `define CLOCK_PERIOD 10
-`define TEST_TIMEOUT_CYCLES 1500
+`define TEST_TIMEOUT_CYCLES 100000
 
 module tb_GPGPU_smx_only ();
 
@@ -36,9 +36,11 @@ module tb_GPGPU_smx_only ();
     integer data_errors, reg_errors;
     integer cycle_count;
     integer fd_trace;
+    integer fd_actual_data;
 
     reg [8*255:0] prog_file;
     reg [8*255:0] data_file;
+    reg [8*255:0] actual_data_file;
     reg [8*255:0] reg_file;
     reg [8*255:0] trace_file;
 
@@ -225,6 +227,13 @@ module tb_GPGPU_smx_only ();
                     end
                 end
             end
+
+            // Dump actual DUT DMEM before comparison for benchmark visualization/debugging.
+            $sformat(actual_data_file, "tests/test%0d/data_actual.mem", test_idx);
+            fd_actual_data = $fopen(actual_data_file, "w");
+            for (i = 0; i < `DMEM_ENTRIES; i = i + 1)
+                $fdisplay(fd_actual_data, "%08h", UUT.dataMemory.data[i]);
+            $fclose(fd_actual_data);
 
             // Compare DMEM directly
             data_errors = 0;
