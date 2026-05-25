@@ -5,9 +5,6 @@ import sys
 # ==========================================
 # CONFIGURATION
 # ==========================================
-# CHANGE THIS to match your CH341T adapter's port!
-# Windows: 'COM3', 'COM4', etc.
-# Linux/Mac: '/dev/ttyUSB0', '/dev/cu.usbserial-xxx'
 COM_PORT = '/dev/ttyUSB0'
 BAUD_RATE = 9600
 

@@ -7,7 +7,10 @@ import time
 import struct
 from pathlib import Path
 
-import serial
+try:
+    import serial
+except ImportError:
+    serial = None
 
 RET_INSTR = "00008067"
 DEPTH = 2048
@@ -55,6 +58,9 @@ def discover_tests(tests_root: Path):
 
 class GpgpuUart:
     def __init__(self, port, baud, timeout=2.0, verbose=False):
+        if serial is None:
+            raise RuntimeError("pyserial is required for UART access. Install it with: python3 -m pip install pyserial")
+        assert serial is not None
         self.ser = serial.Serial(port, baudrate=baud, timeout=timeout)
         self.verbose = verbose
         time.sleep(0.2)
@@ -150,6 +156,13 @@ class GpgpuUart:
 
         output, _ = self.read_until("DMEM_LOAD_COMPLETE", timeout=10.0)
         return output
+
+    def write_dmem_word(self, addr, word):
+        self.command(f"wdmem {addr:x} {word & 0xffffffff:08x}", wait_for_prompt=True, timeout=5.0)
+
+    def write_dmem_words(self, start_addr, words):
+        for offset, word in enumerate(words):
+            self.write_dmem_word(start_addr + offset, word)
 
     def run(self):
         self.write_line("run")

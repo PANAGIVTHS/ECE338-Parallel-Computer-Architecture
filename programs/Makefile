@@ -4,7 +4,8 @@ OBJDUMP = riscv64-unknown-elf-objdump
 CFLAGS = -O0 -march=rv32im -mabi=ilp32 \
           -ffreestanding -nostdlib \
           -fomit-frame-pointer \
-          -Ttext=0x00000000
+          -I runtime \
+          -T runtime/linker.ld
 
 # --- Native (x86 Linux) Compiler Variables ---
 NATIVE_CC = gcc
@@ -12,37 +13,43 @@ NATIVE_CFLAGS = -O0
 
 PROG ?= nbody
 
+PROG_DIR_PART = $(dir $(PROG))
+PROG_NAME = $(notdir $(PROG))
+ifeq ($(PROG_DIR_PART),./)
 DIR = $(PROG)
+else
+DIR = $(patsubst %/,%,$(PROG_DIR_PART))
+endif
 
-SRC = $(DIR)/$(PROG).c
+SRC = $(DIR)/$(PROG_NAME).c
 NATIVE_SRC = $(SRC)
 
 # ==========================================
 # RISC-V Outputs
 # ==========================================
-ELF      = $(DIR)/$(PROG).elf
+ELF      = $(DIR)/$(PROG_NAME).elf
 
 # Full dump:
 # address + hex + instruction
-DUMP_ASM = $(DIR)/$(PROG)_dump_real.asm
+DUMP_ASM = $(DIR)/$(PROG_NAME)_dump_real.asm
 
 # Clean assembly only
-PROG_ASM = $(DIR)/$(PROG)_program.asm
+PROG_ASM = $(DIR)/$(PROG_NAME)_program.asm
 
 # Raw hex instructions
-MEM      = $(DIR)/$(PROG)_instructions.mem
+MEM      = $(DIR)/$(PROG_NAME)_instructions.mem
 
 # ==========================================
 # Native x86 Output
 # ==========================================
-NATIVE_EXE = $(DIR)/$(PROG)_x86
+NATIVE_EXE = $(DIR)/$(PROG_NAME)_x86
 
 # ==========================================
 # Default target
 # ==========================================
 all: riscv x86
 
-riscv: $(PROG_ASM)
+riscv: $(PROG_ASM) $(MEM)
 x86: $(NATIVE_EXE)
 
 # ==========================================
