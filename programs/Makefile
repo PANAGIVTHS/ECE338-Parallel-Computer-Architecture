@@ -42,7 +42,7 @@ NATIVE_EXE = $(DIR)/$(PROG)_x86
 # ==========================================
 all: riscv x86
 
-riscv: $(MEM) $(PROG_ASM)
+riscv: $(PROG_ASM)
 x86: $(NATIVE_EXE)
 
 # ==========================================
