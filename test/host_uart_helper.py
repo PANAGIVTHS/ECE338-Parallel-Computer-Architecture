@@ -118,9 +118,11 @@ class GpgpuUart:
     def wait_prompt(self, timeout=20.0):
         return self.read_until("gpgpu>", timeout=timeout)[0]
 
-    def load_imem(self, program_words):
-        self.write_line(f"loadimem_bin {len(program_words)}")
-        self.read_until("READY_IMEM_BIN", timeout=5.0)
+    def load_imem(self, program_words, offset=0):
+        self.write_line(f"loadimem_bin {offset} {len(program_words)}")
+        output, marker = self.read_until(["READY_IMEM_BIN", "ERROR"], timeout=5.0)
+        if marker == "ERROR":
+            raise RuntimeError(f"IMEM load rejected:\n{output}")
 
         byte_data = bytearray()
         for w in program_words:
@@ -136,9 +138,11 @@ class GpgpuUart:
         output, _ = self.read_until("IMEM_LOAD_COMPLETE", timeout=10.0)
         return output
 
-    def load_dmem(self, data_words):
-        self.write_line(f"loaddmem_bin {len(data_words)}")
-        self.read_until("READY_DMEM_BIN", timeout=5.0)
+    def load_dmem(self, data_words, offset=0):
+        self.write_line(f"loaddmem_bin {offset} {len(data_words)}")
+        output, marker = self.read_until(["READY_DMEM_BIN", "ERROR"], timeout=5.0)
+        if marker == "ERROR":
+            raise RuntimeError(f"DMEM load rejected:\n{output}")
 
         byte_data = bytearray()
         for w in data_words:
@@ -166,19 +170,23 @@ def main():
     # Command: clean-imem
     cmd_clean_imem = subparsers.add_parser("clean-imem", help="Fill IMEM with zeros")
     cmd_clean_imem.add_argument("--size", type=int, default=2048, help="Number of words to clear (default: 2048)")
+    cmd_clean_imem.add_argument("--offset", type=int, default=0, help="Starting IMEM word offset (default: 0)")
 
     # Command: clean-dmem
     cmd_clean_dmem = subparsers.add_parser("clean-dmem", help="Fill DMEM with zeros")
     cmd_clean_dmem.add_argument("--size", type=int, default=2048, help="Number of words to clear (default: 2048)")
+    cmd_clean_dmem.add_argument("--offset", type=int, default=0, help="Starting DMEM word offset (default: 0)")
 
     # Command: load-imem
     cmd_load_imem = subparsers.add_parser("load-imem", help="Load a .mem file into IMEM")
     cmd_load_imem.add_argument("file", type=Path, help="Path to the .mem file")
+    cmd_load_imem.add_argument("--offset", type=int, default=0, help="Starting IMEM word offset (default: 0)")
     cmd_load_imem.add_argument("--trim", action="store_true", help="Stop loading after seeing the RET instruction")
 
     # Command: load-dmem
     cmd_load_dmem = subparsers.add_parser("load-dmem", help="Load a .mem file into DMEM")
     cmd_load_dmem.add_argument("file", type=Path, help="Path to the .mem file")
+    cmd_load_dmem.add_argument("--offset", type=int, default=0, help="Starting DMEM word offset (default: 0)")
 
     args = parser.parse_args()
 
@@ -187,15 +195,15 @@ def main():
 
     try:
         if args.command == "clean-imem":
-            print(f"[INFO] Cleaning IMEM ({args.size} words)...")
+            print(f"[INFO] Cleaning IMEM ({args.size} words at offset {args.offset})...")
             zeros = ["00000000"] * args.size
-            uart.load_imem(zeros)
+            uart.load_imem(zeros, offset=args.offset)
             print("[SUCCESS] IMEM wiped.")
 
         elif args.command == "clean-dmem":
-            print(f"[INFO] Cleaning DMEM ({args.size} words)...")
+            print(f"[INFO] Cleaning DMEM ({args.size} words at offset {args.offset})...")
             zeros = ["00000000"] * args.size
-            uart.load_dmem(zeros)
+            uart.load_dmem(zeros, offset=args.offset)
             print("[SUCCESS] DMEM wiped.")
 
         elif args.command == "load-imem":
@@ -207,8 +215,8 @@ def main():
             if args.trim:
                 words = trim_program_at_ret(words)
             
-            print(f"[INFO] Loading {len(words)} words into IMEM from {args.file.name}...")
-            uart.load_imem(words)
+            print(f"[INFO] Loading {len(words)} words into IMEM[{args.offset}..{args.offset + len(words) - 1}] from {args.file.name}...")
+            uart.load_imem(words, offset=args.offset)
             print("[SUCCESS] IMEM load complete.")
 
         elif args.command == "load-dmem":
@@ -217,8 +225,8 @@ def main():
                 return 1
             
             words = read_mem_file(args.file)
-            print(f"[INFO] Loading {len(words)} words into DMEM from {args.file.name}...")
-            uart.load_dmem(words)
+            print(f"[INFO] Loading {len(words)} words into DMEM[{args.offset}..{args.offset + len(words) - 1}] from {args.file.name}...")
+            uart.load_dmem(words, offset=args.offset)
             print("[SUCCESS] DMEM load complete.")
 
     except Exception as e:

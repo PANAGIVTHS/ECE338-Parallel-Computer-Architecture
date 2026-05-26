@@ -263,11 +263,14 @@ int gpgpu_finish_readback(void) {
     return 0;
 }
 
-int gpgpu_dump_imem_ascii(u32 count) {
+int gpgpu_dump_imem_ascii(u32 offset, u32 count) {
     u32 data;
 
-    if (count > IMEM_WORDS)
-        count = IMEM_WORDS;
+    if (offset > IMEM_WORDS || count > (IMEM_WORDS - offset)) {
+        xil_printf("ERROR: IMEM dump range offset=%u count=%u exceeds IMEM_WORDS=%d\r\n",
+                   offset, count, IMEM_WORDS);
+        return -1;
+    }
 
     if (require_not_running("IMEM dump") != 0)
         return -1;
@@ -275,21 +278,26 @@ int gpgpu_dump_imem_ascii(u32 count) {
     xil_printf("BEGIN_IMEM_DUMP\r\n");
 
     for (u32 i = 0; i < count; i++) {
-        if (gpgpu_read_imem(i, &data) != 0)
+        u32 addr = offset + i;
+
+        if (gpgpu_read_imem(addr, &data) != 0)
             return -1;
 
-        xil_printf("%04u: %08x\r\n", i, data);
+        xil_printf("%04u: %08x\r\n", addr, data);
     }
 
     xil_printf("END_IMEM_DUMP\r\n");
     return 0;
 }
 
-int gpgpu_dump_dmem_ascii(u32 count) {
+int gpgpu_dump_dmem_ascii(u32 offset, u32 count) {
     u32 data;
 
-    if (count > DMEM_WORDS)
-        count = DMEM_WORDS;
+    if (offset > DMEM_WORDS || count > (DMEM_WORDS - offset)) {
+        xil_printf("ERROR: DMEM dump range offset=%u count=%u exceeds DMEM_WORDS=%d\r\n",
+                   offset, count, DMEM_WORDS);
+        return -1;
+    }
 
     if (require_not_running("DMEM dump") != 0)
         return -1;
@@ -297,10 +305,12 @@ int gpgpu_dump_dmem_ascii(u32 count) {
     xil_printf("BEGIN_DMEM_DUMP\r\n");
 
     for (u32 i = 0; i < count; i++) {
-        if (gpgpu_read_dmem(i, &data) != 0)
+        u32 addr = offset + i;
+
+        if (gpgpu_read_dmem(addr, &data) != 0)
             return -1;
 
-        xil_printf("%04u: %08x\r\n", i, data);
+        xil_printf("%04u: %08x\r\n", addr, data);
     }
 
     xil_printf("END_DMEM_DUMP\r\n");

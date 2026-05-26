@@ -150,9 +150,11 @@ class GpgpuUart:
             return self.wait_prompt(timeout=timeout)
         return ""
     
-    def load_imem(self, program_words):
-        self.write_line(f"loadimem_bin {len(program_words)}")
-        self.read_until("READY_IMEM_BIN", timeout=5.0)
+    def load_imem(self, program_words, offset=0):
+        self.write_line(f"loadimem_bin {offset} {len(program_words)}")
+        output, marker = self.read_until(["READY_IMEM_BIN", "ERROR"], timeout=5.0)
+        if marker == "ERROR":
+            raise RuntimeError(f"IMEM load rejected:\n{output}")
 
         byte_data = bytearray()
         for w in program_words:
@@ -168,9 +170,11 @@ class GpgpuUart:
         output, _ = self.read_until("IMEM_LOAD_COMPLETE", timeout=10.0)
         return output
 
-    def load_dmem(self, data_words):
-        self.write_line(f"loaddmem_bin {len(data_words)}")
-        self.read_until("READY_DMEM_BIN", timeout=5.0)
+    def load_dmem(self, data_words, offset=0):
+        self.write_line(f"loaddmem_bin {offset} {len(data_words)}")
+        output, marker = self.read_until(["READY_DMEM_BIN", "ERROR"], timeout=5.0)
+        if marker == "ERROR":
+            raise RuntimeError(f"DMEM load rejected:\n{output}")
 
         byte_data = bytearray()
         for w in data_words:
@@ -202,9 +206,11 @@ class GpgpuUart:
         output += self.wait_prompt(timeout=10.0)
         return output
 
-    def dump_dmem(self, count):
-        self.write_line(f"dumpdmem_bin {count}")
-        self.read_until_bytes(b"BEGIN_DMEM_BIN\n", timeout=5.0)
+    def dump_dmem(self, count, offset=0):
+        self.write_line(f"dumpdmem_bin {offset} {count}")
+        output, marker = self.read_until_bytes([b"BEGIN_DMEM_BIN\n", b"ERROR"], timeout=5.0)
+        if marker == b"ERROR":
+            raise RuntimeError(f"DMEM dump rejected:\n{output.decode('ascii', errors='replace')}")
 
         expected_bytes = count * 4
         raw_bytes = self.read_exact(expected_bytes, timeout=20.0)
@@ -216,7 +222,7 @@ class GpgpuUart:
             chunk = raw_bytes[i*4 : (i+1)*4]
             val = struct.unpack('<I', chunk)[0]
 
-            result[i] = f"{val:08x}"
+            result[offset + i] = f"{val:08x}"
 
         self.wait_prompt(timeout=5.0)
         return result
