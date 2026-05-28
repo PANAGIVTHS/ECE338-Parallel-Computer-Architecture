@@ -3,3 +3,4 @@
 *_x86
 *.csv
 !*_program.asm
+*.gif

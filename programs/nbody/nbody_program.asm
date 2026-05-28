@@ -1,412 +1,202 @@
-addi x2,x2,-752
-sw x0,748(x2)
-jal x0,208 <_start+0x208>
-sw x0,736(x2)
-sw x0,732(x2)
-lw x15,748(x2)
-andi x15,x15,15
-addi x14,x0,14
-bltu x14,x15,154 <_start+0x154>
-slli x14,x15,0x2
-addi x15,x0,1648
-add x15,x14,x15
-lw x15,0(x15)
-jalr x0,0(x15)
-addi x15,x0,60
-sw x15,736(x2)
-sw x0,732(x2)
-jal x0,168 <_start+0x168>
-addi x15,x0,55
-sw x15,736(x2)
-addi x15,x0,23
-sw x15,732(x2)
-jal x0,168 <_start+0x168>
-addi x15,x0,42
-sw x15,736(x2)
-addi x15,x0,42
-sw x15,732(x2)
-jal x0,168 <_start+0x168>
-addi x15,x0,23
-sw x15,736(x2)
-addi x15,x0,55
-sw x15,732(x2)
-jal x0,168 <_start+0x168>
-sw x0,736(x2)
-addi x15,x0,60
-sw x15,732(x2)
-jal x0,168 <_start+0x168>
-addi x15,x0,-23
-sw x15,736(x2)
-addi x15,x0,55
-sw x15,732(x2)
-jal x0,168 <_start+0x168>
-addi x15,x0,-42
-sw x15,736(x2)
-addi x15,x0,42
-sw x15,732(x2)
-jal x0,168 <_start+0x168>
-addi x15,x0,-55
-sw x15,736(x2)
-addi x15,x0,23
-sw x15,732(x2)
-jal x0,168 <_start+0x168>
-addi x15,x0,-60
-sw x15,736(x2)
-sw x0,732(x2)
-jal x0,168 <_start+0x168>
-addi x15,x0,-55
-sw x15,736(x2)
-addi x15,x0,-23
-sw x15,732(x2)
-jal x0,168 <_start+0x168>
-addi x15,x0,-42
-sw x15,736(x2)
-addi x15,x0,-42
-sw x15,732(x2)
-jal x0,168 <_start+0x168>
-addi x15,x0,-23
-sw x15,736(x2)
-addi x15,x0,-55
-sw x15,732(x2)
-jal x0,168 <_start+0x168>
-sw x0,736(x2)
-addi x15,x0,-60
-sw x15,732(x2)
-jal x0,168 <_start+0x168>
-addi x15,x0,23
-sw x15,736(x2)
-addi x15,x0,-55
-sw x15,732(x2)
-jal x0,168 <_start+0x168>
-addi x15,x0,42
-sw x15,736(x2)
-addi x15,x0,-42
-sw x15,732(x2)
-jal x0,168 <_start+0x168>
-addi x15,x0,55
-sw x15,736(x2)
-addi x15,x0,-23
-sw x15,732(x2)
-addi x0,x0,0
-lw x15,736(x2)
-addi x15,x15,100
-slli x14,x15,0x4
-lw x15,748(x2)
-slli x15,x15,0x2
-addi x13,x2,752
-add x15,x13,x15
-sw x14,-228(x15)
-lw x15,732(x2)
-addi x15,x15,100
-slli x14,x15,0x4
-lw x15,748(x2)
-slli x15,x15,0x2
-addi x13,x2,752
-add x15,x13,x15
-sw x14,-356(x15)
-lw x15,732(x2)
-sub x15,x0,x15
-srai x14,x15,0x3
-lw x15,748(x2)
-slli x15,x15,0x2
-addi x13,x2,752
-add x15,x13,x15
-sw x14,-484(x15)
-lw x15,736(x2)
-srai x14,x15,0x3
-lw x15,748(x2)
-slli x15,x15,0x2
-addi x13,x2,752
-add x15,x13,x15
-sw x14,-612(x15)
-lw x15,748(x2)
-slli x15,x15,0x2
-addi x14,x2,752
-add x15,x14,x15
-addi x14,x0,1
-sw x14,-740(x15)
-lw x15,748(x2)
-addi x15,x15,1
-sw x15,748(x2)
-lw x14,748(x2)
-addi x15,x0,31
-bge x15,x14,c <_start+0xc>
-addi x15,x0,3
-sw x15,12(x2)
-addi x15,x31,0
-sw x15,720(x2)
-lw x15,720(x2)
-sw x15,748(x2)
-sw x0,740(x2)
-jal x0,5d8 <_start+0x5d8>
-sw x0,728(x2)
-sw x0,724(x2)
-sw x0,744(x2)
-jal x0,458 <_start+0x458>
-lw x15,744(x2)
-slli x15,x15,0x2
-addi x14,x2,752
-add x15,x14,x15
-lw x14,-228(x15)
-lw x15,748(x2)
-slli x15,x15,0x2
-addi x13,x2,752
-add x15,x13,x15
-lw x15,-228(x15)
-sub x15,x14,x15
-sw x15,712(x2)
-lw x15,744(x2)
-slli x15,x15,0x2
-addi x14,x2,752
-add x15,x14,x15
-lw x14,-356(x15)
-lw x15,748(x2)
-slli x15,x15,0x2
-addi x13,x2,752
-add x15,x13,x15
-lw x15,-356(x15)
-sub x15,x14,x15
-sw x15,708(x2)
-lw x15,712(x2)
-sw x15,660(x2)
-lw x15,660(x2)
-bge x0,x15,2bc <_start+0x2bc>
-addi x15,x0,1
-jal x0,2d0 <_start+0x2d0>
-lw x15,660(x2)
-bge x15,x0,2cc <_start+0x2cc>
-addi x15,x0,-1
-jal x0,2d0 <_start+0x2d0>
-addi x15,x0,0
-sw x15,704(x2)
-lw x15,708(x2)
-sw x15,664(x2)
-lw x15,664(x2)
-bge x0,x15,2ec <_start+0x2ec>
-addi x15,x0,1
-jal x0,300 <_start+0x300>
-lw x15,664(x2)
-bge x15,x0,2fc <_start+0x2fc>
-addi x15,x0,-1
-jal x0,300 <_start+0x300>
-addi x15,x0,0
-sw x15,700(x2)
-lw x15,712(x2)
-sw x15,676(x2)
-lw x15,676(x2)
-sw x15,672(x2)
-lw x15,672(x2)
-bge x15,x0,328 <_start+0x328>
-lw x15,672(x2)
-sub x15,x0,x15
-jal x0,32c <_start+0x32c>
-lw x15,672(x2)
-sw x15,668(x2)
-lw x14,668(x2)
-addi x15,x0,511
-blt x15,x14,344 <_start+0x344>
-addi x15,x0,0
-jal x0,374 <_start+0x374>
-lw x14,668(x2)
-addi x15,x0,1535
-blt x15,x14,358 <_start+0x358>
-addi x15,x0,1
-jal x0,374 <_start+0x374>
-lw x14,668(x2)
-lui x15,0x1
-addi x15,x15,-1537 # 9ff <_start+0x9ff>
-blt x15,x14,370 <_start+0x370>
-addi x15,x0,2
-jal x0,374 <_start+0x374>
-addi x15,x0,3
-sw x15,696(x2)
-lw x15,708(x2)
-sw x15,688(x2)
-lw x15,688(x2)
-sw x15,684(x2)
-lw x15,684(x2)
-bge x15,x0,39c <_start+0x39c>
-lw x15,684(x2)
-sub x15,x0,x15
-jal x0,3a0 <_start+0x3a0>
-lw x15,684(x2)
-sw x15,680(x2)
-lw x14,680(x2)
-addi x15,x0,511
-blt x15,x14,3b8 <_start+0x3b8>
-addi x15,x0,0
-jal x0,3e8 <_start+0x3e8>
-lw x14,680(x2)
-addi x15,x0,1535
-blt x15,x14,3cc <_start+0x3cc>
-addi x15,x0,1
-jal x0,3e8 <_start+0x3e8>
-lw x14,680(x2)
-lui x15,0x1
-addi x15,x15,-1537 # 9ff <_start+0x9ff>
-blt x15,x14,3e4 <_start+0x3e4>
-addi x15,x0,2
-jal x0,3e8 <_start+0x3e8>
-addi x15,x0,3
-sw x15,692(x2)
-lw x14,704(x2)
-lw x15,696(x2)
+addi x2,x2,-1072
+addi x15,x0,1600
+lui x11,0x41c65
+lui x12,0x3
+sw x8,1068(x2)
+sw x9,1064(x2)
+sw x18,1060(x2)
+sw x19,1056(x2)
+sw x20,1052(x2)
+sw x21,1048(x2)
+sw x22,1044(x2)
+sw x23,1040(x2)
+sw x24,1036(x2)
+sw x25,1032(x2)
+sw x15,0(x2)
+sw x15,128(x2)
+sw x0,256(x2)
+sw x0,384(x2)
+sw x0,512(x2)
+sw x0,640(x2)
+sw x0,768(x2)
+sw x0,896(x2)
+addi x13,x2,516
+addi x30,x2,644
+addi x29,x2,772
+addi x28,x2,900
+addi x6,x2,4
+addi x17,x2,132
+addi x16,x2,260
+addi x10,x2,388
+addi x9,x2,640
+addi x18,x0,824
+addi x11,x11,-403 # 41c64e6d <__global_pointer$+0x41c6324d>
+addi x12,x12,57 # 3039 <__global_pointer$+0x1419>
+addi x8,x0,4
+addi x7,x0,31
+addi x31,x0,808
+addi x5,x0,100
+mul x15,x18,x11
+sw x8,0(x28)
+add x15,x15,x12
+mul x18,x15,x11
+srli x15,x15,0x18
+andi x15,x15,127
+addi x15,x15,40
+sw x15,0(x13)
+add x18,x18,x12
+srli x14,x18,0x1a
+mul x18,x18,x11
+andi x14,x14,15
+addi x14,x14,30
 mul x14,x14,x15
-lw x15,744(x2)
-slli x15,x15,0x2
-addi x13,x2,752
-add x15,x13,x15
-lw x15,-740(x15)
-mul x15,x14,x15
-lw x14,728(x2)
-add x15,x14,x15
-sw x15,728(x2)
-lw x14,700(x2)
-lw x15,692(x2)
-mul x14,x14,x15
-lw x15,744(x2)
-slli x15,x15,0x2
-addi x13,x2,752
-add x15,x13,x15
-lw x15,-740(x15)
-mul x15,x14,x15
-lw x14,724(x2)
-add x15,x14,x15
-sw x15,724(x2)
-lw x15,744(x2)
-addi x15,x15,1
-sw x15,744(x2)
-lw x14,744(x2)
-addi x15,x0,31
-bge x15,x14,244 <_start+0x244>
-lw x15,748(x2)
-slli x15,x15,0x2
-addi x14,x2,752
-add x15,x14,x15
-lw x14,-484(x15)
-lw x15,728(x2)
-add x14,x14,x15
-lw x15,748(x2)
-slli x15,x15,0x2
-addi x13,x2,752
-add x15,x13,x15
-sw x14,-484(x15)
-lw x15,748(x2)
-slli x15,x15,0x2
-addi x14,x2,752
-add x15,x14,x15
-lw x14,-612(x15)
-lw x15,724(x2)
-add x14,x14,x15
-lw x15,748(x2)
-slli x15,x15,0x2
-addi x13,x2,752
-add x15,x13,x15
-sw x14,-612(x15)
-lw x15,748(x2)
-slli x15,x15,0x2
-addi x14,x2,752
-add x15,x14,x15
-lw x14,-484(x15)
-lw x15,748(x2)
-slli x15,x15,0x2
-addi x13,x2,752
-add x15,x13,x15
-lw x15,-484(x15)
-srai x15,x15,0x5
-sub x14,x14,x15
-lw x15,748(x2)
-slli x15,x15,0x2
-addi x13,x2,752
-add x15,x13,x15
-sw x14,-484(x15)
-lw x15,748(x2)
-slli x15,x15,0x2
-addi x14,x2,752
-add x15,x14,x15
-lw x14,-612(x15)
-lw x15,748(x2)
-slli x15,x15,0x2
-addi x13,x2,752
-add x15,x13,x15
-lw x15,-612(x15)
-srai x15,x15,0x5
-sub x14,x14,x15
-lw x15,748(x2)
-slli x15,x15,0x2
-addi x13,x2,752
-add x15,x13,x15
-sw x14,-612(x15)
-lw x15,748(x2)
-slli x15,x15,0x2
-addi x14,x2,752
-add x15,x14,x15
-lw x14,-228(x15)
-lw x15,748(x2)
-slli x15,x15,0x2
-addi x13,x2,752
-add x15,x13,x15
-lw x15,-484(x15)
-add x14,x14,x15
-lw x15,748(x2)
-slli x15,x15,0x2
-addi x13,x2,752
-add x15,x13,x15
-sw x14,-228(x15)
-lw x15,748(x2)
-slli x15,x15,0x2
-addi x14,x2,752
-add x15,x14,x15
-lw x14,-356(x15)
-lw x15,748(x2)
-slli x15,x15,0x2
-addi x13,x2,752
-add x15,x13,x15
-lw x15,-612(x15)
-add x14,x14,x15
-lw x15,748(x2)
-slli x15,x15,0x2
-addi x13,x2,752
-add x15,x13,x15
-sw x14,-356(x15)
-lw x15,740(x2)
-addi x15,x15,1
-sw x15,740(x2)
-lw x14,740(x2)
-addi x15,x0,359
-bge x15,x14,234 <_start+0x234>
+add x18,x18,x12
+srli x19,x18,0x1b
+slli x19,x19,0x6
+sw x19,0(x29)
+srai x19,x19,0x6
+slli x21,x19,0x2
+add x21,x31,x21
+srai x14,x14,0x6
+sw x14,0(x30)
+beq x19,x7,31c <_start+0x31c>
+lw x20,0(x21)
+lw x19,124(x21)
+slli x20,x20,0x6
+slli x19,x19,0x6
+srai x20,x20,0x6
+srai x19,x19,0x6
+mul x15,x15,x20
+addi x6,x6,4
+addi x17,x17,4
+addi x16,x16,4
+addi x10,x10,4
+addi x13,x13,4
+addi x30,x30,4
+addi x29,x29,4
+addi x28,x28,4
+mul x14,x14,x19
+srai x15,x15,0x6
+addi x15,x15,100
+slli x15,x15,0x4
+srai x19,x15,0x2
+sw x15,-4(x6)
+addi x19,x19,-400
+srai x19,x19,0x2
+sw x19,-4(x10)
+srai x15,x14,0x6
+addi x15,x15,100
+slli x15,x15,0x4
+srai x14,x15,0x4
+sub x14,x5,x14
+sw x15,-4(x17)
+sw x14,-4(x16)
+bne x9,x13,98 <_start+0x98>
+addi x10,x31,0
+slli x9,x10,0x2
+addi x15,x2,128
+add x16,x15,x9
+addi x15,x2,256
+add x7,x15,x9
+addi x15,x2,384
+add x5,x15,x9
+addi x15,x2,1024
+add x17,x2,x9
+addi x13,x0,360
+add x12,x15,x9
+addi x28,x0,31
+addi x8,x0,64
+addi x31,x0,808
+addi x30,x0,932
+addi x29,x0,808
+addi x6,x0,1600
+bne x10,x0,244 <_start+0x244>
+sw x6,0(x2)
+sw x6,128(x2)
+sw x0,256(x2)
+sw x0,384(x2)
+addi x13,x13,-1
+bne x13,x0,1c0 <_start+0x1c0>
+addi x15,x2,1024
+add x9,x15,x9
+lw x13,-1024(x9)
+lw x14,-896(x9)
 lui x15,0x1
-sw x15,716(x2)
-lw x15,748(x2)
-slli x15,x15,0x2
-addi x14,x2,752
-add x15,x14,x15
-lw x14,-228(x15) # f1c <_start+0xf1c>
-lw x15,748(x2)
-slli x15,x15,0x1
-slli x15,x15,0x2
-lw x13,716(x2)
-add x15,x13,x15
-sw x14,652(x2)
-lw x14,652(x2)
-srai x14,x14,0x4
-sw x14,0(x15)
-lw x15,748(x2)
-slli x15,x15,0x2
-addi x14,x2,752
-add x15,x14,x15
-lw x14,-356(x15)
-lw x15,748(x2)
-slli x15,x15,0x1
-addi x15,x15,1
-slli x15,x15,0x2
-lw x13,716(x2)
-add x15,x13,x15
-sw x14,656(x2)
-lw x14,656(x2)
-srai x14,x14,0x4
-sw x14,0(x15)
-addi x15,x0,0
-addi x10,x15,0
-addi x2,x2,752
+slli x10,x10,0x3
+add x12,x15,x10
+lw x8,1068(x2)
+srai x13,x13,0x4
+addi x10,x10,4
+add x10,x15,x10
+sw x13,0(x12)
+srai x15,x14,0x4
+sw x15,0(x10)
+lw x9,1064(x2)
+lw x18,1060(x2)
+lw x19,1056(x2)
+lw x20,1052(x2)
+lw x21,1048(x2)
+lw x22,1044(x2)
+lw x23,1040(x2)
+lw x24,1036(x2)
+lw x25,1032(x2)
+addi x10,x0,0
+addi x2,x2,1072
 jalr x0,0(x1)
+lw x19,-256(x12)
+lw x15,-128(x12)
+lw x21,-512(x12)
+lw x20,-384(x12)
+add x19,x19,x15
+andi x11,x19,2047
+srai x14,x11,0x6
+addi x23,x14,1
+andi x23,x23,31
+slli x22,x23,0x2
+slli x15,x14,0x2
+sw x11,-256(x12)
+add x25,x31,x22
+lw x18,0(x17)
+lw x11,0(x16)
+add x15,x29,x15
+add x22,x30,x22
+andi x19,x19,63
+beq x14,x28,304 <_start+0x304>
+lw x14,0(x15) # 1000 <CSWTCH.19+0xc5c>
+lw x24,124(x15)
+beq x23,x28,310 <_start+0x310>
+lw x25,0(x25)
+lw x23,0(x22)
+sub x15,x8,x19
+mul x14,x15,x14
+mul x22,x19,x25
+mul x15,x15,x24
+add x14,x14,x22
+srai x14,x14,0x6
+mul x19,x19,x23
+add x15,x15,x19
+srai x15,x15,0x6
+mul x14,x14,x21
+mul x15,x15,x20
+srai x14,x14,0x6
+addi x14,x14,100
+slli x14,x14,0x4
+sub x18,x14,x18
+sw x14,0(x17)
+sw x18,0(x7)
+srai x15,x15,0x6
+addi x15,x15,100
+slli x15,x15,0x4
+sub x11,x15,x11
+sw x15,0(x16)
+sw x11,0(x5)
+jal x0,1d4 <_start+0x1d4>
+addi x24,x0,-12
+addi x14,x0,63
+jal x0,29c <_start+0x29c>
+addi x23,x0,-12
+addi x25,x0,63
+jal x0,2a4 <_start+0x2a4>
+addi x19,x0,-12
+addi x20,x0,63
+jal x0,110 <_start+0x110>

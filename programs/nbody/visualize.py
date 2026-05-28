@@ -15,7 +15,7 @@ except ImportError as exc:
 
 INPUT_CSV = Path("simulation_data.csv")
 OUTPUT_GIF = Path("nbody_animation.gif")
-FPS = 30
+FPS = 60
 TRAIL_LENGTH = 60
 PADDING = 15
 BODY_COLORS = [
@@ -88,8 +88,16 @@ def make_animation(rows, bodies, output_path, fps, trail_length):
     trails = []
     for body_num, body in enumerate(bodies):
         color = BODY_COLORS[body_num % len(BODY_COLORS)]
-        size = 95 if body["idx"] == 0 else 45
-        scatter = ax.scatter([], [], c=color, s=size, edgecolors="black", zorder=3)
+        size = 45
+        edge_color = "black"
+        zorder = 3
+        if body["idx"] == 0:
+            # Draw the central black hole as a dark fixed center with a bright rim.
+            color = "#000000"
+            edge_color = "#FFD700"
+            size = 140
+            zorder = 4
+        scatter = ax.scatter([], [], c=color, s=size, edgecolors=edge_color, zorder=zorder)
         trail, = ax.plot([], [], c=color, alpha=0.55, linewidth=1.5, zorder=2)
         scatters.append(scatter)
         trails.append(trail)

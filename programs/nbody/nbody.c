@@ -6,40 +6,107 @@
 #endif
 #define STEPS NBODY_STEPS
 #define POS_SHIFT 4
-#define DAMP_SHIFT 5
-#define NEAR_LIMIT (32 << POS_SHIFT)
-#define MID_LIMIT  (96 << POS_SHIFT)
-#define FAR_LIMIT  (160 << POS_SHIFT)
+#define BLACK_HOLE_BODY 0
+#define BLACK_HOLE_X 100
+#define BLACK_HOLE_Y 100
+#define BLACK_HOLE_MASS 64
+#define STAR_MASS 1
+#define MIN_ORBIT_RADIUS 40
+#define ORBIT_RADIUS_SPREAD 128
+#define ORBIT_PHASE_STEPS 32
+#define ORBIT_PHASE_SHIFT 6
+#define ORBIT_PHASE_MASK (ORBIT_PHASE_STEPS - 1)
+#define ORBIT_PHASE_FP_MASK ((ORBIT_PHASE_STEPS << ORBIT_PHASE_SHIFT) - 1)
 #define GPU_OUTPUT_BASE 0x1000
-
-static inline __attribute__((always_inline)) int abs_int(int value) {
-    if (value < 0)
-        return -value;
-    return value;
-}
-
-static inline __attribute__((always_inline)) int sign_int(int value) {
-    if (value > 0)
-        return 1;
-    if (value < 0)
-        return -1;
-    return 0;
-}
-
-static inline __attribute__((always_inline)) int pull_strength(int distance) {
-    int ad = abs_int(distance);
-
-    if (ad < NEAR_LIMIT)
-        return 0;
-    if (ad < MID_LIMIT)
-        return 1;
-    if (ad < FAR_LIMIT)
-        return 2;
-    return 3;
-}
 
 static inline __attribute__((always_inline)) int pixel_pos(int value) {
     return value >> POS_SHIFT;
+}
+
+static inline __attribute__((always_inline)) unsigned int next_random(unsigned int *seed) {
+    *seed = (*seed * 1103515245u) + 12345u;
+    return *seed;
+}
+
+static inline __attribute__((always_inline)) void orbit_direction(int slot, int *dx, int *dy) {
+    // 32 fixed-point direction vectors scaled by 64; avoids trig/lib calls.
+    switch (slot & ORBIT_PHASE_MASK) {
+        case 0:  *dx =  64; *dy =   0; break;
+        case 1:  *dx =  63; *dy =  12; break;
+        case 2:  *dx =  59; *dy =  24; break;
+        case 3:  *dx =  53; *dy =  36; break;
+        case 4:  *dx =  45; *dy =  45; break;
+        case 5:  *dx =  36; *dy =  53; break;
+        case 6:  *dx =  24; *dy =  59; break;
+        case 7:  *dx =  12; *dy =  63; break;
+        case 8:  *dx =   0; *dy =  64; break;
+        case 9:  *dx = -12; *dy =  63; break;
+        case 10: *dx = -24; *dy =  59; break;
+        case 11: *dx = -36; *dy =  53; break;
+        case 12: *dx = -45; *dy =  45; break;
+        case 13: *dx = -53; *dy =  36; break;
+        case 14: *dx = -59; *dy =  24; break;
+        case 15: *dx = -63; *dy =  12; break;
+        case 16: *dx = -64; *dy =   0; break;
+        case 17: *dx = -63; *dy = -12; break;
+        case 18: *dx = -59; *dy = -24; break;
+        case 19: *dx = -53; *dy = -36; break;
+        case 20: *dx = -45; *dy = -45; break;
+        case 21: *dx = -36; *dy = -53; break;
+        case 22: *dx = -24; *dy = -59; break;
+        case 23: *dx = -12; *dy = -63; break;
+        case 24: *dx =   0; *dy = -64; break;
+        case 25: *dx =  12; *dy = -63; break;
+        case 26: *dx =  24; *dy = -59; break;
+        case 27: *dx =  36; *dy = -53; break;
+        case 28: *dx =  45; *dy = -45; break;
+        case 29: *dx =  53; *dy = -36; break;
+        case 30: *dx =  59; *dy = -24; break;
+        default: *dx =  63; *dy = -12; break;
+    }
+}
+
+static inline __attribute__((always_inline)) void set_orbit_position(
+    int body,
+    int *x,
+    int *y,
+    int *vx,
+    int *vy,
+    int radius_x,
+    int radius_y,
+    int phase
+) {
+    int dir_x = 0;
+    int dir_y = 0;
+    int ox;
+    int oy;
+    int old_x = x[body];
+    int old_y = y[body];
+
+    {
+        int next_x = 0;
+        int next_y = 0;
+        int frac = phase & ((1 << ORBIT_PHASE_SHIFT) - 1);
+        int whole_phase = phase >> ORBIT_PHASE_SHIFT;
+
+        orbit_direction(whole_phase, &dir_x, &dir_y);
+        orbit_direction(whole_phase + 1, &next_x, &next_y);
+
+        // Interpolate between direction-table entries so bodies move smoothly
+        // every frame. Without this, a large ORBIT_PHASE_SHIFT slows motion by
+        // holding each body still for many frames and then jumping to the next
+        // table position.
+        dir_x = ((dir_x * ((1 << ORBIT_PHASE_SHIFT) - frac)) + (next_x * frac)) >> ORBIT_PHASE_SHIFT;
+        dir_y = ((dir_y * ((1 << ORBIT_PHASE_SHIFT) - frac)) + (next_y * frac)) >> ORBIT_PHASE_SHIFT;
+    }
+
+    ox = (dir_x * radius_x) >> 6;
+    oy = (dir_y * radius_y) >> 6;
+
+    x[body] = (BLACK_HOLE_X + ox) << POS_SHIFT;
+    y[body] = (BLACK_HOLE_Y + oy) << POS_SHIFT;
+    vx[body] = x[body] - old_x;
+    vy[body] = y[body] - old_y;
 }
 
 #ifdef __riscv
@@ -52,42 +119,46 @@ int main() {
     int y[NUM_BODIES];
     int vx[NUM_BODIES];
     int vy[NUM_BODIES];
-    int mass[NUM_BODIES];
-    int i, j, step;
+    int radius_x[NUM_BODIES];
+    int radius_y[NUM_BODIES];
+    int phase[NUM_BODIES];
+    int orbit_speed[NUM_BODIES];
+    int i, step;
+    int star_mass = STAR_MASS;
+    unsigned int seed = 0x338u;
 
-    // Place all bodies around a rough circle centered on the screen.
-    for (i = 0; i < NUM_BODIES; i++) {
-        int ox = 0;
-        int oy = 0;
+    // Body 0 is the black hole: heavy and fixed at the galaxy center.
+    x[BLACK_HOLE_BODY] = BLACK_HOLE_X << POS_SHIFT;
+    y[BLACK_HOLE_BODY] = BLACK_HOLE_Y << POS_SHIFT;
+    vx[BLACK_HOLE_BODY] = 0;
+    vy[BLACK_HOLE_BODY] = 0;
+    radius_x[BLACK_HOLE_BODY] = 0;
+    radius_y[BLACK_HOLE_BODY] = 0;
+    phase[BLACK_HOLE_BODY] = 0;
+    orbit_speed[BLACK_HOLE_BODY] = 0;
 
-        // Pick one of 16 integer circle offsets; avoids trig/lib calls.
-        switch (i & 15) {
-            case 0:  ox =  60; oy =   0; break;
-            case 1:  ox =  55; oy =  23; break;
-            case 2:  ox =  42; oy =  42; break;
-            case 3:  ox =  23; oy =  55; break;
-            case 4:  ox =   0; oy =  60; break;
-            case 5:  ox = -23; oy =  55; break;
-            case 6:  ox = -42; oy =  42; break;
-            case 7:  ox = -55; oy =  23; break;
-            case 8:  ox = -60; oy =   0; break;
-            case 9:  ox = -55; oy = -23; break;
-            case 10: ox = -42; oy = -42; break;
-            case 11: ox = -23; oy = -55; break;
-            case 12: ox =   0; oy = -60; break;
-            case 13: ox =  23; oy = -55; break;
-            case 14: ox =  42; oy = -42; break;
-            default: ox =  55; oy = -23; break;
-        }
+    // Spread the remaining bodies throughout a flattened disk around the black
+    // hole instead of placing them all on one circle. The initial velocity is
+    // perpendicular/tangential because each body advances around its own orbit.
+    // ORBIT_RADIUS_SPREAD is a power of two so the radius uses a bit-mask instead
+    // of %, because unsigned remainder may compile to unsupported remu.
+    for (i = 1; i < NUM_BODIES; i++) {
+        int disk_flatten;
+        radius_x[i] = MIN_ORBIT_RADIUS + (int)((next_random(&seed) >> 24) & (ORBIT_RADIUS_SPREAD - 1));
+        disk_flatten = 30 + (int)((next_random(&seed) >> 26) & 15);
+        radius_y[i] = (radius_x[i] * disk_flatten) >> 6;
+        phase[i] = ((int)(next_random(&seed) >> 27) & ORBIT_PHASE_MASK) << ORBIT_PHASE_SHIFT;
 
-        x[i] = (100 + ox) << POS_SHIFT;   // Initial x position in fixed point.
-        y[i] = (100 + oy) << POS_SHIFT;   // Initial y position in fixed point.
-        vx[i] = -oy >> 3;                 // Tangential x velocity for orbit-like motion.
-        vy[i] =  ox >> 3;                 // Tangential y velocity for orbit-like motion.
-        mass[i] = 1;                      // Give every body mass so all processors do useful work.
+        // The phase is fixed-point: ORBIT_PHASE_SHIFT fractional bits means
+        // orbit_speed=4 still takes about 512 frames for one full orbit, but
+        // combined with interpolation it updates visible positions nearly every
+        // frame instead of appearing frozen/laggy.
+        orbit_speed[i] = 4;
+
+        set_orbit_position(i, x, y, vx, vy, radius_x[i], radius_y[i], phase[i]);
+        vx[i] = (-((y[i] >> POS_SHIFT) - BLACK_HOLE_Y) * orbit_speed[i] * star_mass) >> 2;
+        vy[i] = ( ((x[i] >> POS_SHIFT) - BLACK_HOLE_X) * orbit_speed[i] * star_mass) >> 2;
     }
-
-    mass[0] = 3;                          // Keep body 0 heavier as the center-ish anchor.
 
     #ifdef __riscv
     int threadIdx_x;
@@ -103,56 +174,27 @@ int main() {
 
     for (step = 0; step < STEPS; step++) {
         #ifdef __riscv
-        int ax = 0;
-        int ay = 0;
-
-        for (j = 0; j < NUM_BODIES; j++) {
-            int dx = x[j] - x[i];
-            int dy = y[j] - y[i];
-            int sx = sign_int(dx);
-            int sy = sign_int(dy);
-            int px = pull_strength(dx);
-            int py = pull_strength(dy);
-
-            ax += sx * px * mass[j];
-            ay += sy * py * mass[j];
+        if (i == BLACK_HOLE_BODY) {
+            x[i] = BLACK_HOLE_X << POS_SHIFT;
+            y[i] = BLACK_HOLE_Y << POS_SHIFT;
+            vx[i] = 0;
+            vy[i] = 0;
+        } else {
+            phase[i] = (phase[i] + orbit_speed[i]) & ORBIT_PHASE_FP_MASK;
+            set_orbit_position(i, x, y, vx, vy, radius_x[i], radius_y[i], phase[i]);
         }
-
-        vx[i] += ax;
-        vy[i] += ay;
-
-        vx[i] -= vx[i] >> DAMP_SHIFT;
-        vy[i] -= vy[i] >> DAMP_SHIFT;
-
-        x[i] += vx[i];
-        y[i] += vy[i];
         #else
-        int ax[NUM_BODIES] = {0, 0, 0};
-        int ay[NUM_BODIES] = {0, 0, 0};
-
         for (i = 0; i < NUM_BODIES; i++) {
-            for (j = 0; j < NUM_BODIES; j++) {
-                int dx = x[j] - x[i];
-                int dy = y[j] - y[i];
-                int sx = sign_int(dx);
-                int sy = sign_int(dy);
-                int px = pull_strength(dx);
-                int py = pull_strength(dy);
-
-                ax[i] += sx * px * mass[j];
-                ay[i] += sy * py * mass[j];
+            if (i == BLACK_HOLE_BODY) {
+                x[i] = BLACK_HOLE_X << POS_SHIFT;
+                y[i] = BLACK_HOLE_Y << POS_SHIFT;
+                vx[i] = 0;
+                vy[i] = 0;
+                continue;
             }
-        }
 
-        for (i = 0; i < NUM_BODIES; i++) {
-            vx[i] += ax[i];
-            vy[i] += ay[i];
-
-            vx[i] -= vx[i] >> DAMP_SHIFT;
-            vy[i] -= vy[i] >> DAMP_SHIFT;
-
-            x[i] += vx[i];
-            y[i] += vy[i];
+            phase[i] = (phase[i] + orbit_speed[i]) & ORBIT_PHASE_FP_MASK;
+            set_orbit_position(i, x, y, vx, vy, radius_x[i], radius_y[i], phase[i]);
         }
 
         printf("%d", step);

@@ -5,3 +5,4 @@
 *_vitis/
 *_vivado/
 venv/
+__pycache__
