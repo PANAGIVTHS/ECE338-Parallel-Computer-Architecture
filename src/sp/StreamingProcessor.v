@@ -154,6 +154,7 @@ module StreamingProcessor #(
     assign ex_is_jalr = (i_idex_opcode == `OP_JALR);
     assign ex_branch_condition_met =
         (i_idex_funct3 == `FUNCT3_BEQ) ? (ex_actual_alu_in_a == ex_actual_alu_in_b) :
+        (i_idex_funct3 == `FUNCT3_BNE) ? (ex_actual_alu_in_a != ex_actual_alu_in_b) :
         (i_idex_funct3 == `FUNCT3_BLT) ? ($signed(ex_actual_alu_in_a) < $signed(ex_actual_alu_in_b)) :
         (i_idex_funct3 == `FUNCT3_BGE) ? ($signed(ex_actual_alu_in_a) >= $signed(ex_actual_alu_in_b)) :
         (i_idex_funct3 == `FUNCT3_BLTU) ? (ex_actual_alu_in_a < ex_actual_alu_in_b) :
