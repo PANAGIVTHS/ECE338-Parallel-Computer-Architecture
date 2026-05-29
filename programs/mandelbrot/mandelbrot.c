@@ -7,31 +7,45 @@
 #define CORES GPGPU_NUM_CORES
 
 /*
- * Fixed-point format: Q10
+ * Fixed-point format: Q13
  *
- * 1.0 = 1024
- * 2.0 = 2048
- * 4.0 = 4096
+ * 1.0 = 8192
+ * 2.0 = 16384
+ * 4.0 = 32768
+ *
+ * Q13 gives more zoom precision than Q10. With WIDTH=64, the pixel step is:
+ *
+ *     pixel_step_q = scale_q >> 6
+ *
+ * so the zoom stops changing only when scale_q < 64, i.e. viewport scale
+ * smaller than 64 / 8192 = 0.0078125.
  */
-#define FP_SHIFT 10
+#define FP_SHIFT 13
 #define FP_ONE (1 << FP_SHIFT)
 
 #define MAX_ITER 64
 #define ESCAPE_RADIUS2_Q (4 << FP_SHIFT)
 
 /*
- * Default Mandelbrot viewport:
- * center = (-0.75, 0.0)
- * scale  = 3.0
+ * Boundary-focused Mandelbrot viewport.
+ *
+ * The old default center (-0.75, 0.0) lies inside the black Mandelbrot set, so
+ * zooming there quickly becomes black. This center is near the Seahorse Valley
+ * boundary, so zooming reveals fractal detail.
+ *
+ * Approximate real values:
+ *   center_re ~= -0.74365
+ *   center_im ~=  0.13184
+ *   scale     =   3.0
  */
-#define DEFAULT_CENTER_RE_Q (-768)   /* -0.75 * 1024 */
-#define DEFAULT_CENTER_IM_Q (0)
-#define DEFAULT_SCALE_Q     (3072)   /*  3.00 * 1024 */
+#define DEFAULT_CENTER_RE_Q (-6092)   /* -0.74365 * 8192 */
+#define DEFAULT_CENTER_IM_Q (1080)    /*  0.13184 * 8192 */
+#define DEFAULT_SCALE_Q     (24576)   /*  3.00000 * 8192 */
 
 /*
  * For x86 CSV generation only.
  */
-#define DEFAULT_FRAMES 120
+#define DEFAULT_FRAMES 160
 #define DEFAULT_ZOOM_NUM 97
 #define DEFAULT_ZOOM_DEN 100
 
@@ -76,8 +90,8 @@ static inline int mandel_pixel(
         int mag2 = zr2 + zi2;
 
         /*
+         * escaped_now = 1 if |z|^2 > 4, else 0.
          * This should compile to a compare instruction, not a branch.
-         * Check the generated RISC-V assembly to verify.
          */
         int escaped_now = (mag2 > ESCAPE_RADIUS2_Q);
 
@@ -100,12 +114,17 @@ static inline int mandel_pixel(
         int zi_next = (zrzi << 1) + cy;
 
         /*
-         * Freeze z after escape so values do not grow and overflow.
+         * Once a pixel has escaped, set z to 0 instead of freezing it.
+         *
+         * This is important with Q13: an escaped z can be much larger than 2,
+         * and repeatedly squaring it could overflow 32-bit integers. We no
+         * longer need z after escape_iter has been recorded, so zeroing it is
+         * safe and keeps the arithmetic bounded.
          */
         int update_mask = -(escaped ^ 1);
 
-        zr = select_int(zr, zr_next, update_mask);
-        zi = select_int(zi, zi_next, update_mask);
+        zr = select_int(0, zr_next, update_mask);
+        zi = select_int(0, zi_next, update_mask);
     }
 
     return escape_iter;
@@ -199,7 +218,7 @@ int main(int argc, char **argv)
      *   ./mandelbrot_x86 frames center_re_q center_im_q scale_q
      *
      * Example:
-     *   ./mandelbrot_x86 120 -768 0 3072 > data.csv
+     *   ./mandelbrot_x86 160 -6092 1080 24576 > data.csv
      */
     if (argc >= 2) {
         frames = atoi(argv[1]);
@@ -236,8 +255,13 @@ int main(int argc, char **argv)
          */
         scale_q = (scale_q * DEFAULT_ZOOM_NUM) / DEFAULT_ZOOM_DEN;
 
-        if (scale_q < 1) {
-            scale_q = 1;
+        if (scale_q < 64) {
+            /*
+             * Below 64, pixel_step_q = scale_q >> 6 becomes zero, so every
+             * pixel maps to the same complex coordinate and the image stops
+             * changing.
+             */
+            scale_q = 64;
         }
     }
 

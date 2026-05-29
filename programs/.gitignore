@@ -8,3 +8,5 @@
 *.mp4
 *.png
 *.pgm
+*.svg
+*.mem
