@@ -4,7 +4,11 @@
 int indexes_array[CORES] = {0};
 int ten_array[CORES] = {0};
 
-__attribute__((naked)) int _start() {
+#include "../gpgpu_runtime.h"
+
+__attribute__((noinline, used, patchable_function_entry(1, 0)))
+void main(void)
+{
     int threadIdx_x;
     __asm__ volatile("mv %0, x31" : "=r"(threadIdx_x));
 
@@ -14,9 +18,11 @@ __attribute__((naked)) int _start() {
     int x = 10;
     ten_array[threadIdx_x] = x;
 
-    asm volatile("jalr x0, 0(x1)");
-    __builtin_unreachable();
+    return;
 }
+
+GPGPU_START(main)
+
 #else
 #include <stdio.h>
 int indexes_array[CORES] = {0};

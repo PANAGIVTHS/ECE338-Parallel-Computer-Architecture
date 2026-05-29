@@ -18,6 +18,34 @@ def parse_imm(imm_str):
         return int(imm_str, 16)
     return int(imm_str)
 
+def parse_objdump_addr(addr_str):
+    """Parse objdump-style bare hexadecimal addresses such as '1c' or '438'."""
+    token = addr_str.strip().rstrip(',')
+    sign = -1 if token.startswith('-') else 1
+    if token[0] in '+-':
+        token = token[1:]
+    base = 16 if not token.lower().startswith('0x') else 0
+    return sign * int(token, base)
+
+def has_objdump_symbol(parts, target_index):
+    """Return true for objdump operands like: jal x1,1c <nbody_kernel>."""
+    return len(parts) > target_index + 1 and parts[target_index + 1].startswith('<')
+
+def resolve_control_offset(target, pc, labels, absolute_address=False):
+    """Return a byte offset for branch/jal targets.
+
+    Hand-written tests normally use labels or PC-relative immediates. GCC
+    objdump output uses absolute byte addresses plus a symbolic annotation, for
+    example 'beq x1,x2,438 <fn+0x41c>'. Preserve the old relative-immediate
+    behavior unless the objdump annotation tells us the numeric token is an
+    absolute PC address.
+    """
+    if target in labels:
+        return (labels[target] - pc) * 4
+    if absolute_address:
+        return parse_objdump_addr(target) - (pc * 4)
+    return parse_imm(target)
+
 def parse_mem_operand(op_str):
     match = re.match(r'(-?\d+)\s*\(\s*(x\d+)\s*\)', op_str)
     if match:
@@ -95,8 +123,9 @@ def assemble_line(inst, pc, labels):
     # Branch
     elif op in ['beq', 'bne', 'blt', 'bge', 'bltu', 'bgeu']:
         rs1, rs2, target = parse_reg(parts[1]), parse_reg(parts[2]), parts[3]
-        # Dynamically calculate the PC-relative offset using our Pass 1 labels map
-        offset = (labels[target] - pc) * 4 if target in labels else parse_imm(target)
+        # Dynamically calculate the PC-relative offset using labels or objdump
+        # absolute target addresses.
+        offset = resolve_control_offset(target, pc, labels, has_objdump_symbol(parts, 3))
         opcode = 0x63
         f3 = {'beq': 0x0, 'bne': 0x1, 'blt': 0x4, 'bge': 0x5, 'bltu': 0x6, 'bgeu': 0x7}[op]
         offset &= 0x1FFF
@@ -105,7 +134,7 @@ def assemble_line(inst, pc, labels):
     # JAL
     elif op == 'jal':
         rd, target = parse_reg(parts[1]), parts[2]
-        offset = (labels[target] - pc) * 4 if target in labels else parse_imm(target)
+        offset = resolve_control_offset(target, pc, labels, has_objdump_symbol(parts, 2))
         opcode = 0x6F
         offset &= 0x1FFFFF
         return (((offset >> 20) & 1) << 31) | (((offset >> 1) & 0x3FF) << 21) | (((offset >> 11) & 1) << 20) | (((offset >> 12) & 0xFF) << 12) | (rd << 7) | opcode

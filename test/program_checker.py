@@ -9,6 +9,29 @@ def parse_mem_operand(op_str):
         return int(match.group(1)), match.group(2)
     raise ValueError(f"Invalid memory operand: {op_str}")
 
+def parse_imm(imm_str):
+    return int(imm_str, 0)
+
+def parse_objdump_addr(addr_str):
+    """Parse objdump-style bare hexadecimal addresses such as '1c' or '438'."""
+    token = addr_str.strip().rstrip(',')
+    sign = -1 if token.startswith('-') else 1
+    if token[0] in '+-':
+        token = token[1:]
+    base = 16 if not token.lower().startswith('0x') else 0
+    return sign * int(token, base)
+
+def has_objdump_symbol(parts, target_index):
+    """Return true for objdump operands like: jal x1,1c <nbody_kernel>."""
+    return len(parts) > target_index + 1 and parts[target_index + 1].startswith('<')
+
+def resolve_control_target(target, pc, labels, absolute_address=False):
+    if target in labels:
+        return labels[target]
+    if absolute_address:
+        return parse_objdump_addr(target) // 4
+    return pc + (int(target, 0) // 4)
+
 def to_signed_32(val):
     """Helper to treat 32-bit integer as signed for slt/sra ops."""
     val = val & 0xFFFFFFFF
@@ -24,7 +47,7 @@ def analyze_multicore_assembly(source_code, num_cores=4):
         'addi', 'andi', 'ori', 'xori', 'slli', 'srli', 'srai', 'slti', 'sltiu',
         'lw', 'sw', 
         'beq', 'bne', 'blt', 'bge', 'bltu', 'bgeu', 
-        'jalr'
+        'jal', 'jalr', 'lui'
     }
 
     # 1. Clean code, validate support, and extract labels
@@ -102,7 +125,7 @@ def analyze_multicore_assembly(source_code, num_cores=4):
             pc += 1
 
         elif op in ['addi', 'andi', 'ori', 'xori', 'slli', 'srli', 'srai', 'slti', 'sltiu']:
-            rd, rs1, imm = parts[1], parts[2], int(parts[3])
+            rd, rs1, imm = parts[1], parts[2], parse_imm(parts[3])
             for c in range(num_cores):
                 v1 = get_reg(cores[c], rs1)
                 if op == 'addi': set_reg(cores[c], rd, v1 + imm)
@@ -114,6 +137,12 @@ def analyze_multicore_assembly(source_code, num_cores=4):
                 elif op == 'srai': set_reg(cores[c], rd, to_signed_32(v1) >> (imm & 0x1F))
                 elif op == 'slti': set_reg(cores[c], rd, 1 if to_signed_32(v1) < imm else 0)
                 elif op == 'sltiu': set_reg(cores[c], rd, 1 if v1 < (imm & 0xFFFFFFFF) else 0)
+            pc += 1
+
+        elif op == 'lui':
+            rd, imm = parts[1], parse_imm(parts[2])
+            for c in range(num_cores):
+                set_reg(cores[c], rd, imm << 12)
             pc += 1
 
         elif op == 'lw':
@@ -162,9 +191,16 @@ def analyze_multicore_assembly(source_code, num_cores=4):
                 
             # If all agree, take the branch or fall through
             if decisions[0]: 
-                pc = labels[target] if target in labels else pc + (int(target) // 4)
+                pc = resolve_control_target(target, pc, labels, has_objdump_symbol(parts, 3))
             else:
                 pc += 1
+
+        elif op == 'jal':
+            rd, target = parts[1], parts[2]
+            for c in range(num_cores):
+                if rd != 'x0':
+                    set_reg(cores[c], rd, (pc + 1) * 4)
+            pc = resolve_control_target(target, pc, labels, has_objdump_symbol(parts, 2))
 
         elif op == 'jalr':
             pc += 1

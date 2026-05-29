@@ -1,10 +1,17 @@
 # --- RISC-V Cross-Compiler Variables ---
-CC = riscv64-unknown-elf-gcc
-OBJDUMP = riscv64-unknown-elf-objdump
+CROSS_PREFIX ?= $(shell if command -v riscv64-unknown-elf-gcc >/dev/null 2>&1; then printf riscv64-unknown-elf; elif command -v riscv-none-elf-gcc >/dev/null 2>&1; then printf riscv-none-elf; else printf riscv64-unknown-elf; fi)
+CC = $(CROSS_PREFIX)-gcc
+OBJDUMP = $(CROSS_PREFIX)-objdump
+LINKER_SCRIPT = gpgpu.ld
 CFLAGS = -O2 -march=rv32im -mabi=ilp32 \
-          -ffreestanding -nostdlib \
-          -fomit-frame-pointer \
-          -Ttext=0x00000000
+          -ffreestanding -fno-builtin \
+          -fomit-frame-pointer -ffixed-x31 \
+          -ffunction-sections -fdata-sections \
+          -msmall-data-limit=0 -mno-relax
+LDFLAGS = -nostdlib -nostartfiles \
+          -Wl,-T,$(LINKER_SCRIPT) \
+          -Wl,-Map,$(MAP) \
+          -Wl,--build-id=none
 
 # --- Native (x86 Linux) Compiler Variables ---
 NATIVE_CC = gcc
@@ -21,6 +28,7 @@ NATIVE_SRC = $(SRC)
 # RISC-V Outputs
 # ==========================================
 ELF      = $(DIR)/$(PROG).elf
+MAP      = $(DIR)/$(PROG).map
 
 # Full dump:
 # address + hex + instruction
@@ -95,16 +103,8 @@ $(MEM): $(DUMP_ASM)
 	@awk '/^[[:space:]]*[0-9a-fA-F]+:/ { \
 		hex_code = $$2; \
 		if (length(hex_code) == 8) { \
-# 			skip = 0; \
 			n = split($$0, tokens, /[ \t,()]+/); \
-# 			for (i = 1; i <= n; i++) { \
-# 				if (tokens[i] == "x2" || tokens[i] == "sp") { \
-# 					skip = 1; \
-# 					break; \
-# 				} \
-# 			} \
-# 			if (!skip) \
-				print hex_code; \
+			print hex_code; \
 		} \
 	}' $< > $@
 
@@ -113,9 +113,9 @@ $(MEM): $(DUMP_ASM)
 # ==========================================
 # Compile C -> ELF
 # ==========================================
-$(ELF): $(SRC)
+$(ELF): $(SRC) $(LINKER_SCRIPT)
 	@echo "Compiling $(PROG) for RISC-V..."
-	@$(CC) $(CFLAGS) -o $@ $<
+	@$(CC) $(CFLAGS) -o $@ $< $(LDFLAGS)
 
 # ==========================================
 # Clean
@@ -125,6 +125,7 @@ clean:
 
 	@rm -f \
 		$(ELF) \
+		$(MAP) \
 		$(DUMP_ASM) \
 		$(PROG_ASM) \
 		$(MEM) \

@@ -1,3 +1,4 @@
+import os
 import re
 import argparse
 import sys
@@ -9,6 +10,38 @@ REG_DEPTH = 32
 NUM_CORES = 32
 STACK_P_INIT = 0
 
+def load_dmem_seed(seed_path):
+    """Load an optional $readmemh-style DMEM seed file.
+
+    Supports plain one-word-per-line files and sparse address directives such as
+    '@10' followed by words.  This mirrors the subset of $readmemh syntax used by
+    the Verilog testbench for per-test initial data memory.
+    """
+    memory = [0] * MEM_DEPTH
+    if not seed_path.exists():
+        return memory
+
+    addr = 0
+    with open(seed_path, 'r', encoding='utf-8') as f:
+        for line_no, line in enumerate(f, start=1):
+            code = line.split('#')[0].split('//')[0].strip()
+            if not code:
+                continue
+
+            for token in code.split():
+                if token.startswith('@'):
+                    addr = int(token[1:], 16)
+                    if addr < 0 or addr >= MEM_DEPTH:
+                        raise ValueError(f"{seed_path}:{line_no}: seed address @{addr:x} outside DMEM depth {MEM_DEPTH}")
+                    continue
+
+                if addr >= MEM_DEPTH:
+                    raise ValueError(f"{seed_path}:{line_no}: too many seed words for DMEM depth {MEM_DEPTH}")
+                memory[addr] = int(token, 16) & 0xFFFFFFFF
+                addr += 1
+
+    return memory
+
 def parse_register(reg_str):
     """Extracts the integer index from a register string like 'x1', 'x31'"""
     return int(reg_str.replace('x', '').replace(',', ''), 0)
@@ -19,7 +52,36 @@ def format_hex(val):
     val_32bit = val & 0xFFFFFFFF
     return f"{val_32bit:08x}"
 
-def generate_expected_memories(asm_text, num_cores=2):
+def parse_objdump_addr(addr_str):
+    """Parse objdump-style bare hexadecimal addresses such as '1c' or '438'."""
+    token = addr_str.strip().rstrip(',')
+    sign = -1 if token.startswith('-') else 1
+    if token[0] in '+-':
+        token = token[1:]
+    base = 16 if not token.lower().startswith('0x') else 0
+    return sign * int(token, base)
+
+def has_objdump_symbol(parts, target_index):
+    """Return true for objdump operands like: jal x1,1c <nbody_kernel>."""
+    return len(parts) > target_index + 1 and parts[target_index + 1].startswith('<')
+
+def resolve_control_target(target, pc, labels, absolute_address=False):
+    """Return an instruction-index target for branch/jal operands.
+
+    Existing handwritten tests use labels or PC-relative byte immediates. The
+    generated nbody assembly copied from objdump uses absolute byte addresses
+    with symbolic annotations, e.g. '438 <nbody_kernel+0x41c>'. Treat those
+    annotated numeric operands as absolute PCs while preserving old relative
+    immediate behavior for unannotated numeric operands.
+    """
+    if target in labels:
+        return labels[target]
+    if absolute_address:
+        return parse_objdump_addr(target) // 4
+    imm = int(target, 0)
+    return pc + (imm // 4)
+
+def generate_expected_memories(asm_text, num_cores=2, initial_memory=None):
     # Global shared data memory
     memory = [0] * MEM_DEPTH
     
@@ -172,7 +234,7 @@ def generate_expected_memories(asm_text, num_cores=2):
                 elif op == 'sw':
                     memory[word_idx] = registers[reg_a]
                         
-            elif op in ['beq', 'blt', 'bge', 'bltu', 'bgeu']:
+            elif op in ['beq', 'bne', 'blt', 'bge', 'bltu', 'bgeu']:
                 rs1 = parse_register(parts[1])
                 rs2 = parse_register(parts[2])
                 target = parts[3]
@@ -182,17 +244,14 @@ def generate_expected_memories(asm_text, num_cores=2):
                 sv2 = v2 if v2 < 0x80000000 else v2 - 0x100000000
                 take_branch = (
                     (op == 'beq' and v1 == v2) or
+                    (op == 'bne' and v1 != v2) or
                     (op == 'blt' and sv1 < sv2) or
                     (op == 'bge' and sv1 >= sv2) or
                     (op == 'bltu' and v1 < v2) or
                     (op == 'bgeu' and v1 >= v2)
                 )
                 if take_branch:
-                    if target in labels:
-                        target_pc = labels[target]
-                    else:
-                        imm = int(target, 0)
-                        target_pc = pc + (imm // 4)
+                    target_pc = resolve_control_target(target, pc, labels, has_objdump_symbol(parts, 3))
                         
                     # Trap logic: Halt if jumping to the exact same instruction
                     if target_pc == pc:
@@ -208,8 +267,7 @@ def generate_expected_memories(asm_text, num_cores=2):
                 if target in labels:
                     next_pc = labels[target]
                 else:
-                    imm = int(target, 0)
-                    next_pc = pc + (imm // 4)
+                    next_pc = resolve_control_target(target, pc, labels, has_objdump_symbol(parts, 2))
 
             elif op == 'lui':
                 rd = parse_register(parts[1])
@@ -250,6 +308,15 @@ def generate_expected_memories(asm_text, num_cores=2):
             regfiles[core_id][0] = 0
             regfiles[core_id][31] = core_id
 
+    if not all(state['halted'] for state in core_states):
+        active = [(core_id, state['pc']) for core_id, state in enumerate(core_states) if not state['halted']]
+        active_pcs = sorted({pc for _, pc in active})
+        raise RuntimeError(
+            f"Expected generator reached max_cycles={max_cycles} before all cores halted; "
+            f"active core/PC pairs={active}; active PCs={active_pcs}. "
+            f"Refusing to write partial expected memories."
+        )
+
     return regfiles, memory
 
 def main():
@@ -283,7 +350,12 @@ def main():
             print(f"  [Error] Failed to read {asm_path}: {e}")
             continue
 
-        regfiles, memory = generate_expected_memories(asm_code, num_cores)
+        seed_path = test_dir / "dmem_seed.mem"
+        initial_memory = load_dmem_seed(seed_path)
+        if seed_path.exists():
+            print(f"  -> Loaded initial DMEM seed from {seed_path.name}")
+
+        regfiles, memory = generate_expected_memories(asm_code, num_cores, initial_memory=initial_memory)
             
         for core_id in range(num_cores):
             reg_filename = test_dir / f"regfile_c{core_id}.mem"

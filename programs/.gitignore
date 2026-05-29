@@ -4,3 +4,4 @@
 *.csv
 !*_program.asm
 *.gif
+*.map

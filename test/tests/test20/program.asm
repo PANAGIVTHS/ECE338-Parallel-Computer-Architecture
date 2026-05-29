@@ -1,3 +1,5 @@
+# Compiled from programs/simple.c
+
 addi x5,x31,0
 slli x6,x5,0x6
 lui x2,0x2
