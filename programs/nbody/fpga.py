@@ -15,15 +15,13 @@ from pathlib import Path
 NUM_BODIES = 32
 NBODY_ARGS_MAGIC = 0x4E424459  # "NBDY"
 
-# Host-visible DMEM word offsets.  These must match programs/nbody/nbody.c.
-NBODY_ARG_MAGIC_WORD = 16
-NBODY_ARG_STEPS_WORD = 17
-NBODY_ARG_RESET_WORD = 18
-NBODY_ARG_START_STEP_WORD = 19
-NBODY_ARG_WORDS = 4
+GPU_ARGS_BASE_WORDS = 0x00000040 // 4      # 16
+GPU_OUTPUT_BASE_WORDS = 0x00001000 // 4    # 1024
+GPU_OUTPUT_WORDS = NUM_BODIES * 2          # 64
 
-GPU_OUTPUT_BASE_BYTES = 0x1000
-GPU_OUTPUT_BASE_WORDS = GPU_OUTPUT_BASE_BYTES // 4
+GPU_DATA_BASE_WORDS = 0x00001100 // 4      # 1088
+GPU_DATA_LIMIT_WORDS = 0x00001800 // 4     # 1536
+GPU_DATA_WORDS = GPU_DATA_LIMIT_WORDS - GPU_DATA_BASE_WORDS
 
 
 def u32_hex(value: int) -> str:
@@ -56,29 +54,35 @@ class ProgramAdapter:
             csv.writer(f).writerow(header)
         self.history.clear()
 
+    def initial_dmem(self):
+        """ Clear output and data addresses. """
+        return [
+            (GPU_OUTPUT_BASE_WORDS, [u32_hex(0)] * GPU_OUTPUT_WORDS),
+            (GPU_DATA_BASE_WORDS, [u32_hex(0)] * GPU_DATA_WORDS),
+        ]
+
     def output_offset_words(self) -> int:
         return GPU_OUTPUT_BASE_WORDS
 
     def output_word_count(self) -> int:
-        return NUM_BODIES * 2
+        return GPU_OUTPUT_WORDS
 
     def before_run(self, *, run_index: int, start_step: int, steps: int):
-        # Args block consumed by nbody.c.  Reset is asserted only for the first
-        # launch so later launches continue from the DMEM-resident state that the
-        # previous kernel run updated in place.
         args = [
-            u32_hex(NBODY_ARGS_MAGIC),
-            u32_hex(steps),
-            u32_hex(1 if run_index == 0 else 0),
-            u32_hex(start_step),
+            u32_hex(NBODY_ARGS_MAGIC),          # GPGPU_ARGS[0]
+            u32_hex(steps),                     # GPGPU_ARGS[1]
+            u32_hex(1 if run_index == 0 else 0),# GPGPU_ARGS[2]
+            u32_hex(start_step),                # GPGPU_ARGS[3]
         ]
-        return (NBODY_ARG_MAGIC_WORD, args)
+        return (GPU_ARGS_BASE_WORDS, args) 
 
     def process_output(self, *, run_index: int, start_step: int, steps: int, words: dict[int, str]) -> None:
         row = [start_step + steps]
         for body in range(NUM_BODIES):
-            x_addr = GPU_OUTPUT_BASE_WORDS + (body * 2)
+            x_addr = GPU_OUTPUT_BASE_WORDS + body * 2
             y_addr = x_addr + 1
+            x = int32_from_hex(words[x_addr])
+            y = int32_from_hex(words[y_addr])
             if x_addr not in words or y_addr not in words:
                 raise RuntimeError(f"Missing nbody output words for body {body}: DMEM[{x_addr}], DMEM[{y_addr}]")
             row.append(int32_from_hex(words[x_addr]))

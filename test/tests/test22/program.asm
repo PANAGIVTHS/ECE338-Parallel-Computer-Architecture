@@ -134,6 +134,7 @@ sw x10,0(x8)
 sw x11,0(x9)
 addi x30,x30,1
 bne x18,x30,134 <__gpu_args_end+0xe4>
+nop
 add x28,x28,x20
 lw x13,0(x28)
 lui x15,0x1
