@@ -23,8 +23,8 @@ int gpgpu_read_regfile(u32 addr, u32 *data);
 int gpgpu_start_and_wait(void);
 int gpgpu_finish_readback(void);
 
-int gpgpu_dump_imem_ascii(u32 count);
-int gpgpu_dump_dmem_ascii(u32 count);
+int gpgpu_dump_imem_ascii(u32 offset, u32 count);
+int gpgpu_dump_dmem_ascii(u32 offset, u32 count);
 int gpgpu_dump_regfile_ascii(void);
 
 #endif

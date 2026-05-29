@@ -1,35 +1,13 @@
 #!/usr/bin/env python3
 
 import argparse
-import re
 import sys
-import time
-import struct
 from pathlib import Path
 
-import serial
+BAREMETAL_DIR = Path(__file__).resolve().parents[1] / "host" / "baremetal"
+sys.path.insert(0, str(BAREMETAL_DIR))
 
-RET_INSTR = "00008067"
-DEPTH = 2048
-
-def read_mem_file(path: Path):
-    words = []
-    with path.open("r") as f:
-        for line in f:
-            line = line.split("#")[0].strip()
-            if not line:
-                continue
-            words.append(line.lower().zfill(8)[-8:])
-    return words
-
-
-def trim_program_at_ret(words):
-    trimmed = []
-    for w in words:
-        trimmed.append(w)
-        if w.lower() == RET_INSTR:
-            break
-    return trimmed
+from gpgpu_uart import DEPTH, GpgpuUartMonitor as GpgpuUart, read_mem_file, trim_program_at_ret
 
 
 def discover_tests(tests_root: Path):
@@ -53,163 +31,13 @@ def discover_tests(tests_root: Path):
     return tests
 
 
-class GpgpuUart:
-    def __init__(self, port, baud, timeout=2.0, verbose=False):
-        self.ser = serial.Serial(port, baudrate=baud, timeout=timeout)
-        self.verbose = verbose
-        time.sleep(0.2)
-        self.flush()
-
-    def flush(self):
-        self.ser.reset_input_buffer()
-        self.ser.reset_output_buffer()
-
-    def close(self):
-        self.ser.close()
-
-    def write_line(self, line: str):
-        if self.verbose:
-            print(f">>> {line}")
-        self.ser.write((line + "\n").encode("ascii"))
-        self.ser.flush()
-
-    def read_available(self, delay=0.05):
-        time.sleep(delay)
-        data = self.ser.read(self.ser.in_waiting or 1)
-        text = data.decode("ascii", errors="replace")
-        if self.verbose and text:
-            print(text, end="")
-        return text
-
-    def read_until(self, patterns, timeout=20.0):
-        if isinstance(patterns, str):
-            patterns = [patterns]
-
-        deadline = time.time() + timeout
-        buf = ""
-
-        while time.time() < deadline:
-            n = self.ser.in_waiting
-            if n:
-                chunk = self.ser.read(n).decode("ascii", errors="replace")
-            else:
-                chunk = self.ser.read(1).decode("ascii", errors="replace")
-
-            if chunk:
-                buf += chunk
-                if self.verbose:
-                    print(chunk, end="")
-
-                for p in patterns:
-                    if p in buf:
-                        return buf, p
-
-        raise TimeoutError(f"Timed out waiting for one of {patterns}. Last output:\n{buf}")
-
-    def wait_prompt(self, timeout=20.0):
-        return self.read_until("gpgpu>", timeout=timeout)[0]
-
-    def command(self, cmd, wait_for_prompt=True, timeout=20.0):
-        self.write_line(cmd)
-        if wait_for_prompt:
-            return self.wait_prompt(timeout=timeout)
-        return ""
-    
-    def load_imem(self, program_words):
-        self.write_line(f"loadimem_bin {len(program_words)}")
-        self.read_until("READY_IMEM_BIN", timeout=5.0)
-
-        byte_data = bytearray()
-        for w in program_words:
-            val = int(w, 16)
-            byte_data.extend(struct.pack('<I', val))
-
-        if self.verbose:
-            print(f"[INFO] Bursting {len(byte_data)} raw bytes to IMEM...")
-
-        self.ser.write(byte_data)
-        self.ser.flush()
-
-        output, _ = self.read_until("IMEM_LOAD_COMPLETE", timeout=10.0)
-        return output
-
-    def load_dmem(self, data_words):
-        self.write_line(f"loaddmem_bin {len(data_words)}")
-        self.read_until("READY_DMEM_BIN", timeout=5.0)
-
-        byte_data = bytearray()
-        for w in data_words:
-            val = int(w, 16)
-            byte_data.extend(struct.pack('<I', val))
-
-        if self.verbose:
-            print(f"[INFO] Bursting {len(byte_data)} raw bytes to DMEM...")
-
-        self.ser.write(byte_data)
-        self.ser.flush()
-
-        output, _ = self.read_until("DMEM_LOAD_COMPLETE", timeout=10.0)
-        return output
-
-    def run(self):
-        self.write_line("run")
-        output, _ = self.read_until(["Core entered dumping state", "ERROR"], timeout=30.0)
-        if "ERROR" in output:
-            raise RuntimeError(f"Run failed:\n{output}")
-        output += self.wait_prompt(timeout=10.0)
-        return output
-
-    def done(self):
-        self.write_line("done")
-        output, _ = self.read_until(["Returned to loading state", "ERROR"], timeout=20.0)
-        if "ERROR" in output:
-            raise RuntimeError(f"READ_DONE failed:\n{output}")
-        output += self.wait_prompt(timeout=10.0)
-        return output
-
-    def dump_dmem(self, count):
-        self.write_line(f"dumpdmem_bin {count}")
-        self.read_until("BEGIN_DMEM_BIN\n", timeout=5.0)
-
-        expected_bytes = count * 4
-        raw_bytes = self.ser.read(expected_bytes)
-        if len(raw_bytes) != expected_bytes:
-            raise RuntimeError(f"Binary dump failed! Expected {expected_bytes} bytes, got {len(raw_bytes)}")
-
-        result = {}
-        for i in range(count):
-            chunk = raw_bytes[i*4 : (i+1)*4]
-            val = struct.unpack('<I', chunk)[0]
-
-            result[i] = f"{val:08x}"
-
-        self.wait_prompt(timeout=5.0)
-        return result
-
-
-def parse_dmem_dump(text):
-    result = {}
-
-    # Matches: 0000: 00000000
-    pat = re.compile(r"^\s*(\d+):\s*([0-9a-fA-F]{8})\s*$")
-
-    for line in text.splitlines():
-        m = pat.match(line)
-        if m:
-            addr = int(m.group(1), 10)
-            value = m.group(2).lower()
-            result[addr] = value
-
-    return result
-
-
-def compare_dmem(test_idx, got, expected_words, check_count=None):
+def compare_dmem(test_idx, got, expected_words, check_count=None, offset=0):
     if check_count is None:
-        check_count = len(expected_words)
+        check_count = len(expected_words) - offset
 
     errors = 0
 
-    for addr in range(check_count):
+    for addr in range(offset, offset + check_count):
         exp = expected_words[addr].lower().zfill(8)[-8:]
         act = got.get(addr)
 
@@ -231,8 +59,9 @@ def main():
     parser.add_argument("--baud", type=int, default=115200)
     parser.add_argument("--tests-root", default="tests")
     parser.add_argument("--dmem-words", type=int, default=2048)
+    parser.add_argument("--dmem-offset", type=int, default=0, help="DMEM word offset to dump/compare (default: 0)")
     parser.add_argument("--check-words", type=int, default=None,
-                        help="Only compare first N DMEM words. Default: compare all expected words.")
+                        help="Only compare N dumped DMEM words. Default: compare the full dumped range.")
     parser.add_argument("--start-at", type=int, default=1, help="Test index to start running from (default: 1)")
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()
@@ -257,31 +86,30 @@ def main():
                 continue
             print(f"\n[INFO] Running test{test_idx} through UART...")
 
-            program = read_mem_file(program_path)
-            program = trim_program_at_ret(program)
+            program = trim_program_at_ret(read_mem_file(program_path))
             data_words = ["00000000"] * DEPTH
 
             expected = read_mem_file(expected_path)
             if len(expected) < args.dmem_words:
                 expected = expected + ["00000000"] * (args.dmem_words - len(expected))
 
-            print(f"[INFO] Loading {len(program)} IMEM words...")
-            uart.load_imem(program)
+            print(f"[INFO] Loading {len(program)} IMEM words at offset 0...")
+            uart.load_imem_bin(program, offset=0)
 
-            print(f"[INFO] Loading {len(data_words)} DMEM words...")
-            uart.load_dmem(data_words)
+            print(f"[INFO] Loading {len(data_words)} DMEM words at offset 0...")
+            uart.load_dmem_bin(data_words, offset=0)
 
             print("[INFO] Starting core...")
             uart.run()
 
-            print(f"[INFO] Dumping {args.dmem_words} DMEM words...")
-            dmem = uart.dump_dmem(args.dmem_words)
+            print(f"[INFO] Dumping {args.dmem_words} DMEM words at offset {args.dmem_offset}...")
+            dmem = uart.dump_dmem_bin(args.dmem_words, offset=args.dmem_offset)
 
             check_count = args.check_words
             if check_count is None:
                 check_count = args.dmem_words
 
-            errors = compare_dmem(test_idx, dmem, expected, check_count=check_count)
+            errors = compare_dmem(test_idx, dmem, expected, check_count=check_count, offset=args.dmem_offset)
 
             print("[INFO] Sending done...")
             uart.done()
