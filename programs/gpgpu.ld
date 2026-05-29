@@ -1,5 +1,5 @@
 /*
- * Linker script for the teaching GPGPU RISC-V kernels.
+ * Linker script for the GPGPU.
  *
  * The RTL has separate instruction and data memories, but the RISC-V core still
  * uses ordinary byte addresses for loads/stores.  Host-side DMEM commands use
