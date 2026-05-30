@@ -77,8 +77,16 @@ module Decoder (
                 o_instr_type = `INSTR_TYPE_S;
             end
             `OP_BEQ: begin 
-                o_aluop = `ALU_SUB;
                 o_instr_type = `INSTR_TYPE_S;
+                case (funct3)
+                    `FUNCT3_BEQ: o_aluop = `ALU_SUB;
+                    `FUNCT3_BNE: o_aluop = `ALU_SUB;
+                    `FUNCT3_BLT: o_aluop = `ALU_SLT;
+                    `FUNCT3_BGE: o_aluop = `ALU_SLT;
+                    `FUNCT3_BLTU: o_aluop = `ALU_SLTU;
+                    `FUNCT3_BGEU: o_aluop = `ALU_SLTU;
+                    default: o_aluop = `ALU_SUB;
+                endcase
             end
             `OP_JAL: begin
                 o_aluop = `ALU_ADD;

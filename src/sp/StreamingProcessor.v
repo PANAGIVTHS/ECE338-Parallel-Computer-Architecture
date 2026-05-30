@@ -54,12 +54,13 @@ module StreamingProcessor #(
     wire [31:0] ex_alu_out;
     wire ex_zero, ex_is_branch, ex_is_jal, ex_is_jalr;
     wire ex_branch_condition_met;
-    wire [31:0] ex_beq_offset, ex_jal_offset, ex_jal_link_addr, ex_jalr_target_addr;
+    wire [31:0] ex_beq_offset, ex_jal_offset, ex_jalr_target_addr;
+    wire [31:0] ex_branch_operand_a, ex_branch_operand_b, ex_branch_target_addr;
     wire [31:0] ex_imm_i_type, ex_imm_s_type, ex_imm_u_type;
     wire [31:0] ex_reg_a, ex_reg_b;
     wire [31:0] forwarded_rs2;
     wire [31:0] ex_actual_alu_in_a;
-    wire [31:0] ex_actual_alu_in_b;
+    reg [31:0] ex_actual_alu_in_b;
     wire [1:0] forward_alu_a, forward_alu_b;
     wire ex_is_mul, mul_not_ready;
     reg [4:0] memwb_rd;
@@ -86,18 +87,25 @@ module StreamingProcessor #(
                             ex_reg_b;
 
     //? --- Forwarding Multiplexer A ---
-    assign ex_actual_alu_in_a = (forward_alu_a == `EXALU_MEMALU_DEP) ? exmem_alu_out :
+    assign ex_actual_alu_in_a = (i_idex_opcode == `OP_JAL) ? i_idex_program_counter :
+                                (forward_alu_a == `EXALU_MEMALU_DEP) ? exmem_alu_out :
                                 (forward_alu_a == `MEMWB_EXALU_DEP)  ? wb_wdata :
                                  ex_reg_a;
 
     //? --- Final ALU Input B ---
-    assign ex_actual_alu_in_b = (i_idex_opcode == `OP_LW || i_idex_instr_type == `INSTR_TYPE_I)
-                                 ? ex_imm_i_type
-                                 : (i_idex_opcode == `OP_SW)
-                                    ? ex_imm_s_type
-                                    : (i_idex_instr_type == `INSTR_TYPE_U)
-                                        ? ex_imm_u_type
-                                        : forwarded_rs2;
+    always @(*) begin
+        if (i_idex_opcode == `OP_JAL) begin
+            ex_actual_alu_in_b = 32'd4;
+        end else if (i_idex_opcode == `OP_LW || i_idex_instr_type == `INSTR_TYPE_I) begin
+            ex_actual_alu_in_b = ex_imm_i_type;
+        end else if (i_idex_opcode == `OP_SW) begin
+            ex_actual_alu_in_b = ex_imm_s_type;
+        end else if (i_idex_instr_type == `INSTR_TYPE_U) begin
+            ex_actual_alu_in_b = ex_imm_u_type;
+        end else begin
+            ex_actual_alu_in_b = forwarded_rs2;
+        end
+    end
 
     (* dont_touch = `DEBUG *)
     ALU alu (
@@ -148,28 +156,31 @@ module StreamingProcessor #(
     assign o_mul2_rd = mul2_rd;
     assign o_mul3_valid = mul3_valid;
     assign o_mul3_rd = mul3_rd;
+    assign mul_not_ready = (ex_is_mul || mul1_valid || mul2_valid) && !mul3_valid;
 
     assign ex_is_branch = (i_idex_opcode == `OP_BEQ);
     assign ex_is_jal = (i_idex_opcode == `OP_JAL);
     assign ex_is_jalr = (i_idex_opcode == `OP_JALR);
     assign ex_branch_condition_met =
-        (i_idex_funct3 == `FUNCT3_BEQ) ? (ex_actual_alu_in_a == ex_actual_alu_in_b) :
-        (i_idex_funct3 == `FUNCT3_BNE) ? (ex_actual_alu_in_a != ex_actual_alu_in_b) :
-        (i_idex_funct3 == `FUNCT3_BLT) ? ($signed(ex_actual_alu_in_a) < $signed(ex_actual_alu_in_b)) :
-        (i_idex_funct3 == `FUNCT3_BGE) ? ($signed(ex_actual_alu_in_a) >= $signed(ex_actual_alu_in_b)) :
-        (i_idex_funct3 == `FUNCT3_BLTU) ? (ex_actual_alu_in_a < ex_actual_alu_in_b) :
-        (i_idex_funct3 == `FUNCT3_BGEU) ? (ex_actual_alu_in_a >= ex_actual_alu_in_b) :
+        (i_idex_funct3 == `FUNCT3_BEQ) ? (ex_zero) :
+        (i_idex_funct3 == `FUNCT3_BNE) ? (!ex_zero) :
+        (i_idex_funct3 == `FUNCT3_BLT) ? (ex_alu_out) :
+        (i_idex_funct3 == `FUNCT3_BGE) ? (!ex_alu_out) :
+        (i_idex_funct3 == `FUNCT3_BLTU) ? (ex_alu_out) :
+        (i_idex_funct3 == `FUNCT3_BGEU) ? (!ex_alu_out) :
         1'b0;
     assign o_ex_branch_taken = (ex_is_branch && ex_branch_condition_met) || ex_is_jal || ex_is_jalr;
 
     assign ex_beq_offset = {{20{i_idex_imm_31_25[6]}}, i_idex_rd[0], i_idex_imm_31_25[5:0], i_idex_rd[4:1], 1'b0};
     assign ex_jal_offset = {{12{i_idex_imm_31_12[19]}}, i_idex_imm_31_12[7:0], i_idex_imm_31_12[8], i_idex_imm_31_12[18:9], 1'b0};
-    assign ex_jal_link_addr = i_idex_program_counter + 32'd4;
-    assign ex_jalr_target_addr = (ex_actual_alu_in_a + ex_imm_i_type) & 32'hFFFF_FFFE;
+    assign ex_jalr_target_addr = ex_alu_out & 32'hFFFF_FFFE;
+
+    assign ex_branch_operand_a = ex_is_jalr ? i_idex_program_counter : i_idex_program_counter[$clog2(`IMEM_ENTRIES)+1:2];
+    assign ex_branch_operand_b = ex_is_jalr ? 32'd4 : (ex_is_jal ? ex_jal_offset[31:2] : ex_beq_offset[31:2]);
+    assign ex_branch_target_addr = ex_branch_operand_a + ex_branch_operand_b;
     assign o_ex_beq_target_idx = ex_is_jalr
         ? ex_jalr_target_addr[$clog2(`IMEM_ENTRIES)+1:2]
-        : i_idex_program_counter[$clog2(`IMEM_ENTRIES)+1:2] + (ex_is_jal ? ex_jal_offset[31:2] : ex_beq_offset[31:2]);
-    assign mul_not_ready = (ex_is_mul || mul1_valid || mul2_valid) && !mul3_valid;
+        : ex_branch_target_addr;
 
     //* =========================================================================
     //* PIPELINE REGISTER 3: EXECUTE -> MEMORY
@@ -203,7 +214,7 @@ module StreamingProcessor #(
             exmem_core_complete <= 1'b0;
             exmem_program_counter <= `INITIAL_PC;
         end else begin
-            exmem_alu_out <= (ex_is_jal || ex_is_jalr) ? ex_jal_link_addr : ex_alu_out;
+            exmem_alu_out <= (ex_is_jalr) ? ex_branch_target_addr : ex_alu_out;
             exmem_reg_b <= forwarded_rs2;
             exmem_mul3_valid <= mul3_valid;
             exmem_rd <= mul3_valid ? mul3_rd : i_idex_rd;

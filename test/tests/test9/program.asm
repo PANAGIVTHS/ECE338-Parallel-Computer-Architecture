@@ -20,7 +20,6 @@ lw   x11, 8(x0)
 add  x12, x10, x11
 sw   x12, 12(x0)
 mul  x13, x2, x1
-nop
 sub  x14, x13, x1
 sw   x14, 16(x0)
 beq  x0, x0, branch_2

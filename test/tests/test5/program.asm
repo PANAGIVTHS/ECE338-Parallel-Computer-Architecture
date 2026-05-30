@@ -6,17 +6,12 @@ addi x3, x0, 20      # x3 = 20
 # TEST 1: BRANCH NOT TAKEN & EX-TO-EX FORWARDING
 add  x4, x2, x3      # x4 = 30
 beq  x4, x2, fail1   # 30 != 10, Branch Not Taken.
-nop                  # (Branch delay slot)
-nop                  # (Branch delay slot)
 
 # TEST 2: BRANCH TAKEN & NEGATIVE MATH
 sub  x5, x4, x2      # x5 = 30 - 10 = 20
 beq  x5, x3, skip1   # 20 == 20, Branch Taken!
-nop                  # (Branch delay slot)
-nop                  # (Branch delay slot)
 addi x5, x0, 999     # This should be SKIPPED! (If x5 becomes 999, branch failed)
 fail1:
-nop
 skip1:
 
 # TEST 3: LOAD-USE HAZARD (STALL) & STORE FORWARDING
@@ -35,8 +30,6 @@ sw   x10, -8(x8)     # Mem[8] = 20
 # TEST 5: ALWAYS TAKEN BRANCH
 addi x11, x0, 50     # x11 = 50
 beq  x11, x11, skip2 # Always Taken!
-nop
-nop
 addi x11, x0, 0      # This should be SKIPPED!
 skip2:
 sw   x11, 12(x1)     # Mem[12] = 50

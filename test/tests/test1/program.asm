@@ -26,7 +26,6 @@ sw   x9, 16(x1)     # Mem[16] = 40
 # TEST 4: DEEP PIPELINE FORWARDING & SUBTRACTION
 sub  x10, x5, x4    # x10 = 300 - 100 = 200
 add  x11, x10, x10  # x11 = 400
-nop                 # Creates a gap to test if forwarding safely ignores inactive stages
 sub  x12, x11, x10  # x11 from MEM-to-EX, x10 from RegFile. x12 = 200.
 sw   x12, 20(x1)    # Mem[20] = 200
 

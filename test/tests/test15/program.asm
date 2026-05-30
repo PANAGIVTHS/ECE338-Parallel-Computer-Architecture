@@ -8,10 +8,6 @@
 # - jalr x0, 0(x1) only as the final kernel-completion marker
 
 jal  x0, main
-nop
-nop
-nop
-nop
 return_subroutine:
 addi x13, x13, 1024
 jalr x31, 0(x1)     # return without using the reserved completion encoding
@@ -81,7 +77,6 @@ addi x20, x20, 16
 jal  x6, anchor_forward
 anchor_forward:
 addi x7, x6, 20      # target_forward address produced just before JALR
-nop
 jalr x11, 0(x7)
 addi x28, x28, 16    # must be flushed
 addi x28, x28, 16    # must be flushed
@@ -101,37 +96,4 @@ sw   x10, 20(x0)     # expected 77; proves jalr x0 did not clobber x10
 sw   x11, 24(x0)     # link from forwarded-base JALR
 
 # Let all stores drain before halting.
-nop
-nop
-nop
-nop
-nop
-nop
-nop
-nop
-nop
-nop
-nop
-nop
-nop
-nop
-nop
-nop
-nop
-nop
-nop
-nop
-nop
-nop
-nop
-nop
-nop
-nop
-nop
-nop
-nop
-nop
-nop
-nop
-
 jalr x0, 0(x1)
