@@ -107,6 +107,8 @@ module StreamingMultiprocessor #(
             ifid_program_counter <= `INITIAL_PC;
         end else if (global_stall) begin
             // Retain state during memory stall
+        end else if (flush) begin 
+            ifid_program_counter <= {ex_beq_target_idx, 2'b00};
         end else if (!data_hazard) begin
             ifid_program_counter <= program_counter;
         end
