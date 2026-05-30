@@ -245,9 +245,27 @@ static int force_weight(int dx, int dy)
     return 1 + lt96 + (lt32 << 1);
 }
 
+static void print_csv_header(void)
+{
+    printf("step");
+    for (unsigned int body = 0; body < CORES; body++) {
+        printf(",x%u,y%u", body, body);
+    }
+    printf("\n");
+}
+
+static void print_csv_row(int step)
+{
+    printf("%d", step);
+    for (unsigned int body = 0; body < CORES; body++) {
+        printf(",%d,%d", pos_x[body], pos_y[body]);
+    }
+    printf("\n");
+}
+
 int main(void)
 {
-    int steps = 1;
+    int steps = 100;
 
     for (unsigned int tid = 0; tid < CORES; tid++) {
         pos_x[tid] = init_x(tid);
@@ -256,7 +274,9 @@ int main(void)
         vel_y[tid] = init_vy(tid);
     }
 
-    for (int step = 0; step < steps; step++) {
+    print_csv_header();
+
+    for (int step = 1; step <= steps; step++) {
         int next_x[CORES];
         int next_y[CORES];
         int next_vx[CORES];
@@ -291,11 +311,8 @@ int main(void)
             vel_x[tid] = next_vx[tid];
             vel_y[tid] = next_vy[tid];
         }
-    }
 
-    printf("body,x,y\n");
-    for (unsigned int tid = 0; tid < CORES; tid++) {
-        printf("%u,%d,%d\n", tid, pos_x[tid], pos_y[tid]);
+        print_csv_row(step);
     }
 
     return 0;
