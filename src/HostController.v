@@ -23,7 +23,7 @@ module HostController (
     // GPU control
     output reg [1:0] o_core_state
 );
-    (* mark_debug = "true" *) reg [1:0] current_state, next_state;
+    (* mark_debug = "false" *) reg [1:0] current_state, next_state;
     wire host_done_writing, host_done_dumping;
 
     always @(posedge clk) begin
