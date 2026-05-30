@@ -1,44 +1,69 @@
-#define CORES 32
+#include "../gpgpu_runtime.h"
+#define CORES GPGPU_NUM_CORES
 
 #ifdef __riscv
-int data[CORES] = {1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32};
+
+int data[CORES + 1] = {0};
 int diff[CORES] = {0};
 
-__attribute__((naked)) int _start() {
-    int threadIdx_x;
-    __asm__ volatile("mv %0, x31" : "=r"(threadIdx_x));
-
-    for (int i = threadIdx_x; i < CORES; i += CORES) {
-        if (i == 0) {
-            diff[0] = data[0];
-        } else {
-            diff[i] = data[i] - data[i - 1];
-        }
-    }
-
-    asm volatile("jalr x0, 0(x1)");
-    __builtin_unreachable();
-}
-#else
-#include <stdio.h>
-int data[CORES] = {1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32};
-int diff[CORES] = {0};
-
-int main()
+void kernel_main(void)
 {
-    for (int threadIdx_x = 0; threadIdx_x < CORES; threadIdx_x++) {
-        if (threadIdx_x == 0) {
-            diff[0] = data[0];
-        } else {
-            diff[threadIdx_x] = data[threadIdx_x] - data[threadIdx_x - 1];
-        }
+    unsigned int tid = gpgpu_thread_id();
+
+    // Initialize array
+    data[tid+1] = tid;
+
+    // Calculate differences
+    diff[tid] = data[tid] - data[tid + 1];
+
+    // Write back the results
+    GPGPU_OUTPUT[tid] = diff[tid];
+
+    return;
+}
+
+GPGPU_START(kernel_main)
+
+#else
+
+#include <stdio.h>
+
+int data[CORES + 1] = {0};
+int diff[CORES] = {0};
+
+int main(void)
+{
+    /*
+     * Padding:
+     * data[0] is the artificial left neighbor of body/index 0.
+     */
+    data[0] = 0;
+
+    /*
+     * Logical parallel initialization:
+     * data[tid + 1] = tid
+     */
+    for (int tid = 0; tid < CORES; tid++) {
+        data[tid + 1] = tid;
     }
 
-    printf("Index | Data | Adjacent Difference\n");
-    printf("----------------------------------\n");
+    /*
+     * Adjacent difference without special case:
+     * diff[tid] = data[tid + 1] - data[tid]
+     */
+    for (int tid = 0; tid < CORES; tid++) {
+        diff[tid] = data[tid + 1] - data[tid];
+    }
+
+    printf("Index | data[i+1] | data[i] | diff[i]\n");
+    printf("--------------------------------------\n");
 
     for (int i = 0; i < CORES; i++) {
-        printf("%5d | %4d | %4d\n", i, data[i], diff[i]);
+        printf("%5d | %9d | %7d | %7d\n",
+               i,
+               data[i + 1],
+               data[i],
+               diff[i]);
     }
 
     return 0;
