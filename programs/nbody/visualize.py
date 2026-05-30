@@ -137,6 +137,36 @@ def rows_to_frames(rows: list[dict[str, str]]) -> list[dict[int, tuple[int, int]
     )
 
 
+def interpolate_frames(frames: list[dict[int, tuple[int, int]]], factor: int):
+    if factor <= 1 or len(frames) < 2:
+        return frames
+
+    out = []
+
+    for a, b in zip(frames, frames[1:]):
+        out.append(a)
+
+        body_ids = sorted(set(a) | set(b))
+
+        for k in range(1, factor):
+            t = k / factor
+            mid = {}
+
+            for body in body_ids:
+                ax, ay = a.get(body, b[body])
+                bx, by = b.get(body, a[body])
+
+                x = int(round(ax + (bx - ax) * t))
+                y = int(round(ay + (by - ay) * t))
+
+                mid[body] = (x, y)
+
+            out.append(mid)
+
+    out.append(frames[-1])
+    return out
+
+
 def downsample_frames(
     frames: list[dict[int, tuple[int, int]]],
     *,
@@ -500,6 +530,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--codec", default="mp4v", help="OpenCV codec, e.g. mp4v, avc1, MJPG")
     parser.add_argument("--progress-every", type=int, default=200, help="Print progress every N frames; 0 disables")
+    parser.add_argument(
+        "--slowdown",
+        type=int,
+        default=1,
+        help="Insert interpolated frames between simulation frames. 4 means ~4x slower playback at same FPS.",
+    )
     return parser.parse_args()
 
 
@@ -536,6 +572,8 @@ def main() -> None:
     frames = rows_to_frames(rows)
     if not frames:
         raise SystemExit(f"{args.input} did not contain any frames.")
+
+    frames = interpolate_frames(frames, args.slowdown)
 
     original_frames = len(frames)
     frames, used_stride = downsample_frames(
