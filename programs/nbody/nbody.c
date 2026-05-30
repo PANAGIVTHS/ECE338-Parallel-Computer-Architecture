@@ -187,6 +187,8 @@ GPGPU_START(kernel_main)
 #else
 
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 static int pos_x[CORES];
 static int pos_y[CORES];
@@ -245,9 +247,82 @@ static int force_weight(int dx, int dy)
     return 1 + lt96 + (lt32 << 1);
 }
 
-int main(void)
+static void print_usage(const char *argv0)
 {
-    int steps = 1;
+    fprintf(stderr, "Usage: %s [--runs N]\n", argv0);
+    fprintf(stderr, "  --runs N    Number of native nbody simulation steps to emit (default: 1)\n");
+}
+
+static int parse_runs(int argc, char **argv)
+{
+    int runs = 1;
+
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--runs") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "Missing value for --runs\n");
+                print_usage(argv[0]);
+                exit(1);
+            }
+            runs = atoi(argv[++i]);
+            if (runs < 1) {
+                fprintf(stderr, "--runs must be >= 1\n");
+                exit(1);
+            }
+        } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
+            print_usage(argv[0]);
+            exit(0);
+        } else {
+            fprintf(stderr, "Unknown option: %s\n", argv[i]);
+            print_usage(argv[0]);
+            exit(1);
+        }
+    }
+
+    return runs;
+}
+
+static void simulate_one_step(void)
+{
+    int next_x[CORES];
+    int next_y[CORES];
+    int next_vx[CORES];
+    int next_vy[CORES];
+
+    for (unsigned int tid = 0; tid < CORES; tid++) {
+        int xi = pos_x[tid];
+        int yi = pos_y[tid];
+
+        int ax = 0;
+        int ay = 0;
+
+        for (unsigned int j = 0; j < CORES; j++) {
+            int dx = pos_x[j] - xi;
+            int dy = pos_y[j] - yi;
+
+            int w = force_weight(dx, dy) * body_mass(j);
+
+            ax += sign_int(dx) * w;
+            ay += sign_int(dy) * w;
+        }
+
+        next_vx[tid] = vel_x[tid] + (ax >> 2);
+        next_vy[tid] = vel_y[tid] + (ay >> 2);
+        next_x[tid] = xi + next_vx[tid];
+        next_y[tid] = yi + next_vy[tid];
+    }
+
+    for (unsigned int tid = 0; tid < CORES; tid++) {
+        pos_x[tid] = next_x[tid];
+        pos_y[tid] = next_y[tid];
+        vel_x[tid] = next_vx[tid];
+        vel_y[tid] = next_vy[tid];
+    }
+}
+
+int main(int argc, char **argv)
+{
+    int runs = parse_runs(argc, argv);
 
     for (unsigned int tid = 0; tid < CORES; tid++) {
         pos_x[tid] = init_x(tid);
@@ -256,46 +331,12 @@ int main(void)
         vel_y[tid] = init_vy(tid);
     }
 
-    for (int step = 0; step < steps; step++) {
-        int next_x[CORES];
-        int next_y[CORES];
-        int next_vx[CORES];
-        int next_vy[CORES];
-
+    printf("step,body,x,y\n");
+    for (int step = 0; step < runs; step++) {
+        simulate_one_step();
         for (unsigned int tid = 0; tid < CORES; tid++) {
-            int xi = pos_x[tid];
-            int yi = pos_y[tid];
-
-            int ax = 0;
-            int ay = 0;
-
-            for (unsigned int j = 0; j < CORES; j++) {
-                int dx = pos_x[j] - xi;
-                int dy = pos_y[j] - yi;
-
-                int w = force_weight(dx, dy) * body_mass(j);
-
-                ax += sign_int(dx) * w;
-                ay += sign_int(dy) * w;
-            }
-
-            next_vx[tid] = vel_x[tid] + (ax >> 2);
-            next_vy[tid] = vel_y[tid] + (ay >> 2);
-            next_x[tid] = xi + next_vx[tid];
-            next_y[tid] = yi + next_vy[tid];
+            printf("%d,%u,%d,%d\n", step + 1, tid, pos_x[tid], pos_y[tid]);
         }
-
-        for (unsigned int tid = 0; tid < CORES; tid++) {
-            pos_x[tid] = next_x[tid];
-            pos_y[tid] = next_y[tid];
-            vel_x[tid] = next_vx[tid];
-            vel_y[tid] = next_vy[tid];
-        }
-    }
-
-    printf("body,x,y\n");
-    for (unsigned int tid = 0; tid < CORES; tid++) {
-        printf("%u,%d,%d\n", tid, pos_x[tid], pos_y[tid]);
     }
 
     return 0;

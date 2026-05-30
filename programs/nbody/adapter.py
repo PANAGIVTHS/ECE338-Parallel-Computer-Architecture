@@ -12,11 +12,16 @@ import subprocess
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from fpga_run import (  # noqa: E402
+    GPU_ARGS_BASE_WORDS,
+    GPU_OUTPUT_BASE_WORDS,
+    ProgramAdapter as BaseProgramAdapter,
+)
+
 NUM_BODIES = 32
 NBODY_ARGS_MAGIC = 0x4E424459  # "NBDY"
 
-GPU_ARGS_BASE_WORDS = 0x00000040 // 4      # 16
-GPU_OUTPUT_BASE_WORDS = 0x00001000 // 4    # 1024
 GPU_OUTPUT_WORDS = NUM_BODIES * 2          # 64
 
 GPU_DATA_BASE_WORDS = 0x00001100 // 4      # 1088
@@ -35,16 +40,16 @@ def int32_from_hex(word: str) -> int:
     return value
 
 
-class ProgramAdapter:
+class ProgramAdapter(BaseProgramAdapter):
     def __init__(self, program_dir: Path):
-        self.program_dir = Path(program_dir)
+        super().__init__(program_dir)
         self.csv_path = self.program_dir / "data.csv"
         self.live_svg_path = self.program_dir / "fpga_latest.svg"
         self.history: list[list[int]] = []
         self.steps_per_run = 50
         self.runs = 1
 
-    def configure(self, *, steps_per_run: int, runs: int, total_steps: int | None, visualize: bool) -> None:
+    def configure(self, *, steps_per_run: int, runs: int, total_steps: int | None, visualize: bool, adapter_args=None) -> None:
         self.steps_per_run = steps_per_run
         self.runs = runs
         header = ["step"]

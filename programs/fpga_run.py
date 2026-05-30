@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Generic FPGA/UART execution loop for programs/<program> kernels.
 
-The program-specific logic lives in programs/<program>/fpga.py.  This file owns
+The program-specific logic lives in programs/<program>/adapter.py.  This file owns
 only the common host flow:
 
 1. load IMEM once
@@ -25,17 +25,93 @@ from typing import Any, Iterable
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PROGRAMS_DIR = Path(__file__).resolve().parent
 BAREMETAL_DIR = REPO_ROOT / "host" / "baremetal"
+
+# Shared DMEM ABI windows used by programs/<program>/adapter.py.
+GPU_ARGS_BASE_WORDS = 0x00000040 // 4      # 16
+GPU_OUTPUT_BASE_WORDS = 0x00001000 // 4    # 1024
+
 sys.path.insert(0, str(BAREMETAL_DIR))
 
 from gpgpu_uart import GpgpuUartMonitor, read_mem_file  # noqa: E402
+
+# When this file is executed as python programs/fpga_run.py its module name
+# is __main__. Program adapters import the shared base class with
+# from fpga_run import ProgramAdapter, so expose the running module under
+# that import name before loading adapters. This avoids creating a second copy
+# of this module and keeps isinstance/issubclass checks reliable.
+sys.modules.setdefault("fpga_run", sys.modules[__name__])
 
 
 class AdapterProtocolError(RuntimeError):
     pass
 
 
+class ProgramAdapter:
+    """Base class for program-specific FPGA/UART adapters.
+
+    The generic runner owns the UART lifecycle. Subclasses in
+    programs/<program>/adapter.py override the hooks below to describe the
+    program's IMEM path, DMEM output window, optional DMEM writes, CSV/output
+    conversion, and final visualization.
+    """
+
+    def __init__(self, program_dir: Path):
+        self.program_dir = Path(program_dir)
+
+    def add_arguments(self, parser: argparse.ArgumentParser) -> None:
+        """Add program-specific FPGA CLI arguments to parser."""
+
+    def configure(
+        self,
+        *,
+        steps_per_run: int,
+        runs: int,
+        total_steps: int | None,
+        visualize: bool,
+        adapter_args: argparse.Namespace | None = None,
+    ) -> None:
+        """Receive CLI-derived run settings before UART execution starts."""
+
+    def imem_path(self) -> Path:
+        """Return this program's default instruction-memory image."""
+        return self.program_dir / f"{self.program_dir.name}_instructions.mem"
+
+    def output_offset_words(self) -> int:
+        """Return the DMEM word offset to dump after each kernel run."""
+        raise NotImplementedError("Program adapter must define output_offset_words()")
+
+    def output_word_count(self) -> int:
+        """Return the number of DMEM words to dump after each kernel run."""
+        raise NotImplementedError("Program adapter must define output_word_count()")
+
+    def initial_dmem(self) -> Any:
+        """Optional DMEM writes performed once before the run loop."""
+        return None
+
+    def before_run(self, *, run_index: int, start_step: int, steps: int) -> Any:
+        """Optional DMEM writes performed immediately before each launch."""
+        return None
+
+    def process_output(
+        self,
+        *,
+        run_index: int,
+        start_step: int,
+        steps: int,
+        words: dict[int, str],
+    ) -> None:
+        """Consume dumped DMEM words for one completed kernel run."""
+
+    def after_run(self, *, run_index: int, start_step: int, steps: int, words: dict[int, str]) -> Any:
+        """Optional DMEM writes performed after READ_DONE for the run."""
+        return None
+
+    def finalize(self, *, visualize: bool) -> None:
+        """Optional finalization/visualization hook after the UART loop."""
+
+
 def load_adapter(program: str) -> Any:
-    adapter_path = PROGRAMS_DIR / program / "fpga.py"
+    adapter_path = PROGRAMS_DIR / program / "adapter.py"
     if not adapter_path.exists():
         raise FileNotFoundError(
             f"{adapter_path} not found. Add a program adapter that defines ProgramAdapter."
@@ -52,7 +128,10 @@ def load_adapter(program: str) -> Any:
     adapter_cls = getattr(module, "ProgramAdapter", None)
     if adapter_cls is None:
         raise AdapterProtocolError(f"{adapter_path} must define a ProgramAdapter class")
-
+    if not isinstance(adapter_cls, type) or not issubclass(adapter_cls, ProgramAdapter):
+        raise AdapterProtocolError(
+            f"{adapter_path} ProgramAdapter must inherit from fpga_run.ProgramAdapter"
+        )
     return adapter_cls(program_dir=PROGRAMS_DIR / program)
 
 
@@ -93,10 +172,11 @@ def load_dmem_updates(uart: GpgpuUartMonitor, updates: Any, *, verbose: bool = F
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run a programs/<program> kernel on the FPGA over UART")
     parser.add_argument("-p", "--program", required=True, help="Program directory under programs/")
-    parser.add_argument("--port", required=True, help="Serial port, e.g. /dev/ttyUSB1")
+    parser.add_argument("--adapter-help", action="store_true", help="Show adapter-specific FPGA arguments for --program and exit")
+    parser.add_argument("--port", default=None, help="Serial port, e.g. /dev/ttyUSB1")
     parser.add_argument("--baud", type=int, default=115200, help="UART baud rate")
     parser.add_argument("--runs", type=int, default=None, help="Number of kernel launches/chunks")
-    parser.add_argument("--steps-per-run", type=int, default=50, help="Logical simulation steps per kernel run")
+    parser.add_argument("--steps", "--steps-per-run", dest="steps_per_run", type=int, default=50, help="Logical simulation steps per kernel run")
     parser.add_argument("--total-steps", type=int, default=None, help="Alternative to --runs; rounded up by --steps-per-run")
     parser.add_argument("--imem", type=Path, default=None, help="Override IMEM .mem file path")
     parser.add_argument("--imem-offset", type=int, default=0, help="IMEM word offset for program load")
@@ -133,11 +213,25 @@ def run_visualize_py(program_dir: Path) -> None:
 
 
 def main() -> int:
-    args = build_parser().parse_args()
+    parser = build_parser()
+    args, adapter_argv = parser.parse_known_args()
     if args.steps_per_run < 1:
         raise SystemExit("--steps-per-run must be >= 1")
 
     adapter = load_adapter(args.program)
+    adapter_parser = argparse.ArgumentParser(
+        prog=f"{Path(sys.argv[0]).name} -p {args.program} [adapter args]",
+        description=f"Adapter-specific FPGA arguments for {args.program}",
+    )
+    maybe_call(adapter, "add_arguments", adapter_parser, default=None)
+    if args.adapter_help:
+        adapter_parser.print_help()
+        return 0
+    adapter_args = adapter_parser.parse_args(adapter_argv)
+
+    if args.port is None:
+        raise SystemExit("--port is required unless --adapter-help is used")
+
     program_dir = PROGRAMS_DIR / args.program
     runs = compute_runs(args)
 
@@ -165,6 +259,7 @@ def main() -> int:
         runs=runs,
         total_steps=args.total_steps,
         visualize=not args.no_visualize,
+        adapter_args=adapter_args,
     )
 
     print(f"[INFO] Program        : {args.program}")

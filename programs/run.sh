@@ -29,10 +29,8 @@ VISUALIZE=""
 RUN_FPGA=0
 FPGA_PORT=""
 FPGA_BAUD=115200
-FPGA_RUNS=""
-FPGA_STEPS_PER_RUN=50
-FPGA_TOTAL_STEPS=""
 FPGA_SKIP_LOAD_IMEM=0
+PROGRAM_ARGS=()
 RUN_FLAG_PROVIDED=0
 VISUALIZE_FLAG_PROVIDED=0
 
@@ -59,20 +57,11 @@ usage() {
     echo "  --fpga                          Run the program on FPGA through UART"
     echo "  --port PORT                     UART serial port for --fpga, e.g. /dev/ttyUSB1"
     echo "  --baud BAUD                     UART baud rate for --fpga (default: 115200)"
-    echo "  --steps N                       Logical program steps per FPGA kernel run (default: 50)"
-    echo "  --runs N                        Number of FPGA kernel launches/chunks"
-    echo "  --total-steps N                 Run enough FPGA chunks to cover N logical steps"
     echo "  --skip-load-imem                Reuse already-loaded IMEM for --fpga"
+    echo "  -- [PROGRAM ARGS...]            Forward args to x86 binary and/or FPGA adapter"
     echo ""
     echo "If neither x86, FPGA, nor visualization options are provided, the script prompts."
     echo "x86 output is written to: programs/<program>/data.csv"
-    echo ""
-    echo "Examples:"
-    echo "  $0"
-    echo "  $0 -p nbody --x86 --visualize"
-    echo "  $0 -p nbody --fpga --port /dev/ttyUSB1 --steps 50 --runs 10 --visualize"
-    echo "  $0 --program simple riscv --no-x86 --no-visualize"
-    echo "  $0 -p differences clean"
 }
 
 # ==========================================
@@ -132,43 +121,22 @@ while [[ $# -gt 0 ]]; do
             FPGA_BAUD="$2"
             shift 2
             ;;
-        --steps|--steps-per-run)
-            if [[ $# -lt 2 ]]; then
-                echo "Missing value for $1"
-                exit 1
-            fi
-            FPGA_STEPS_PER_RUN="$2"
-            shift 2
-            ;;
-        --runs)
-            if [[ $# -lt 2 ]]; then
-                echo "Missing value for $1"
-                exit 1
-            fi
-            FPGA_RUNS="$2"
-            shift 2
-            ;;
-        --total-steps)
-            if [[ $# -lt 2 ]]; then
-                echo "Missing value for $1"
-                exit 1
-            fi
-            FPGA_TOTAL_STEPS="$2"
-            shift 2
-            ;;
         --skip-load-imem)
             FPGA_SKIP_LOAD_IMEM=1
             shift
+            ;;
+        --)
+            shift
+            PROGRAM_ARGS+=("$@")
+            break
             ;;
         -h|--help)
             usage
             exit 0
             ;;
         *)
-            echo "Unknown option: $1"
-            echo ""
-            usage
-            exit 1
+            PROGRAM_ARGS+=("$1")
+            shift
             ;;
     esac
 done
@@ -241,6 +209,11 @@ X86_EXE="$PROGRAM_DIR/${SELECTED}_x86"
 DATA_CSV="$PROGRAM_DIR/data.csv"
 VISUALIZE_SCRIPT="$PROGRAM_DIR/visualize.py"
 
+if [[ ${#PROGRAM_ARGS[@]} -eq 1 && ( "${PROGRAM_ARGS[0]}" == "--help" || "${PROGRAM_ARGS[0]}" == "-h" ) ]]; then
+    python3 "$PROGRAMS_DIR/fpga_run.py" --program "$SELECTED" --adapter-help
+    exit 0
+fi
+
 # ==========================================
 # Prompt for run/visualize behavior if needed
 # ==========================================
@@ -295,6 +268,12 @@ if [[ "$RUN_X86" -eq 1 && "$TARGET" == "riscv" ]]; then
     exit 1
 fi
 
+if [[ ${#PROGRAM_ARGS[@]} -gt 0 && "$RUN_X86" -eq 0 && "$RUN_FPGA" -eq 0 ]]; then
+    echo "Program-specific argument(s) provided but neither x86 nor FPGA execution is enabled: ${PROGRAM_ARGS[*]}"
+    echo "Use --x86 or --fpga, or remove the arguments after --."
+    exit 1
+fi
+
 # ==========================================
 # Build
 # ==========================================
@@ -328,7 +307,7 @@ if [[ "$RUN_X86" -eq 1 ]]; then
     echo ""
     echo "Running x86 program..."
     echo "Output: $DATA_CSV"
-    "$X86_EXE" > "$DATA_CSV"
+    "$X86_EXE" "${PROGRAM_ARGS[@]}" > "$DATA_CSV"
 fi
 
 
@@ -340,21 +319,15 @@ if [[ "$RUN_FPGA" -eq 1 ]]; then
         --program "$SELECTED"
         --port "$FPGA_PORT"
         --baud "$FPGA_BAUD"
-        --steps-per-run "$FPGA_STEPS_PER_RUN"
     )
 
-    if [[ -n "$FPGA_RUNS" ]]; then
-        FPGA_ARGS+=(--runs "$FPGA_RUNS")
-    fi
-    if [[ -n "$FPGA_TOTAL_STEPS" ]]; then
-        FPGA_ARGS+=(--total-steps "$FPGA_TOTAL_STEPS")
-    fi
     if [[ "$FPGA_SKIP_LOAD_IMEM" -eq 1 ]]; then
         FPGA_ARGS+=(--skip-load-imem)
     fi
     if [[ "$VISUALIZE" -eq 0 ]]; then
         FPGA_ARGS+=(--no-visualize)
     fi
+    FPGA_ARGS+=("${PROGRAM_ARGS[@]}")
 
     echo ""
     echo "Running FPGA program through UART..."

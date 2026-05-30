@@ -11,6 +11,13 @@ import subprocess
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from fpga_run import (  # noqa: E402
+    GPU_ARGS_BASE_WORDS,
+    GPU_OUTPUT_BASE_WORDS,
+    ProgramAdapter as BaseProgramAdapter,
+)
+
 WIDTH = 64
 HEIGHT = 64
 OUTPUT_WORDS = WIDTH
@@ -19,8 +26,6 @@ OUTPUT_WORDS = WIDTH
 FP_SHIFT = 13
 MAX_ITER = 64
 
-GPU_ARGS_BASE_WORDS = 0x00000040 // 4      # 16
-GPU_OUTPUT_BASE_WORDS = 0x00001000 // 4    # 1024
 GPU_OUTPUT_WORDS = OUTPUT_WORDS            # 64
 
 # Boundary-focused viewport near Seahorse Valley.
@@ -41,9 +46,9 @@ def u32_from_hex(word: str) -> int:
     return int(word, 16) & 0xFFFFFFFF
 
 
-class ProgramAdapter:
+class ProgramAdapter(BaseProgramAdapter):
     def __init__(self, program_dir: Path):
-        self.program_dir = Path(program_dir)
+        super().__init__(program_dir)
         self.csv_path = self.program_dir / "data.csv"
         self.latest_pgm_path = self.program_dir / "fpga_latest.pgm"
 
@@ -60,7 +65,21 @@ class ProgramAdapter:
         self.current_image: list[list[int] | None] = [None for _ in range(HEIGHT)]
         self.scale_cache: dict[int, int] = {}
 
-    def configure(self, *, steps_per_run: int, runs: int, total_steps: int | None, visualize: bool) -> None:
+    def add_arguments(self, parser) -> None:
+        parser.add_argument("--center-re-q", type=int, default=DEFAULT_CENTER_RE_Q, help="Mandelbrot viewport center real coordinate in fixed-point units")
+        parser.add_argument("--center-im-q", type=int, default=DEFAULT_CENTER_IM_Q, help="Mandelbrot viewport center imaginary coordinate in fixed-point units")
+        parser.add_argument("--scale-q", type=int, default=DEFAULT_SCALE_Q, help="Initial Mandelbrot viewport scale in fixed-point units")
+        parser.add_argument("--zoom-num", type=int, default=ZOOM_NUM, help="Per-frame zoom numerator")
+        parser.add_argument("--zoom-den", type=int, default=ZOOM_DEN, help="Per-frame zoom denominator")
+
+    def configure(self, *, steps_per_run: int, runs: int, total_steps: int | None, visualize: bool, adapter_args=None) -> None:
+        if adapter_args is not None:
+            self.center_re_q = adapter_args.center_re_q
+            self.center_im_q = adapter_args.center_im_q
+            self.initial_scale_q = adapter_args.scale_q
+            self.zoom_num = adapter_args.zoom_num
+            self.zoom_den = adapter_args.zoom_den
+
         self.runs = runs
         self.zoom_frames = (runs + HEIGHT - 1) // HEIGHT
 
