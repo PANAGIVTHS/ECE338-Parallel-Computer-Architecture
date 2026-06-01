@@ -365,6 +365,9 @@ HTML = r"""<!doctype html>
     <button id="reset" class="warn">Reset</button>
     <button id="faster" class="secondary">Speed +</button>
     <button id="slower" class="secondary">Speed -</button>
+    <button id="trailfade" class="secondary">Trail fade: On</button>
+    <button id="fadefaster" class="secondary">Fade faster</button>
+    <button id="fadeslower" class="secondary">Fade slower</button>
     <button id="clear" class="warn">Clear trail</button>
   </div>
   <div class="metric"><div class="label">Status</div><div id="status" class="value">connecting...</div></div>
@@ -375,6 +378,7 @@ HTML = r"""<!doctype html>
     <div class="metric"><div class="label">Target FPS</div><div id="fps" class="value">?</div></div>
     <div class="metric"><div class="label">Last chunk</div><div id="elapsed" class="value">?</div></div>
     <div class="metric"><div class="label">Trail frames</div><div id="frames" class="value">0</div></div>
+    <div class="metric"><div class="label">Trail fade window</div><div id="fadesteps" class="value">80 steps</div></div>
   </div>
   <h2>Mouse</h2>
   <p class="hint">Drag to rotate/orbit. Scroll wheel zooms through three.js OrbitControls.</p>
@@ -383,6 +387,8 @@ HTML = r"""<!doctype html>
   <p><kbd>n</kbd>/<kbd>→</kbd> step by one</p>
   <p><kbd>Enter</kbd> step by current speed</p>
   <p><kbd>r</kbd> reset simulation</p>
+  <p><kbd>f</kbd> toggle older-trail fading</p>
+  <p><kbd>,</kbd>/<kbd>.</kbd> fade faster/slower</p>
   <p><kbd>+</kbd>/<kbd>-</kbd> change steps per frame</p>
   <p><kbd>[</kbd>/<kbd>]</kbd> change target FPS</p>
 </aside>
@@ -476,10 +482,26 @@ const colors = [0xffd700,0x38bdf8,0xfb7185,0x4ade80,0xe879f9,0x22d3ee,0xf472b6,0
 const bodies = [];
 const trails = [];
 const trailPositions = [];
+const trailColors = [];
+const trailSteps = [];
 const trailWriteIndex = [];
+const trailBaseOpacity = [];
 const TRAIL_POINTS = 220;
+const TRAIL_FADE_MIN_ALPHA = 0.03;
+const TRAIL_FADE_MIN_POINTS = 5;
+let trailFadeEnabled = true;
+let trailFadeSteps = 80;
+let currentTrailStep = 0;
 let state = {};
 let latest = null;
+
+function colorComponents(hex) {
+  return {
+    r: ((hex >> 16) & 0xff) / 255,
+    g: ((hex >> 8) & 0xff) / 255,
+    b: (hex & 0xff) / 255,
+  };
+}
 
 function initialPositions() {
   const out = [];
@@ -504,14 +526,20 @@ for (let i = 0; i < 32; i++) {
   bodies.push(group);
 
   const lineArray = new Float32Array(TRAIL_POINTS * 3);
+  const colorArray = new Float32Array(TRAIL_POINTS * 4);
+  const stepArray = new Float32Array(TRAIL_POINTS);
   const trailGeo = new THREE.BufferGeometry();
   trailGeo.setAttribute('position', new THREE.BufferAttribute(lineArray, 3));
+  trailGeo.setAttribute('color', new THREE.BufferAttribute(colorArray, 4));
   trailGeo.setDrawRange(0, 0);
-  const trail = new THREE.Line(trailGeo, new THREE.LineBasicMaterial({color: colors[i % colors.length], transparent: true, opacity: i === 0 ? 0.72 : 0.42}));
+  const trail = new THREE.Line(trailGeo, new THREE.LineBasicMaterial({vertexColors: true, transparent: true, opacity: 1.0, depthWrite: false}));
   scene.add(trail);
   trails.push(trail);
   trailPositions.push(lineArray);
+  trailColors.push(colorArray);
+  trailSteps.push(stepArray);
   trailWriteIndex.push(0);
+  trailBaseOpacity.push(i === 0 ? 0.72 : 0.42);
 }
 
 function scaled(p) {
@@ -521,34 +549,93 @@ function scaled(p) {
 function rebuildTrailFromScratch() {
   for (let b = 0; b < trails.length; b++) {
     trailPositions[b].fill(0);
+    trailColors[b].fill(0);
+    trailSteps[b].fill(0);
     trailWriteIndex[b] = 0;
     trails[b].geometry.setDrawRange(0, 0);
     trails[b].geometry.attributes.position.needsUpdate = true;
+    trails[b].geometry.attributes.color.needsUpdate = true;
   }
+  updatePanel();
+}
+function refreshTrailFadeButton() {
+  document.getElementById('trailfade').textContent = `Trail fade: ${trailFadeEnabled ? 'On' : 'Off'}`;
+}
+function updateTrailFadeWindow(delta) {
+  if (delta < 0) {
+    trailFadeSteps = Math.max(TRAIL_FADE_MIN_POINTS, Math.floor(trailFadeSteps / 2));
+  } else {
+    trailFadeSteps = Math.min(1000000, Math.max(trailFadeSteps + 1, Math.ceil(trailFadeSteps * 2)));
+  }
+  refreshAllTrailColors();
+  updatePanel();
+}
+function updateTrailColors(bodyIndex, count) {
+  const color = colorComponents(colors[bodyIndex % colors.length]);
+  const arr = trailColors[bodyIndex];
+  const base = trailBaseOpacity[bodyIndex];
+  for (let i = 0; i < TRAIL_POINTS; i++) {
+    const k = i * 4;
+    arr[k+0] = color.r;
+    arr[k+1] = color.g;
+    arr[k+2] = color.b;
+    if (i >= count) {
+      arr[k+3] = 0;
+      continue;
+    }
+    const stepsBehindNewest = currentTrailStep - trailSteps[bodyIndex][i];
+    if (trailFadeEnabled && stepsBehindNewest > trailFadeSteps) {
+      arr[k+3] = 0;
+      continue;
+    }
+    const age = trailFadeEnabled ? 1 - (stepsBehindNewest / Math.max(1, trailFadeSteps)) : 1; // 0=oldest visible, 1=newest
+    const fade = trailFadeEnabled ? (TRAIL_FADE_MIN_ALPHA + Math.pow(Math.max(0, age), 1.35) * (1 - TRAIL_FADE_MIN_ALPHA)) : 1;
+    arr[k+3] = base * fade;
+  }
+  trails[bodyIndex].geometry.attributes.color.needsUpdate = true;
+}
+function refreshAllTrailColors() {
+  for (let b = 0; b < trails.length; b++) {
+    updateTrailColors(b, Math.min(trailWriteIndex[b], TRAIL_POINTS));
+  }
+}
+function toggleTrailFade() {
+  trailFadeEnabled = !trailFadeEnabled;
+  refreshTrailFadeButton();
+  refreshAllTrailColors();
+  updatePanel();
 }
 function appendTrail(bodyIndex, v) {
   const arr = trailPositions[bodyIndex];
+  const steps = trailSteps[bodyIndex];
   const idx = trailWriteIndex[bodyIndex] % TRAIL_POINTS;
   arr[idx*3+0] = v.x;
   arr[idx*3+1] = v.y;
   arr[idx*3+2] = v.z;
+  steps[idx] = currentTrailStep;
   trailWriteIndex[bodyIndex] += 1;
   // Keep the line simple and ordered.  Once full, rewrite a rotated copy.
   const count = Math.min(trailWriteIndex[bodyIndex], TRAIL_POINTS);
   if (trailWriteIndex[bodyIndex] > TRAIL_POINTS) {
     const copy = new Float32Array(TRAIL_POINTS * 3);
+    const stepCopy = new Float32Array(TRAIL_POINTS);
     for (let i = 0; i < TRAIL_POINTS; i++) {
-      const src = ((trailWriteIndex[bodyIndex] + i) % TRAIL_POINTS) * 3;
+      const srcIndex = (trailWriteIndex[bodyIndex] + i) % TRAIL_POINTS;
+      const src = srcIndex * 3;
       copy[i*3+0] = arr[src+0]; copy[i*3+1] = arr[src+1]; copy[i*3+2] = arr[src+2];
+      stepCopy[i] = steps[srcIndex];
     }
     arr.set(copy);
+    steps.set(stepCopy);
     trailWriteIndex[bodyIndex] = TRAIL_POINTS;
   }
   trails[bodyIndex].geometry.setDrawRange(0, count);
   trails[bodyIndex].geometry.attributes.position.needsUpdate = true;
+  updateTrailColors(bodyIndex, count);
 }
 function applyFrame(frame, {resetTrail=false}={}) {
   latest = frame;
+  currentTrailStep = frame.step ?? currentTrailStep;
   if (resetTrail) rebuildTrailFromScratch();
   const center = new THREE.Vector3();
   frame.positions.forEach((p, i) => {
@@ -574,6 +661,7 @@ function updatePanel() {
   setText('spf', state.steps_per_frame ?? '?');
   setText('fps', state.target_fps ?? '?');
   setText('frames', trailWriteIndex[0] || 0);
+  setText('fadesteps', trailFadeEnabled ? `${trailFadeSteps} steps` : 'off');
   if (latest) setText('elapsed', `${latest.elapsed_ms} ms`);
 }
 function resize() {
@@ -612,13 +700,20 @@ document.getElementById('stepspeed').onclick = () => post('step_speed');
 document.getElementById('reset').onclick = () => post('reset_simulation');
 document.getElementById('faster').onclick = () => post('speed_up');
 document.getElementById('slower').onclick = () => post('speed_down');
+document.getElementById('trailfade').onclick = () => toggleTrailFade();
+document.getElementById('fadefaster').onclick = () => updateTrailFadeWindow(-1);
+document.getElementById('fadeslower').onclick = () => updateTrailFadeWindow(1);
 document.getElementById('clear').onclick = () => rebuildTrailFromScratch();
+refreshTrailFadeButton();
 document.addEventListener('keydown', ev => {
   if (ev.target && ['INPUT','TEXTAREA'].includes(ev.target.tagName)) return;
   if (ev.key === ' ' || ev.key === 'p') { ev.preventDefault(); post('toggle_play'); }
   else if (ev.key === 'n' || ev.key === 'ArrowRight') { ev.preventDefault(); post('step_one'); }
   else if (ev.key === 'Enter') { ev.preventDefault(); post('step_speed'); }
   else if (ev.key === 'r' || ev.key === 'R') { ev.preventDefault(); post('reset_simulation'); }
+  else if (ev.key === 'f' || ev.key === 'F') { ev.preventDefault(); toggleTrailFade(); }
+  else if (ev.key === ',') { ev.preventDefault(); updateTrailFadeWindow(-1); }
+  else if (ev.key === '.') { ev.preventDefault(); updateTrailFadeWindow(1); }
   else if (ev.key === '+' || ev.key === '=') { ev.preventDefault(); post('speed_up'); }
   else if (ev.key === '-' || ev.key === '_') { ev.preventDefault(); post('speed_down'); }
   else if (ev.key === '[') { ev.preventDefault(); post('fps_down'); }
