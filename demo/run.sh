@@ -14,6 +14,7 @@ PORT=""
 BAUD=115200
 STEPS_PER_FRAME=1
 FPS=12
+DATASET="default"
 HTTP_HOST="0.0.0.0"
 HTTP_PORT=8765
 FAKE=0
@@ -21,7 +22,6 @@ SKIP_LOAD_IMEM=0
 NO_BROWSER=0
 VERBOSE=0
 BUILD=1
-DATASET="default"
 
 usage() {
     cat <<EOF
@@ -31,11 +31,11 @@ Usage:
 
 Options:
   --program NAME                  Demo program: nbody or nbody-3d (default: nbody)
-  --dataset NAME_OR_JSON          nbody-3d initial dataset (default: default)
   --port PORT                     UART serial port, e.g. /dev/ttyUSB1 or /dev/ttyACM0
   --baud BAUD                     UART baud rate (default: 115200)
   --steps N, --steps-per-frame N  Simulation steps per displayed frame (default: 1)
   --fps FPS                       Target play-mode frame launches per second (default: 12)
+  --dataset NAME_OR_PATH          nbody-3d fake backend dataset (default: default)
   --fake                          Use deterministic software backend, no board needed
   --skip-load-imem                Reuse already-loaded instruction memory in FPGA mode
   --no-build                      Do not build nbody before starting the demo
@@ -48,6 +48,7 @@ Options:
 Examples:
   $0 --fake --steps 4 --no-browser
   $0 --program nbody-3d --fake --steps 4 --no-browser
+  $0 --program nbody-3d --fake --dataset rings --no-browser
   $0 --port /dev/ttyUSB1 --steps 1
   $0 --port /dev/ttyACM0 --baud 115200 --steps-per-frame 8 --http-port 8777
 EOF
@@ -57,10 +58,6 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --program)
             PROGRAM="${2:?Missing value for --program}"
-            shift 2
-            ;;
-        --dataset)
-            DATASET="${2:?Missing value for --dataset}"
             shift 2
             ;;
         --port)
@@ -77,6 +74,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --fps)
             FPS="${2:?Missing value for --fps}"
+            shift 2
+            ;;
+        --dataset)
+            DATASET="${2:?Missing value for --dataset}"
             shift 2
             ;;
         --fake)

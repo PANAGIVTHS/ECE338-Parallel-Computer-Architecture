@@ -136,9 +136,13 @@ void kernel_main(void)
             az += sign_int(dz) * w;
         }
 
-        int vx = vel_x[tid] + (ax >> 2);
-        int vy = vel_y[tid] + (ay >> 2);
-        int vz = vel_z[tid] + (az >> 2);
+        int ax_mask = ax >> 31;
+        int ay_mask = ay >> 31;
+        int az_mask = az >> 31;
+
+        int vx = vel_x[tid] + ((ax + (ax_mask & 3)) >> 2);
+        int vy = vel_y[tid] + ((ay + (ay_mask & 3)) >> 2);
+        int vz = vel_z[tid] + ((az + (az_mask & 3)) >> 2);
 
         pos_x[tid] = xi + vx;
         pos_y[tid] = yi + vy;
@@ -291,10 +295,14 @@ int main(void)
                 ay += sign_int(dy) * w;
                 az += sign_int(dz) * w;
             }
+        
+            int ax_mask = ax >> 31;
+            int ay_mask = ay >> 31;
+            int az_mask = az >> 31;
 
-            next_vx[tid] = vel_x[tid] + (ax >> 2);
-            next_vy[tid] = vel_y[tid] + (ay >> 2);
-            next_vz[tid] = vel_z[tid] + (az >> 2);
+            next_vx[tid] = vel_x[tid] + ((ax + (ax_mask & 3)) >> 2);
+            next_vy[tid] = vel_y[tid] + ((ay + (ay_mask & 3)) >> 2);
+            next_vz[tid] = vel_z[tid] + ((az + (az_mask & 3)) >> 2);
             next_x[tid] = xi + next_vx[tid];
             next_y[tid] = yi + next_vy[tid];
             next_z[tid] = zi + next_vz[tid];
