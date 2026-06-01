@@ -23,6 +23,7 @@ from __future__ import annotations
 import argparse
 import json
 import queue
+import sys
 import threading
 import time
 import webbrowser
@@ -38,16 +39,40 @@ REPO_ROOT = DEMO_DIR.parent
 PROGRAM_DIR = REPO_ROOT / "programs" / "nbody-3d"
 VENDOR_DIR = DEMO_DIR / "vendor"
 DATASET_DIR = PROGRAM_DIR / "datasets"
+BAREMETAL_DIR = REPO_ROOT / "host" / "baremetal"
+if str(BAREMETAL_DIR) not in sys.path:
+    sys.path.insert(0, str(BAREMETAL_DIR))
 
 NUM_BODIES = 32
 DEFAULT_HTTP_HOST = "0.0.0.0"
 DEFAULT_HTTP_PORT = 8765
 DEFAULT_FPS = 12.0
 MAX_HISTORY = 500
+GPU_ARGS_BASE_WORDS = 0x00000040 // 4
+GPU_ARGS_WORDS = 4
+DEFAULT_DATA_BASE_BYTES = 0x00001000
+DEFAULT_DATA_LIMIT_BYTES = 0x00001800
+STATE_WORDS = NUM_BODIES * 7          # pos_x,pos_y,pos_z,vel_x,vel_y,vel_z,mass
+POSITION_OUTPUT_WORDS = NUM_BODIES * 3 # pos_x,pos_y,pos_z
 
 
 def clamp(value: int, lo: int, hi: int) -> int:
     return max(lo, min(hi, value))
+
+
+def parse_int_auto(value: str) -> int:
+    return int(value, 0)
+
+
+def u32_hex(value: int) -> str:
+    return f"{value & 0xFFFFFFFF:08x}"
+
+
+def int32_from_hex(word: str) -> int:
+    value = int(word, 16) & 0xFFFFFFFF
+    if value & 0x80000000:
+        value -= 0x100000000
+    return value
 
 
 @dataclass(frozen=True)
@@ -319,13 +344,151 @@ class FakeNbody3DBackend(Backend):
         )
 
 
-class NotYetImplementedFpgaBackend(Backend):
+class FpgaNbody3DBackend(Backend):
+    """UART/FPGA backend for the pointer-based nbody-3d ABI.
+
+    Startup/reset flow:
+      1. load IMEM once when the backend is constructed, unless skipped
+      2. load the dataset into DMEM at --data-base
+      3. pass that byte pointer through GPGPU_ARGS[0]
+
+    Per displayed frame:
+      1. write GPGPU_ARGS = [data_base, steps, 0, 0]
+      2. run the kernel
+      3. dump pos_x,pos_y,pos_z from the same base region
+      4. send done so the monitor returns to loading state
+    """
+
     source = "fpga-uart"
 
-    def __init__(self) -> None:
-        raise RuntimeError(
-            "nbody-3d FPGA backend is intentionally not implemented yet. "
-            "Add programs/nbody-3d/fpga.py tomorrow, then wire it here."
+    def __init__(
+        self,
+        *,
+        port: str,
+        baud: int,
+        imem: Path,
+        dataset: Dataset,
+        data_base_bytes: int = DEFAULT_DATA_BASE_BYTES,
+        data_limit_bytes: int = DEFAULT_DATA_LIMIT_BYTES,
+        skip_load_imem: bool = False,
+        verbose: bool = False,
+    ) -> None:
+        if data_base_bytes % 4 != 0:
+            raise ValueError("--data-base must be 4-byte aligned")
+        if data_limit_bytes % 4 != 0:
+            raise ValueError("--data-limit must be 4-byte aligned")
+        if data_limit_bytes <= data_base_bytes:
+            raise ValueError("--data-limit must be greater than --data-base")
+        available_words = (data_limit_bytes - data_base_bytes) // 4
+        if available_words < STATE_WORDS:
+            raise ValueError(
+                f"nbody-3d needs {STATE_WORDS} words at --data-base for "
+                "pos_x,pos_y,pos_z,vel_x,vel_y,vel_z,mass, "
+                f"but only {available_words} are available"
+            )
+
+        try:
+            from gpgpu_uart import GpgpuUartMonitor, read_mem_file
+        except ImportError as exc:
+            raise RuntimeError(
+                "FPGA backend requires host/baremetal/gpgpu_uart.py and pyserial. "
+                "Install pyserial in the active environment if import failed because serial is missing."
+            ) from exc
+
+        self.dataset = dataset
+        imem = imem if imem.is_absolute() else REPO_ROOT / imem
+        self.data_base_bytes = data_base_bytes
+        self.data_base_words = data_base_bytes // 4
+        self.step_count = 0
+        self.previous_kernel_args: list[str] | None = None
+        self.uart = GpgpuUartMonitor(port, baud, verbose=verbose)
+
+        if not skip_load_imem:
+            program_words = read_mem_file(imem)
+            if verbose:
+                print(f"[INFO] Loading {len(program_words)} IMEM word(s) from {imem}", flush=True)
+            self.uart.load_imem_bin(program_words, offset=0)
+        elif verbose:
+            print("[INFO] Skipping IMEM load", flush=True)
+
+    @staticmethod
+    def dataset_state_words(dataset: Dataset) -> list[str]:
+        words: list[int] = []
+        words.extend(dataset.pos_x)
+        words.extend(dataset.pos_y)
+        words.extend(dataset.pos_z)
+        words.extend(dataset.vel_x)
+        words.extend(dataset.vel_y)
+        words.extend(dataset.vel_z)
+        words.extend(dataset.masses)
+        if len(words) != STATE_WORDS:
+            raise ValueError(f"internal error: expected {STATE_WORDS} state words, got {len(words)}")
+        return [u32_hex(word) for word in words]
+
+    def close(self) -> None:
+        self.uart.close()
+
+    def _load_kernel_args(self, *, steps: int) -> None:
+        args = [
+            u32_hex(self.data_base_bytes),
+            u32_hex(steps),
+            u32_hex(0),
+            u32_hex(0),
+        ]
+        if args != self.previous_kernel_args:
+            self.uart.load_dmem_bin(args, offset=GPU_ARGS_BASE_WORDS)
+            self.previous_kernel_args = args
+
+    def _read_positions(self) -> list[tuple[int, int, int]]:
+        words = self.uart.dump_dmem_bin(count=POSITION_OUTPUT_WORDS, offset=self.data_base_words)
+        pos_x_word = self.data_base_words
+        pos_y_word = pos_x_word + NUM_BODIES
+        pos_z_word = pos_y_word + NUM_BODIES
+        positions: list[tuple[int, int, int]] = []
+        for body in range(NUM_BODIES):
+            x_addr = pos_x_word + body
+            y_addr = pos_y_word + body
+            z_addr = pos_z_word + body
+            if x_addr not in words or y_addr not in words or z_addr not in words:
+                raise RuntimeError(
+                    f"Missing nbody-3d output words for body {body}: "
+                    f"DMEM[{x_addr}], DMEM[{y_addr}], DMEM[{z_addr}]"
+                )
+            positions.append((
+                int32_from_hex(words[x_addr]),
+                int32_from_hex(words[y_addr]),
+                int32_from_hex(words[z_addr]),
+            ))
+        return positions
+
+    def reset(self) -> Frame:
+        start = time.perf_counter()
+        self.uart.load_dmem_bin(self.dataset_state_words(self.dataset), offset=self.data_base_words)
+        self.step_count = 0
+        self.previous_kernel_args = None
+        elapsed_ms = (time.perf_counter() - start) * 1000.0
+        return Frame(
+            step=0,
+            positions=list(zip(self.dataset.pos_x, self.dataset.pos_y, self.dataset.pos_z)),
+            source=self.source,
+            elapsed_ms=elapsed_ms,
+        )
+
+    def step(self, steps: int) -> Frame:
+        start = time.perf_counter()
+        self._load_kernel_args(steps=steps)
+        self.uart.run()
+        try:
+            positions = self._read_positions()
+        finally:
+            self.uart.done()
+        self.step_count += steps
+        elapsed_ms = (time.perf_counter() - start) * 1000.0
+        return Frame(
+            step=self.step_count,
+            positions=positions,
+            source=self.source,
+            elapsed_ms=elapsed_ms,
         )
 
 
@@ -924,10 +1087,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Interactive three.js browser UI for the nbody-3d demo")
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--fake", action="store_true", help="Use the local software backend")
-    mode.add_argument("--port", help="Reserved for future FPGA UART backend")
+    mode.add_argument("--port", help="FPGA UART serial port, e.g. /dev/ttyUSB1")
     parser.add_argument("--baud", type=int, default=115200)
     parser.add_argument("--imem", type=Path, default=default_imem())
     parser.add_argument("--skip-load-imem", action="store_true")
+    parser.add_argument("--data-base", type=parse_int_auto, default=DEFAULT_DATA_BASE_BYTES, help="DMEM byte address passed as GPGPU_ARGS[0]")
+    parser.add_argument("--data-limit", type=parse_int_auto, default=DEFAULT_DATA_LIMIT_BYTES, help="End byte address of usable nbody-3d DMEM data region")
     parser.add_argument("--steps-per-frame", type=int, default=1)
     parser.add_argument("--fps", type=float, default=DEFAULT_FPS)
     parser.add_argument(
@@ -944,18 +1109,29 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     args = build_parser().parse_args()
-    if not args.fake and args.port:
-        raise SystemExit("nbody-3d FPGA UART backend is intentionally not implemented yet; use --fake for now")
-    if not args.fake:
-        raise SystemExit("Choose --fake for the current three.js nbody-3d UI")
+    if not args.fake and not args.port:
+        raise SystemExit("Choose --fake or pass --port for the FPGA UART backend")
     dataset = load_dataset(args.dataset)
+    backend_label = f"fake:{dataset.name}" if args.fake else f"fpga-uart:{dataset.name}"
     state = SharedState(
         steps_per_frame=clamp(args.steps_per_frame, 1, 10240),
         target_fps=max(1.0, min(60.0, args.fps)),
-        backend=f"fake:{dataset.name}",
+        backend=backend_label,
     )
     commands: queue.Queue[tuple[str, Any]] = queue.Queue()
-    backend: Backend = FakeNbody3DBackend(dataset)
+    if args.fake:
+        backend: Backend = FakeNbody3DBackend(dataset)
+    else:
+        backend = FpgaNbody3DBackend(
+            port=args.port,
+            baud=args.baud,
+            imem=args.imem,
+            dataset=dataset,
+            data_base_bytes=args.data_base,
+            data_limit_bytes=args.data_limit,
+            skip_load_imem=args.skip_load_imem,
+            verbose=args.verbose,
+        )
     worker = threading.Thread(target=worker_loop, args=(state, commands, backend), daemon=True)
     worker.start()
     server = ControlServer((args.http_host, args.http_port), Handler, state=state, commands=commands)

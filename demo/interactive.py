@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
-"""Interactive nbody FPGA demo UI.
+"""Interactive nbody demo UI using three.js.
 
-This script runs a small local web UI that draws the latest nbody positions on an
-HTML canvas and controls the FPGA through the existing PS UART monitor.  It also
-has a deterministic --fake backend so the UI/control path can be tested without a
-ZedBoard attached.
+This is intentionally independent of the future nbody FPGA adapter.  It gives
+us the browser/controls path now with a deterministic software backend; once
+programs/nbody/fpga.py exists, an FPGA backend can be wired in without
+changing the three.js frontend protocol.
 
 Controls in the browser:
   Space / p   play-pause
   n / →       advance exactly one simulation step
   Enter       advance by the current steps-per-frame speed
+  r           reset to the initial 3D environment
   + / =       increase steps per frame
   - / _       decrease steps per frame
   [ / ]       decrease/increase target FPS
@@ -28,103 +29,136 @@ from dataclasses import dataclass, field
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 DEMO_DIR = Path(__file__).resolve().parent
 REPO_ROOT = DEMO_DIR.parent
-PROGRAMS_DIR = REPO_ROOT / "programs"
-NBODY_PROGRAM_DIR = PROGRAMS_DIR / "nbody"
+PROGRAM_DIR = REPO_ROOT / "programs" / "nbody"
+VENDOR_DIR = DEMO_DIR / "vendor"
+DATASET_DIR = PROGRAM_DIR / "datasets"
 BAREMETAL_DIR = REPO_ROOT / "host" / "baremetal"
-sys.path.insert(0, str(BAREMETAL_DIR))
-sys.path.insert(0, str(PROGRAMS_DIR))
-sys.path.insert(0, str(NBODY_PROGRAM_DIR))
+if str(BAREMETAL_DIR) not in sys.path:
+    sys.path.insert(0, str(BAREMETAL_DIR))
 
-from gpgpu_uart import GpgpuUartMonitor, normalize_word, read_mem_file  # type: ignore[import-not-found]  # noqa: E402
-from fpga import (  # noqa: E402
-    GPU_OUTPUT_BASE_WORDS,
-    GPU_OUTPUT_WORDS,
-    NUM_BODIES,
-    ProgramAdapter,
-    int32_from_hex,
-)
-
+NUM_BODIES = 32
 DEFAULT_HTTP_HOST = "0.0.0.0"
 DEFAULT_HTTP_PORT = 8765
 DEFAULT_FPS = 12.0
-MAX_HISTORY = 400
+MAX_HISTORY = 500
+GPU_ARGS_BASE_WORDS = 0x00000040 // 4
+GPU_ARGS_WORDS = 4
+DEFAULT_DATA_BASE_BYTES = 0x00001000
+DEFAULT_DATA_LIMIT_BYTES = 0x00001800
+STATE_WORDS = NUM_BODIES * 5          # pos_x,pos_y,vel_x,vel_y,mass
+POSITION_OUTPUT_WORDS = NUM_BODIES * 2 # pos_x,pos_y,pos_z
 
 
 def clamp(value: int, lo: int, hi: int) -> int:
     return max(lo, min(hi, value))
 
 
-def normalize_dmem_updates(updates: Any) -> list[tuple[int, list[str]]]:
-    """Normalize adapter DMEM updates to [(offset, normalized_words), ...]."""
-    if not updates:
-        return []
-    if isinstance(updates, tuple) and len(updates) == 2:
-        offset, words = updates
-        return [(int(offset), [normalize_word(word) for word in words])]
-    normalized: list[tuple[int, list[str]]] = []
-    for item in updates:
-        if not isinstance(item, tuple) or len(item) != 2:
-            raise RuntimeError("DMEM updates must be (offset, words) or an iterable of those tuples")
-        offset, words = item
-        normalized.append((int(offset), [normalize_word(word) for word in words]))
-    return normalized
+def parse_int_auto(value: str) -> int:
+    return int(value, 0)
 
 
-class DmemUpdateCache:
-    """Send only DMEM words whose value differs from the last host-written value.
+def u32_hex(value: int) -> str:
+    return f"{value & 0xFFFFFFFF:08x}"
 
-    The PS/PL monitor still accepts contiguous bursts, so changed words are grouped
-    into maximal contiguous ranges instead of being sent one word at a time.
-    """
 
-    def __init__(self) -> None:
-        self.words: dict[int, str] = {}
+def int32_from_hex(word: str) -> int:
+    value = int(word, 16) & 0xFFFFFFFF
+    if value & 0x80000000:
+        value -= 0x100000000
+    return value
 
-    def changed_ranges(self, updates: Any) -> list[tuple[int, list[str]]]:
-        changed: dict[int, str] = {}
-        for offset, words in normalize_dmem_updates(updates):
-            for i, word in enumerate(words):
-                addr = offset + i
-                if self.words.get(addr) != word:
-                    changed[addr] = word
 
-        if not changed:
-            return []
+@dataclass(frozen=True)
+class Dataset:
+    name: str
+    description: str
+    pos_x: list[int]
+    pos_y: list[int]
+    pos_z: list[int]
+    vel_x: list[int]
+    vel_y: list[int]
+    vel_z: list[int]
+    masses: list[int]
 
-        ranges: list[tuple[int, list[str]]] = []
-        sorted_addrs = sorted(changed)
-        start = sorted_addrs[0]
-        current_words = [changed[start]]
-        prev = start
-        for addr in sorted_addrs[1:]:
-            if addr == prev + 1:
-                current_words.append(changed[addr])
-            else:
-                ranges.append((start, current_words))
-                start = addr
-                current_words = [changed[addr]]
-            prev = addr
-        ranges.append((start, current_words))
-        return ranges
 
-    def load_changed(self, uart: GpgpuUartMonitor, updates: Any, *, verbose: bool = False) -> None:
-        for offset, words in self.changed_ranges(updates):
-            if verbose:
-                print(f"[INFO] Loading {len(words)} changed DMEM words at offset {offset}")
-            uart.load_dmem_bin(words, offset=offset)
-            for i, word in enumerate(words):
-                self.words[offset + i] = word
+def resolve_dataset_path(dataset: str | Path) -> Path:
+    """Resolve a dataset name/path for the fake backend only."""
+    raw = Path(dataset)
+    candidates: list[Path]
+    if raw.is_absolute() or raw.parent != Path("."):
+        candidates = [raw]
+    else:
+        suffix_name = raw.name if raw.suffix == ".json" else f"{raw.name}.json"
+        candidates = [DATASET_DIR / suffix_name]
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    choices = ", ".join(sorted(p.stem for p in DATASET_DIR.glob("*.json"))) or "<none>"
+    raise FileNotFoundError(f"dataset {dataset!s} not found; available datasets: {choices}")
+
+
+def _int_triplet(value: Any, *, label: str) -> tuple[int, int, int]:
+    if not isinstance(value, list) or len(value) != 3:
+        raise ValueError(f"{label} must be a 3-element list")
+    try:
+        return int(value[0]), int(value[1]), int(value[2])
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{label} must contain integer values") from exc
+
+
+def load_dataset(dataset: str | Path) -> Dataset:
+    path = resolve_dataset_path(dataset)
+    with path.open("r", encoding="utf-8") as f:
+        raw = json.load(f)
+    bodies = raw.get("bodies") if isinstance(raw, dict) else None
+    if not isinstance(bodies, list) or len(bodies) != NUM_BODIES:
+        raise ValueError(f"{path} must contain exactly {NUM_BODIES} bodies")
+
+    pos_x: list[int] = []
+    pos_y: list[int] = []
+    pos_z: list[int] = []
+    vel_x: list[int] = []
+    vel_y: list[int] = []
+    vel_z: list[int] = []
+    masses: list[int] = []
+    for i, body in enumerate(bodies):
+        if not isinstance(body, dict):
+            raise ValueError(f"{path}: body {i} must be an object")
+        px, py, pz = _int_triplet(body.get("pos"), label=f"{path}: body {i} pos")
+        vx, vy, vz = _int_triplet(body.get("vel"), label=f"{path}: body {i} vel")
+        if "mass" not in body:
+            raise ValueError(f"{path}: body {i} is missing mass")
+        try:
+            mass = int(body["mass"])
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{path}: body {i} mass must be an integer") from exc
+        if mass <= 0:
+            raise ValueError(f"{path}: body {i} mass must be positive")
+        pos_x.append(px); pos_y.append(py); pos_z.append(pz)
+        vel_x.append(vx); vel_y.append(vy); vel_z.append(vz)
+        masses.append(mass)
+    return Dataset(
+        name=str(raw.get("name") or path.stem),
+        description=str(raw.get("description") or ""),
+        pos_x=pos_x,
+        pos_y=pos_y,
+        pos_z=pos_z,
+        vel_x=vel_x,
+        vel_y=vel_y,
+        vel_z=vel_z,
+        masses=masses,
+    )
 
 
 @dataclass
 class Frame:
     step: int
-    positions: list[tuple[int, int]]
+    positions: list[tuple[int, int, int]]
     source: str
     elapsed_ms: float = 0.0
 
@@ -132,7 +166,7 @@ class Frame:
         return {
             "type": "frame",
             "step": self.step,
-            "positions": [[x, y] for x, y in self.positions],
+            "positions": [[x, y, z] for x, y, z in self.positions],
             "source": self.source,
             "elapsed_ms": round(self.elapsed_ms, 3),
         }
@@ -185,6 +219,14 @@ class SharedState:
             self.status = text
         self.publish(self.snapshot())
 
+    def replace_with_frame(self, frame: Frame) -> None:
+        with self.lock:
+            self.frames = [frame]
+            self.current_step = frame.step
+        self.publish({"type": "reset", "frame": frame.to_json()})
+        self.publish(frame.to_json())
+        self.publish(self.snapshot())
+
     def add_frame(self, frame: Frame) -> None:
         with self.lock:
             self.frames.append(frame)
@@ -201,119 +243,248 @@ class Backend:
     def close(self) -> None:
         pass
 
+    def reset(self) -> Frame:
+        raise NotImplementedError
+
     def step(self, steps: int) -> Frame:
         raise NotImplementedError
 
 
-class FakeNbodyBackend(Backend):
-    """Software nbody model matching the native C reference update semantics."""
+class FakeNbody3DBackend(Backend):
+    """Software nbody-3d model matching the current C reference formulas."""
 
     source = "fake"
 
-    def __init__(self) -> None:
+    def __init__(self, dataset: Dataset) -> None:
+        self.dataset = dataset
         self.step_count = 0
-        self.pos_x = [i * 13 - 208 for i in range(NUM_BODIES)]
-        self.pos_y = [((i * 29) & 255) - 128 for i in range(NUM_BODIES)]
-        self.vel_x = [((i & 1) << 1) - 1 for i in range(NUM_BODIES)]
-        self.vel_y = [(((i >> 1) & 1) << 1) - 1 for i in range(NUM_BODIES)]
+        self.pos_x: list[int] = []
+        self.pos_y: list[int] = []
+        self.pos_z: list[int] = []
+        self.vel_x: list[int] = []
+        self.vel_y: list[int] = []
+        self.vel_z: list[int] = []
+        self.masses: list[int] = []
+        self.reset()
 
-    @staticmethod
-    def body_mass(i: int) -> int:
-        return 1 + (i & 3)
+    def body_mass(self, i: int) -> int:
+        return self.masses[i]
 
     @staticmethod
     def sign(x: int) -> int:
         return (x > 0) - (x < 0)
 
     @staticmethod
-    def force_weight(dx: int, dy: int) -> int:
-        dist = abs(dx) + abs(dy)
+    def force_weight(dx: int, dy: int, dz: int) -> int:
+        dist = abs(dx) + abs(dy) + abs(dz)
         return 1 + int(dist < 96) + (int(dist < 32) << 1)
+
+    def reset(self) -> Frame:
+        self.step_count = 0
+        self.pos_x = list(self.dataset.pos_x)
+        self.pos_y = list(self.dataset.pos_y)
+        self.pos_z = list(self.dataset.pos_z)
+        self.vel_x = list(self.dataset.vel_x)
+        self.vel_y = list(self.dataset.vel_y)
+        self.vel_z = list(self.dataset.vel_z)
+        self.masses = list(self.dataset.masses)
+        return Frame(
+            step=0,
+            positions=list(zip(self.pos_x, self.pos_y, self.pos_z)),
+            source=self.source,
+            elapsed_ms=0.0,
+        )
 
     def step(self, steps: int) -> Frame:
         start = time.perf_counter()
         for _ in range(steps):
             next_x = [0] * NUM_BODIES
             next_y = [0] * NUM_BODIES
+            next_z = [0] * NUM_BODIES
             next_vx = [0] * NUM_BODIES
             next_vy = [0] * NUM_BODIES
+            next_vz = [0] * NUM_BODIES
             for tid in range(NUM_BODIES):
                 xi = self.pos_x[tid]
                 yi = self.pos_y[tid]
-                ax = 0
-                ay = 0
+                zi = self.pos_z[tid]
+                ax = ay = az = 0
                 for j in range(NUM_BODIES):
                     dx = self.pos_x[j] - xi
                     dy = self.pos_y[j] - yi
-                    w = self.force_weight(dx, dy) * self.body_mass(j)
+                    dz = self.pos_z[j] - zi
+                    w = self.force_weight(dx, dy, dz) * self.body_mass(j)
                     ax += self.sign(dx) * w
                     ay += self.sign(dy) * w
-                next_vx[tid] = self.vel_x[tid] + (ax >> 2)
-                next_vy[tid] = self.vel_y[tid] + (ay >> 2)
+                    az += self.sign(dz) * w
+                ax_mask = ax >> 31
+                ay_mask = ay >> 31
+                az_mask = az >> 31
+                next_vx[tid] = self.vel_x[tid] + ((ax + (ax_mask & 3)) >> 2)
+                next_vy[tid] = self.vel_y[tid] + ((ay + (ay_mask & 3)) >> 2)
+                next_vz[tid] = self.vel_z[tid] + ((az + (az_mask & 3)) >> 2)
                 next_x[tid] = xi + next_vx[tid]
                 next_y[tid] = yi + next_vy[tid]
+                next_z[tid] = zi + next_vz[tid]
             self.pos_x = next_x
             self.pos_y = next_y
+            self.pos_z = next_z
             self.vel_x = next_vx
             self.vel_y = next_vy
+            self.vel_z = next_vz
             self.step_count += 1
         elapsed_ms = (time.perf_counter() - start) * 1000.0
         return Frame(
             step=self.step_count,
-            positions=list(zip(self.pos_x, self.pos_y)),
+            positions=list(zip(self.pos_x, self.pos_y, self.pos_z)),
             source=self.source,
             elapsed_ms=elapsed_ms,
         )
 
 
-class FpgaUartBackend(Backend):
+class FpgaNbody3DBackend(Backend):
+    """UART/FPGA backend for the pointer-based nbody-3d ABI.
+
+    Startup/reset flow:
+      1. load IMEM once when the backend is constructed, unless skipped
+      2. load the dataset into DMEM at --data-base
+      3. pass that byte pointer through GPGPU_ARGS[0]
+
+    Per displayed frame:
+      1. write GPGPU_ARGS = [data_base, steps, 0, 0]
+      2. run the kernel
+      3. dump pos_x,pos_y,pos_z from the same base region
+      4. send done so the monitor returns to loading state
+    """
+
     source = "fpga-uart"
 
-    def __init__(self, *, port: str, baud: int, imem: Path, skip_load_imem: bool, verbose: bool) -> None:
-        self.adapter = ProgramAdapter(program_dir=NBODY_PROGRAM_DIR)
+    def __init__(
+        self,
+        *,
+        port: str,
+        baud: int,
+        imem: Path,
+        dataset: Dataset,
+        data_base_bytes: int = DEFAULT_DATA_BASE_BYTES,
+        data_limit_bytes: int = DEFAULT_DATA_LIMIT_BYTES,
+        skip_load_imem: bool = False,
+        verbose: bool = False,
+    ) -> None:
+        if data_base_bytes % 4 != 0:
+            raise ValueError("--data-base must be 4-byte aligned")
+        if data_limit_bytes % 4 != 0:
+            raise ValueError("--data-limit must be 4-byte aligned")
+        if data_limit_bytes <= data_base_bytes:
+            raise ValueError("--data-limit must be greater than --data-base")
+        available_words = (data_limit_bytes - data_base_bytes) // 4
+        if available_words < STATE_WORDS:
+            raise ValueError(
+                f"nbody-3d needs {STATE_WORDS} words at --data-base for "
+                "pos_x,pos_y,pos_z,vel_x,vel_y,vel_z,mass, "
+                f"but only {available_words} are available"
+            )
+
+        try:
+            from gpgpu_uart import GpgpuUartMonitor, read_mem_file
+        except ImportError as exc:
+            raise RuntimeError(
+                "FPGA backend requires host/baremetal/gpgpu_uart.py and pyserial. "
+                "Install pyserial in the active environment if import failed because serial is missing."
+            ) from exc
+
+        self.dataset = dataset
+        imem = imem if imem.is_absolute() else REPO_ROOT / imem
+        self.data_base_bytes = data_base_bytes
+        self.data_base_words = data_base_bytes // 4
+        self.step_count = 0
+        self.previous_kernel_args: list[str] | None = None
         self.uart = GpgpuUartMonitor(port, baud, verbose=verbose)
-        self.dmem_cache = DmemUpdateCache()
-        self.verbose = verbose
-        self.run_index = 0
-        self.current_step = 0
+
         if not skip_load_imem:
-            words = read_mem_file(imem)
-            self.uart.load_imem_bin(words, offset=0)
-        self.dmem_cache.load_changed(self.uart, self.adapter.initial_dmem(), verbose=verbose)
+            program_words = read_mem_file(imem)
+            if verbose:
+                print(f"[INFO] Loading {len(program_words)} IMEM word(s) from {imem}", flush=True)
+            self.uart.load_imem_bin(program_words, offset=0)
+        elif verbose:
+            print("[INFO] Skipping IMEM load", flush=True)
+
+    @staticmethod
+    def dataset_state_words(dataset: Dataset) -> list[str]:
+        words: list[int] = []
+        words.extend(dataset.pos_x)
+        words.extend(dataset.pos_y)
+        words.extend(dataset.pos_z)
+        words.extend(dataset.vel_x)
+        words.extend(dataset.vel_y)
+        words.extend(dataset.vel_z)
+        words.extend(dataset.masses)
+        if len(words) != STATE_WORDS:
+            raise ValueError(f"internal error: expected {STATE_WORDS} state words, got {len(words)}")
+        return [u32_hex(word) for word in words]
 
     def close(self) -> None:
         self.uart.close()
 
-    def _parse_positions(self, words: dict[int, str]) -> list[tuple[int, int]]:
-        positions: list[tuple[int, int]] = []
+    def _load_kernel_args(self, *, steps: int) -> None:
+        args = [
+            u32_hex(self.data_base_bytes),
+            u32_hex(steps),
+            u32_hex(0),
+            u32_hex(0),
+        ]
+        if args != self.previous_kernel_args:
+            self.uart.load_dmem_bin(args, offset=GPU_ARGS_BASE_WORDS)
+            self.previous_kernel_args = args
+
+    def _read_positions(self) -> list[tuple[int, int, int]]:
+        words = self.uart.dump_dmem_bin(count=POSITION_OUTPUT_WORDS, offset=self.data_base_words)
+        pos_x_word = self.data_base_words
+        pos_y_word = pos_x_word + NUM_BODIES
+        pos_z_word = pos_y_word + NUM_BODIES
+        positions: list[tuple[int, int, int]] = []
         for body in range(NUM_BODIES):
-            x_addr = GPU_OUTPUT_BASE_WORDS + body * 2
-            y_addr = x_addr + 1
-            if x_addr not in words or y_addr not in words:
-                raise RuntimeError(f"Missing FPGA output word for body {body}: DMEM[{x_addr}], DMEM[{y_addr}]")
-            positions.append((int32_from_hex(words[x_addr]), int32_from_hex(words[y_addr])))
+            x_addr = pos_x_word + body
+            y_addr = pos_y_word + body
+            z_addr = pos_z_word + body
+            if x_addr not in words or y_addr not in words or z_addr not in words:
+                raise RuntimeError(
+                    f"Missing nbody-3d output words for body {body}: "
+                    f"DMEM[{x_addr}], DMEM[{y_addr}], DMEM[{z_addr}]"
+                )
+            positions.append((
+                int32_from_hex(words[x_addr]),
+                int32_from_hex(words[y_addr]),
+                int32_from_hex(words[z_addr]),
+            ))
         return positions
+
+    def reset(self) -> Frame:
+        start = time.perf_counter()
+        self.uart.load_dmem_bin(self.dataset_state_words(self.dataset), offset=self.data_base_words)
+        self.step_count = 0
+        self.previous_kernel_args = None
+        elapsed_ms = (time.perf_counter() - start) * 1000.0
+        return Frame(
+            step=0,
+            positions=list(zip(self.dataset.pos_x, self.dataset.pos_y, self.dataset.pos_z)),
+            source=self.source,
+            elapsed_ms=elapsed_ms,
+        )
 
     def step(self, steps: int) -> Frame:
         start = time.perf_counter()
-        self.dmem_cache.load_changed(
-            self.uart,
-            self.adapter.before_run(
-                run_index=self.run_index,
-                start_step=self.current_step,
-                steps=steps,
-            ),
-            verbose=self.verbose,
-        )
+        self._load_kernel_args(steps=steps)
         self.uart.run()
-        words = self.uart.dump_dmem_bin(count=GPU_OUTPUT_WORDS, offset=GPU_OUTPUT_BASE_WORDS)
-        self.uart.done()
-        self.current_step += steps
-        self.run_index += 1
+        try:
+            positions = self._read_positions()
+        finally:
+            self.uart.done()
+        self.step_count += steps
         elapsed_ms = (time.perf_counter() - start) * 1000.0
         return Frame(
-            step=self.current_step,
-            positions=self._parse_positions(words),
+            step=self.step_count,
+            positions=positions,
             source=self.source,
             elapsed_ms=elapsed_ms,
         )
@@ -324,11 +495,14 @@ HTML = r"""<!doctype html>
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Interactive FPGA nbody</title>
+<title>Interactive FPGA nbody-3d</title>
 <style>
   :root { color-scheme: dark; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
-  body { margin: 0; background: #070b14; color: #e5e7eb; display: grid; grid-template-columns: minmax(680px, 1fr) 360px; height: 100vh; overflow: hidden; }
-  canvas { width: 100%; height: 100vh; display: block; background: #050816; image-rendering: auto; }
+  body { margin: 0; background: #050816; color: #e5e7eb; display: grid; grid-template-columns: minmax(720px, 1fr) 360px; height: 100vh; overflow: hidden; }
+  #view { position: relative; width: 100%; height: 100%; min-width: 0; min-height: 0; overflow: hidden; }
+  #view canvas { display: block; width: 100%; height: 100%; }
+  #view .overlay { position: absolute; left: 14px; bottom: 14px; right: 14px; padding: 10px 12px; border: 1px solid #334155; border-radius: 8px; background: rgba(15,23,42,.78); color: #cbd5e1; font-size: 13px; pointer-events: none; }
+  #view .overlay.error { border-color: #ef4444; color: #fecaca; background: rgba(69,10,10,.86); }
   aside { border-left: 1px solid #273244; padding: 18px; background: linear-gradient(180deg, #0f172a 0%, #0b1020 100%); overflow: auto; box-shadow: -18px 0 42px rgba(0,0,0,.35); }
   button { background: #1f6feb; color: white; border: 0; border-radius: 8px; padding: 10px 12px; margin: 4px; cursor: pointer; font-weight: 700; }
   button.secondary { background: #334155; }
@@ -336,21 +510,25 @@ HTML = r"""<!doctype html>
   .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
   .metric { padding: 10px; border: 1px solid #263348; border-radius: 8px; background: #111827; margin: 8px 0; }
   .label { color: #9ca3af; font-size: 12px; }
-  .value { color: #f8fafc; font-size: 18px; margin-top: 4px; }
+  .value { color: #f8fafc; font-size: 18px; margin-top: 4px; word-break: break-word; }
   kbd { background:#1f2937; border:1px solid #4b5563; border-bottom-width:2px; padding:2px 6px; border-radius:4px; }
-  .ok { color:#34d399; } .busy { color:#fbbf24; } .err { color:#f87171; }
+  .hint { color:#9ca3af; font-size: 13px; line-height: 1.45; }
 </style>
 </head>
 <body>
-<canvas id="view" width="1200" height="900"></canvas>
+<div id="view"></div>
 <aside>
-  <h1>nbody FPGA interactive</h1>
+  <h1>nbody-3d FPGA interactive</h1>
   <div class="grid">
     <button id="play">▶ Play/Pause</button>
     <button id="step1" class="secondary">Step 1</button>
     <button id="stepspeed" class="secondary">Step speed</button>
+    <button id="reset" class="warn">Reset</button>
     <button id="faster" class="secondary">Speed +</button>
     <button id="slower" class="secondary">Speed -</button>
+    <button id="trailfade" class="secondary">Trail fade: On</button>
+    <button id="fadefaster" class="secondary">Fade faster</button>
+    <button id="fadeslower" class="secondary">Fade slower</button>
     <button id="clear" class="warn">Clear trail</button>
   </div>
   <div class="metric"><div class="label">Status</div><div id="status" class="value">connecting...</div></div>
@@ -359,58 +537,280 @@ HTML = r"""<!doctype html>
     <div class="metric"><div class="label">Step</div><div id="step" class="value">0</div></div>
     <div class="metric"><div class="label">Steps/frame</div><div id="spf" class="value">1</div></div>
     <div class="metric"><div class="label">Target FPS</div><div id="fps" class="value">?</div></div>
-    <div class="metric"><div class="label">Last FPGA/UI chunk</div><div id="elapsed" class="value">?</div></div>
-    <div class="metric"><div class="label">Frames</div><div id="frames" class="value">0</div></div>
+    <div class="metric"><div class="label">Last chunk</div><div id="elapsed" class="value">?</div></div>
+    <div class="metric"><div class="label">Trail frames</div><div id="frames" class="value">0</div></div>
+    <div class="metric"><div class="label">Trail fade window</div><div id="fadesteps" class="value">80 steps</div></div>
   </div>
+  <h2>Mouse</h2>
+  <p class="hint">Drag to rotate/orbit. Scroll wheel zooms through three.js OrbitControls.</p>
   <h2>Keyboard</h2>
   <p><kbd>Space</kbd>/<kbd>p</kbd> play/pause</p>
   <p><kbd>n</kbd>/<kbd>→</kbd> step by one</p>
   <p><kbd>Enter</kbd> step by current speed</p>
+  <p><kbd>r</kbd> reset simulation</p>
+  <p><kbd>f</kbd> toggle older-trail fading</p>
+  <p><kbd>,</kbd>/<kbd>.</kbd> fade faster/slower</p>
   <p><kbd>+</kbd>/<kbd>-</kbd> change steps per frame</p>
   <p><kbd>[</kbd>/<kbd>]</kbd> change target FPS</p>
-  <p>Rendering uses browser Canvas + requestAnimationFrame; FPGA data arrives over Server-Sent Events.</p>
 </aside>
-<script>
-const canvas = document.getElementById('view');
-const ctx = canvas.getContext('2d', { alpha: false });
+<script type="importmap">
+{
+  "imports": {
+    "three": "/vendor/three/three.module.js",
+    "three/addons/": "/vendor/three/addons/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+const container = document.getElementById('view');
+function showOverlay(text, isError=false) {
+  let el = document.getElementById('view-overlay');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'view-overlay';
+    el.className = 'overlay';
+    container.appendChild(el);
+  }
+  el.textContent = text;
+  el.className = isError ? 'overlay error' : 'overlay';
+}
+function hideOverlay() {
+  const el = document.getElementById('view-overlay');
+  if (el) el.remove();
+}
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x050816);
+
+const camera = new THREE.PerspectiveCamera(55, 1, 0.1, 12000);
+camera.position.set(440, 360, 680);
+
+let renderer;
+try {
+  renderer = new THREE.WebGLRenderer({antialias: true, powerPreference: 'high-performance'});
+} catch (err) {
+  showOverlay(`Could not create WebGL renderer: ${err && err.message ? err.message : err}. Try enabling browser hardware acceleration/WebGL.`, true);
+  throw err;
+}
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+// Do not leave an inline 1px x 1px CSS size on the canvas.  resize() below
+// sets the real display size.  If this first setSize updates style, the later
+// resize(..., false) path can leave the canvas visibly stuck at 1x1.
+renderer.setSize(1, 1, false);
+container.appendChild(renderer.domElement);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.enableRotate = true;
+controls.enableZoom = true;
+controls.zoomSpeed = 0.85;
+controls.rotateSpeed = 0.72;
+controls.minDistance = 80;
+controls.maxDistance = 4200;
+controls.target.set(0, 0, 0);
+
+scene.add(new THREE.AmbientLight(0xaec6ff, 0.55));
+const keyLight = new THREE.DirectionalLight(0xffffff, 1.8);
+keyLight.position.set(260, 360, 480);
+scene.add(keyLight);
+const rimLight = new THREE.PointLight(0x60a5fa, 500, 2600);
+rimLight.position.set(-420, -120, -360);
+scene.add(rimLight);
+
+const grid = new THREE.GridHelper(900, 18, 0x334155, 0x1e293b);
+grid.material.transparent = true;
+grid.material.opacity = 0.45;
+scene.add(grid);
+
+const axes = new THREE.AxesHelper(180);
+scene.add(axes);
+
+const starGeometry = new THREE.BufferGeometry();
+const starPositions = [];
+let seed = 0x12345678;
+function rand() { seed = (1664525 * seed + 1013904223) >>> 0; return seed / 0x100000000; }
+for (let i = 0; i < 900; i++) {
+  starPositions.push((rand() - .5) * 5000, (rand() - .5) * 5000, (rand() - .5) * 5000);
+}
+starGeometry.setAttribute('position', new THREE.Float32BufferAttribute(starPositions, 3));
+const stars = new THREE.Points(starGeometry, new THREE.PointsMaterial({color: 0x93c5fd, size: 2.0, transparent: true, opacity: 0.42}));
+scene.add(stars);
+
+const colors = [0xffd700,0x38bdf8,0xfb7185,0x4ade80,0xe879f9,0x22d3ee,0xf472b6,0xa3e635];
+const bodies = [];
+const trails = [];
+const trailPositions = [];
+const trailColors = [];
+const trailSteps = [];
+const trailWriteIndex = [];
+const trailBaseOpacity = [];
+const TRAIL_POINTS = 220;
+const TRAIL_FADE_MIN_ALPHA = 0.03;
+const TRAIL_FADE_MIN_POINTS = 5;
+let trailFadeEnabled = true;
+let trailFadeSteps = 80;
+let currentTrailStep = 0;
 let state = {};
-let trail = [];
 let latest = null;
-let dpr = 1;
-let viewW = 1200;
-let viewH = 900;
-let stars = [];
-let camera = null;
-const colors = ['#ffd700','#38bdf8','#fb7185','#4ade80','#e879f9','#22d3ee','#f472b6','#a3e635'];
 
-function resizeCanvas() {
-  dpr = Math.max(1, Math.min(window.devicePixelRatio || 1, 2.5));
-  const rect = canvas.getBoundingClientRect();
-  viewW = Math.max(1, Math.floor(rect.width));
-  viewH = Math.max(1, Math.floor(rect.height));
-  const nextW = Math.floor(viewW * dpr);
-  const nextH = Math.floor(viewH * dpr);
-  if (canvas.width !== nextW || canvas.height !== nextH) {
-    canvas.width = nextW;
-    canvas.height = nextH;
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    buildStars();
-  }
-}
-function buildStars() {
-  stars = [];
-  let seed = 0x12345678;
-  const rand = () => {
-    seed = (1664525 * seed + 1013904223) >>> 0;
-    return seed / 0x100000000;
+function colorComponents(hex) {
+  return {
+    r: ((hex >> 16) & 0xff) / 255,
+    g: ((hex >> 8) & 0xff) / 255,
+    b: (hex & 0xff) / 255,
   };
-  for (let i = 0; i < 180; i++) {
-    stars.push({x: rand() * viewW, y: rand() * viewH, r: 0.35 + rand() * 1.2, a: 0.12 + rand() * 0.38});
+}
+
+function initialPositions() {
+  const out = [];
+  for (let i = 0; i < 32; i++) out.push([i * 13 - 208, ((i * 29) & 255) - 128, ((i * 47) & 255) - 128]);
+  return out;
+}
+
+for (let i = 0; i < 32; i++) {
+  const group = new THREE.Group();
+  const radius = i === 0 ? 13 : 6 + (i % 4) * 0.9;
+  const geo = new THREE.SphereGeometry(radius, 24, 16);
+  const mat = new THREE.MeshStandardMaterial({
+    color: colors[i % colors.length],
+    emissive: colors[i % colors.length],
+    emissiveIntensity: i === 0 ? 0.42 : 0.18,
+    roughness: 0.38,
+    metalness: 0.1,
+  });
+  const mesh = new THREE.Mesh(geo, mat);
+  group.add(mesh);
+  scene.add(group);
+  bodies.push(group);
+
+  const lineArray = new Float32Array(TRAIL_POINTS * 3);
+  const colorArray = new Float32Array(TRAIL_POINTS * 4);
+  const stepArray = new Float32Array(TRAIL_POINTS);
+  const trailGeo = new THREE.BufferGeometry();
+  trailGeo.setAttribute('position', new THREE.BufferAttribute(lineArray, 3));
+  trailGeo.setAttribute('color', new THREE.BufferAttribute(colorArray, 4));
+  trailGeo.setDrawRange(0, 0);
+  const trail = new THREE.Line(trailGeo, new THREE.LineBasicMaterial({vertexColors: true, transparent: true, opacity: 1.0, depthWrite: false}));
+  scene.add(trail);
+  trails.push(trail);
+  trailPositions.push(lineArray);
+  trailColors.push(colorArray);
+  trailSteps.push(stepArray);
+  trailWriteIndex.push(0);
+  trailBaseOpacity.push(i === 0 ? 0.72 : 0.42);
+}
+
+function scaled(p) {
+  // C uses x,y,z.  three.js uses x,y,z too; invert no axes so reset/debug values stay intuitive.
+  return new THREE.Vector3(p[0], p[1], p[2] || 0);
+}
+function rebuildTrailFromScratch() {
+  for (let b = 0; b < trails.length; b++) {
+    trailPositions[b].fill(0);
+    trailColors[b].fill(0);
+    trailSteps[b].fill(0);
+    trailWriteIndex[b] = 0;
+    trails[b].geometry.setDrawRange(0, 0);
+    trails[b].geometry.attributes.position.needsUpdate = true;
+    trails[b].geometry.attributes.color.needsUpdate = true;
+  }
+  updatePanel();
+}
+function refreshTrailFadeButton() {
+  document.getElementById('trailfade').textContent = `Trail fade: ${trailFadeEnabled ? 'On' : 'Off'}`;
+}
+function updateTrailFadeWindow(delta) {
+  if (delta < 0) {
+    trailFadeSteps = Math.max(TRAIL_FADE_MIN_POINTS, Math.floor(trailFadeSteps / 2));
+  } else {
+    trailFadeSteps = Math.min(1000000, Math.max(trailFadeSteps + 1, Math.ceil(trailFadeSteps * 2)));
+  }
+  refreshAllTrailColors();
+  updatePanel();
+}
+function updateTrailColors(bodyIndex, count) {
+  const color = colorComponents(colors[bodyIndex % colors.length]);
+  const arr = trailColors[bodyIndex];
+  const base = trailBaseOpacity[bodyIndex];
+  for (let i = 0; i < TRAIL_POINTS; i++) {
+    const k = i * 4;
+    arr[k+0] = color.r;
+    arr[k+1] = color.g;
+    arr[k+2] = color.b;
+    if (i >= count) {
+      arr[k+3] = 0;
+      continue;
+    }
+    const stepsBehindNewest = currentTrailStep - trailSteps[bodyIndex][i];
+    if (trailFadeEnabled && stepsBehindNewest > trailFadeSteps) {
+      arr[k+3] = 0;
+      continue;
+    }
+    const age = trailFadeEnabled ? 1 - (stepsBehindNewest / Math.max(1, trailFadeSteps)) : 1; // 0=oldest visible, 1=newest
+    const fade = trailFadeEnabled ? (TRAIL_FADE_MIN_ALPHA + Math.pow(Math.max(0, age), 1.35) * (1 - TRAIL_FADE_MIN_ALPHA)) : 1;
+    arr[k+3] = base * fade;
+  }
+  trails[bodyIndex].geometry.attributes.color.needsUpdate = true;
+}
+function refreshAllTrailColors() {
+  for (let b = 0; b < trails.length; b++) {
+    updateTrailColors(b, Math.min(trailWriteIndex[b], TRAIL_POINTS));
   }
 }
-window.addEventListener('resize', resizeCanvas);
-resizeCanvas();
-
+function toggleTrailFade() {
+  trailFadeEnabled = !trailFadeEnabled;
+  refreshTrailFadeButton();
+  refreshAllTrailColors();
+  updatePanel();
+}
+function appendTrail(bodyIndex, v) {
+  const arr = trailPositions[bodyIndex];
+  const steps = trailSteps[bodyIndex];
+  const idx = trailWriteIndex[bodyIndex] % TRAIL_POINTS;
+  arr[idx*3+0] = v.x;
+  arr[idx*3+1] = v.y;
+  arr[idx*3+2] = v.z;
+  steps[idx] = currentTrailStep;
+  trailWriteIndex[bodyIndex] += 1;
+  // Keep the line simple and ordered.  Once full, rewrite a rotated copy.
+  const count = Math.min(trailWriteIndex[bodyIndex], TRAIL_POINTS);
+  if (trailWriteIndex[bodyIndex] > TRAIL_POINTS) {
+    const copy = new Float32Array(TRAIL_POINTS * 3);
+    const stepCopy = new Float32Array(TRAIL_POINTS);
+    for (let i = 0; i < TRAIL_POINTS; i++) {
+      const srcIndex = (trailWriteIndex[bodyIndex] + i) % TRAIL_POINTS;
+      const src = srcIndex * 3;
+      copy[i*3+0] = arr[src+0]; copy[i*3+1] = arr[src+1]; copy[i*3+2] = arr[src+2];
+      stepCopy[i] = steps[srcIndex];
+    }
+    arr.set(copy);
+    steps.set(stepCopy);
+    trailWriteIndex[bodyIndex] = TRAIL_POINTS;
+  }
+  trails[bodyIndex].geometry.setDrawRange(0, count);
+  trails[bodyIndex].geometry.attributes.position.needsUpdate = true;
+  updateTrailColors(bodyIndex, count);
+}
+function applyFrame(frame, {resetTrail=false}={}) {
+  latest = frame;
+  currentTrailStep = frame.step ?? currentTrailStep;
+  if (resetTrail) rebuildTrailFromScratch();
+  const center = new THREE.Vector3();
+  frame.positions.forEach((p, i) => {
+    if (!bodies[i]) return;
+    const v = scaled(p);
+    bodies[i].position.copy(v);
+    center.add(v);
+    appendTrail(i, v);
+  });
+  center.multiplyScalar(1 / Math.max(1, frame.positions.length));
+  controls.target.lerp(center, resetTrail ? 1.0 : 0.08);
+  hideOverlay();
+  updatePanel();
+}
 function post(action, body={}) {
   return fetch('/control', {method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({action, ...body})});
 }
@@ -421,165 +821,73 @@ function updatePanel() {
   setText('step', state.current_step ?? 0);
   setText('spf', state.steps_per_frame ?? '?');
   setText('fps', state.target_fps ?? '?');
-  setText('frames', trail.length);
+  setText('frames', trailWriteIndex[0] || 0);
+  setText('fadesteps', trailFadeEnabled ? `${trailFadeSteps} steps` : 'off');
   if (latest) setText('elapsed', `${latest.elapsed_ms} ms`);
 }
-function ingestFrame(frame) {
-  latest = frame;
-  trail.push(frame);
-  if (trail.length > 400) trail.shift();
-  updatePanel();
+function resize() {
+  const rect = container.getBoundingClientRect();
+  const w = Math.max(1, Math.floor(rect.width));
+  const h = Math.max(1, Math.floor(rect.height));
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+  // Update both drawing-buffer size and CSS display size.  The third argument
+  // must remain true here; otherwise three.js may keep an old inline CSS size
+  // and render a correctly-sized buffer into an invisible 1px canvas.
+  renderer.setSize(w, h, true);
 }
-function boundsForFrames(frames) {
-  let minX=Infinity,maxX=-Infinity,minY=Infinity,maxY=-Infinity;
-  for (const frame of frames) for (const [x,y] of frame.positions) {
-    minX=Math.min(minX,x); maxX=Math.max(maxX,x); minY=Math.min(minY,y); maxY=Math.max(maxY,y);
-  }
-  if (!isFinite(minX)) return null;
-  if (minX === maxX) maxX = minX + 1;
-  if (minY === maxY) maxY = minY + 1;
-  return {minX,maxX,minY,maxY,cx:(minX+maxX)/2,cy:(minY+maxY)/2,span:Math.max(maxX-minX, maxY-minY, 120)};
-}
-function worldMap() {
-  const recent = trail.slice(-120);
-  const b = boundsForFrames(recent.length ? recent : trail);
-  if (!b) return {sx:x=>x, sy:y=>y, scale:1};
-  const margin = 86;
-  const target = {cx:b.cx, cy:b.cy, span:b.span * 1.24};
-  if (!camera) camera = target;
-  const alpha = 0.12;
-  camera = {
-    cx: camera.cx + (target.cx - camera.cx) * alpha,
-    cy: camera.cy + (target.cy - camera.cy) * alpha,
-    span: camera.span + (target.span - camera.span) * alpha,
-  };
-  const drawableW = Math.max(1, viewW - 2 * margin);
-  const drawableH = Math.max(1, viewH - 2 * margin);
-  const scale = Math.min(drawableW, drawableH) / Math.max(camera.span, 1);
-  return {
-    sx: x => viewW / 2 + (x - camera.cx) * scale,
-    sy: y => viewH / 2 - (y - camera.cy) * scale,
-    scale,
-  };
-}
-function drawBackground() {
-  const bg = ctx.createRadialGradient(viewW * 0.46, viewH * 0.42, 20, viewW * 0.50, viewH * 0.50, Math.max(viewW, viewH) * 0.78);
-  bg.addColorStop(0, '#172554');
-  bg.addColorStop(0.42, '#0b1220');
-  bg.addColorStop(1, '#020617');
-  ctx.fillStyle = bg;
-  ctx.fillRect(0, 0, viewW, viewH);
+window.addEventListener('resize', resize);
+resize();
 
-  ctx.save();
-  for (const s of stars) {
-    ctx.globalAlpha = s.a;
-    ctx.fillStyle = '#dbeafe';
-    ctx.beginPath();
-    ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
-    ctx.fill();
-  }
-  ctx.restore();
-
-  ctx.save();
-  ctx.strokeStyle = 'rgba(148,163,184,.11)';
-  ctx.lineWidth = 1;
-  const spacing = 72;
-  for (let x = 0; x < viewW; x += spacing) { ctx.beginPath(); ctx.moveTo(x+.5,0); ctx.lineTo(x+.5,viewH); ctx.stroke(); }
-  for (let y = 0; y < viewH; y += spacing) { ctx.beginPath(); ctx.moveTo(0,y+.5); ctx.lineTo(viewW,y+.5); ctx.stroke(); }
-  ctx.restore();
-}
-function drawOverlay() {
-  const text = latest ? `step ${latest.step}   ${state.backend || latest.source}   ${state.playing ? 'playing' : 'paused'}   ${state.steps_per_frame || 1} step/frame` : 'waiting for frame...';
-  ctx.save();
-  ctx.font = '600 16px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace';
-  const w = ctx.measureText(text).width + 34;
-  ctx.fillStyle = 'rgba(2,6,23,.62)';
-  ctx.strokeStyle = 'rgba(148,163,184,.28)';
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.roundRect(20, 18, w, 42, 14);
-  ctx.fill(); ctx.stroke();
-  ctx.fillStyle = '#e5e7eb';
-  ctx.fillText(text, 37, 44);
-  ctx.restore();
-}
-function draw() {
-  resizeCanvas();
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx.clearRect(0, 0, viewW, viewH);
-  drawBackground();
-  const map = worldMap();
-  if (trail.length) {
-    const bodies = trail[trail.length-1].positions.length;
-    ctx.save();
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    for (let b=0; b<bodies; b++) {
-      let prev = null;
-      for (let i=Math.max(1, trail.length - 180); i<trail.length; i++) {
-        const p0 = trail[i-1].positions[b];
-        const p1 = trail[i].positions[b];
-        if (!p0 || !p1) continue;
-        const age = (i - Math.max(1, trail.length - 180)) / Math.min(180, Math.max(1, trail.length - 1));
-        ctx.beginPath();
-        ctx.moveTo(map.sx(p0[0]), map.sy(p0[1]));
-        ctx.lineTo(map.sx(p1[0]), map.sy(p1[1]));
-        ctx.strokeStyle = colors[b % colors.length] + Math.floor(38 + age * 150).toString(16).padStart(2, '0');
-        ctx.lineWidth = (b === 0 ? 2.8 : 1.55) + age * .45;
-        ctx.stroke();
-        prev = p1;
-      }
-    }
-    ctx.restore();
-  }
-  if (latest) {
-    latest.positions.forEach(([x0,y0], b) => {
-      const x = map.sx(x0), y = map.sy(y0);
-      const radius = b === 0 ? 11 : 5.6;
-      ctx.save();
-      ctx.shadowColor = b === 0 ? '#fde68a' : colors[b % colors.length];
-      ctx.shadowBlur = b === 0 ? 22 : 12;
-      ctx.beginPath(); ctx.arc(x, y, radius + 2.8, 0, Math.PI*2);
-      ctx.fillStyle = b === 0 ? 'rgba(250,204,21,.22)' : colors[b % colors.length] + '35';
-      ctx.fill();
-      ctx.shadowBlur = 0;
-      const g = ctx.createRadialGradient(x - radius*.35, y - radius*.45, 1, x, y, radius);
-      if (b === 0) { g.addColorStop(0, '#fef3c7'); g.addColorStop(.45, '#111827'); g.addColorStop(1, '#020617'); }
-      else { g.addColorStop(0, '#ffffff'); g.addColorStop(.22, colors[b % colors.length]); g.addColorStop(1, '#0f172a'); }
-      ctx.beginPath(); ctx.arc(x, y, radius, 0, Math.PI*2);
-      ctx.fillStyle = g; ctx.fill();
-      ctx.strokeStyle = b === 0 ? '#facc15' : 'rgba(15,23,42,.95)'; ctx.lineWidth = b === 0 ? 2.2 : 1.5; ctx.stroke();
-      ctx.restore();
-    });
-  }
-  drawOverlay();
-  requestAnimationFrame(draw);
-}
-
-new EventSource('/events').onmessage = ev => {
+showOverlay('Loading initial nbody-3d frame...');
+applyFrame({step: 0, positions: initialPositions(), source: 'local-placeholder', elapsed_ms: 0}, {resetTrail: true});
+const events = new EventSource('/events');
+events.onmessage = ev => {
   const msg = JSON.parse(ev.data);
-  if (msg.type === 'frame') ingestFrame(msg);
-  if (msg.type === 'state') { state = msg; if (msg.latest && !latest) ingestFrame(msg.latest); updatePanel(); }
-  if (msg.type === 'error') { state.status = msg.message; updatePanel(); }
+  if (msg.type === 'frame') applyFrame(msg);
+  if (msg.type === 'reset') applyFrame(msg.frame, {resetTrail: true});
+  if (msg.type === 'state') { state = msg; if (msg.latest && (!latest || latest.source === 'local-placeholder')) applyFrame(msg.latest, {resetTrail: true}); updatePanel(); }
+  if (msg.type === 'error') { state.status = msg.message; showOverlay(msg.message, true); updatePanel(); }
 };
-fetch('/state').then(r => r.json()).then(s => { state=s; if (s.latest) ingestFrame(s.latest); updatePanel(); });
+events.onerror = () => showOverlay('Lost /events stream; controls may still work, trying /state fallback...', true);
+fetch('/state')
+  .then(r => r.json())
+  .then(s => { state=s; if (s.latest) applyFrame(s.latest, {resetTrail: true}); updatePanel(); })
+  .catch(err => showOverlay(`Could not fetch /state: ${err && err.message ? err.message : err}`, true));
+
 document.getElementById('play').onclick = () => post('toggle_play');
 document.getElementById('step1').onclick = () => post('step_one');
 document.getElementById('stepspeed').onclick = () => post('step_speed');
+document.getElementById('reset').onclick = () => post('reset_simulation');
 document.getElementById('faster').onclick = () => post('speed_up');
 document.getElementById('slower').onclick = () => post('speed_down');
-document.getElementById('clear').onclick = () => { trail = latest ? [latest] : []; updatePanel(); };
+document.getElementById('trailfade').onclick = () => toggleTrailFade();
+document.getElementById('fadefaster').onclick = () => updateTrailFadeWindow(-1);
+document.getElementById('fadeslower').onclick = () => updateTrailFadeWindow(1);
+document.getElementById('clear').onclick = () => rebuildTrailFromScratch();
+refreshTrailFadeButton();
 document.addEventListener('keydown', ev => {
   if (ev.target && ['INPUT','TEXTAREA'].includes(ev.target.tagName)) return;
   if (ev.key === ' ' || ev.key === 'p') { ev.preventDefault(); post('toggle_play'); }
   else if (ev.key === 'n' || ev.key === 'ArrowRight') { ev.preventDefault(); post('step_one'); }
   else if (ev.key === 'Enter') { ev.preventDefault(); post('step_speed'); }
+  else if (ev.key === 'r' || ev.key === 'R') { ev.preventDefault(); post('reset_simulation'); }
+  else if (ev.key === 'f' || ev.key === 'F') { ev.preventDefault(); toggleTrailFade(); }
+  else if (ev.key === ',') { ev.preventDefault(); updateTrailFadeWindow(-1); }
+  else if (ev.key === '.') { ev.preventDefault(); updateTrailFadeWindow(1); }
   else if (ev.key === '+' || ev.key === '=') { ev.preventDefault(); post('speed_up'); }
   else if (ev.key === '-' || ev.key === '_') { ev.preventDefault(); post('speed_down'); }
   else if (ev.key === '[') { ev.preventDefault(); post('fps_down'); }
   else if (ev.key === ']') { ev.preventDefault(); post('fps_up'); }
 });
-requestAnimationFrame(draw);
+function animate() {
+  requestAnimationFrame(animate);
+  controls.update();
+  stars.rotation.y += 0.00008;
+  bodies.forEach((body, i) => { body.rotation.y += 0.006 + i * 0.0002; });
+  renderer.render(scene, camera);
+}
+animate();
 </script>
 </body>
 </html>
@@ -591,6 +899,7 @@ class ControlServer(ThreadingHTTPServer):
         super().__init__(addr, handler)
         self.state = state
         self.commands = commands
+        self.quiet = False
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -613,6 +922,18 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         if parsed.path == "/":
             self._send(HTTPStatus.OK, HTML.encode("utf-8"), "text/html; charset=utf-8")
+        elif parsed.path.startswith("/vendor/"):
+            try:
+                asset = (DEMO_DIR / parsed.path.lstrip("/")).resolve()
+                asset.relative_to(VENDOR_DIR.resolve())
+            except ValueError:
+                self._send(HTTPStatus.NOT_FOUND, b"not found", "text/plain")
+                return
+            if not asset.is_file():
+                self._send(HTTPStatus.NOT_FOUND, b"not found", "text/plain")
+                return
+            content_type = "text/javascript; charset=utf-8" if asset.suffix == ".js" else "application/octet-stream"
+            self._send(HTTPStatus.OK, asset.read_bytes(), content_type)
         elif parsed.path == "/state":
             self._send(HTTPStatus.OK, json.dumps(self.server.state.snapshot()).encode(), "application/json")
         elif parsed.path == "/events":
@@ -663,9 +984,10 @@ class Handler(BaseHTTPRequestHandler):
         self._send(HTTPStatus.OK, json.dumps({"ok": True}).encode(), "application/json")
 
 
-def apply_control(state: SharedState, commands: "queue.Queue[tuple[str, Any]]") -> int | None:
-    """Apply pending UI commands. Return a manual step count if requested."""
+def apply_control(state: SharedState, commands: "queue.Queue[tuple[str, Any]]") -> tuple[int | None, bool]:
+    """Apply pending UI commands. Return (manual step count, reset requested)."""
     manual_step: int | None = None
+    reset_requested = False
     while True:
         try:
             action, data = commands.get_nowait()
@@ -684,6 +1006,9 @@ def apply_control(state: SharedState, commands: "queue.Queue[tuple[str, Any]]") 
             elif action == "step_speed":
                 state.playing = False
                 manual_step = state.steps_per_frame
+            elif action == "reset_simulation":
+                state.playing = False
+                reset_requested = True
             elif action == "speed_up":
                 state.steps_per_frame = clamp(state.steps_per_frame * 2, 1, 10240)
             elif action == "speed_down":
@@ -693,20 +1018,33 @@ def apply_control(state: SharedState, commands: "queue.Queue[tuple[str, Any]]") 
             elif action == "fps_down":
                 state.target_fps = max(1.0, state.target_fps - 1.0)
             elif action == "set_speed":
-                state.steps_per_frame = clamp(int(data.get("steps_per_frame", state.steps_per_frame)), 1, 4096)
+                state.steps_per_frame = clamp(int(data.get("steps_per_frame", state.steps_per_frame)), 1, 10240)
             elif action == "set_fps":
                 state.target_fps = float(max(1.0, min(60.0, float(data.get("target_fps", state.target_fps)))))
             else:
                 state.status = f"ignored unknown action: {action}"
         state.publish(state.snapshot())
-    return manual_step
+    return manual_step, reset_requested
 
 
 def worker_loop(state: SharedState, commands: "queue.Queue[tuple[str, Any]]", backend: Backend) -> None:
+    state.replace_with_frame(backend.reset())
     state.set_status("ready")
     try:
         while not state.stop_event.is_set():
-            manual_step = apply_control(state, commands)
+            manual_step, reset_requested = apply_control(state, commands)
+            if reset_requested:
+                with state.lock:
+                    state.busy = True
+                    state.status = "resetting"
+                state.publish(state.snapshot())
+                frame = backend.reset()
+                state.replace_with_frame(frame)
+                with state.lock:
+                    state.busy = False
+                    state.status = "ready"
+                state.publish(state.snapshot())
+                continue
             with state.lock:
                 playing = state.playing
                 steps = state.steps_per_frame
@@ -728,7 +1066,7 @@ def worker_loop(state: SharedState, commands: "queue.Queue[tuple[str, Any]]", ba
             if playing:
                 delay = max(0.0, (1.0 / target_fps) - (frame.elapsed_ms / 1000.0))
                 time.sleep(delay)
-    except Exception as exc:  # keep server alive so the browser shows the failure
+    except Exception as exc:
         with state.lock:
             state.busy = False
             state.playing = False
@@ -740,19 +1078,26 @@ def worker_loop(state: SharedState, commands: "queue.Queue[tuple[str, Any]]", ba
 
 
 def default_imem() -> Path:
-    return NBODY_PROGRAM_DIR / "nbody_instructions.mem"
+    return PROGRAM_DIR / "nbody-3d_instructions.mem"
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Interactive browser/keyboard UI for the FPGA nbody demo")
+    parser = argparse.ArgumentParser(description="Interactive three.js browser UI for the nbody-3d demo")
     mode = parser.add_mutually_exclusive_group()
-    mode.add_argument("--fake", action="store_true", help="Use a software backend instead of UART/FPGA")
-    mode.add_argument("--port", help="UART serial port for the ZedBoard PS monitor, e.g. /dev/ttyACM0")
+    mode.add_argument("--fake", action="store_true", help="Use the local software backend")
+    mode.add_argument("--port", help="FPGA UART serial port, e.g. /dev/ttyUSB1")
     parser.add_argument("--baud", type=int, default=115200)
     parser.add_argument("--imem", type=Path, default=default_imem())
     parser.add_argument("--skip-load-imem", action="store_true")
+    parser.add_argument("--data-base", type=parse_int_auto, default=DEFAULT_DATA_BASE_BYTES, help="DMEM byte address passed as GPGPU_ARGS[0]")
+    parser.add_argument("--data-limit", type=parse_int_auto, default=DEFAULT_DATA_LIMIT_BYTES, help="End byte address of usable nbody-3d DMEM data region")
     parser.add_argument("--steps-per-frame", type=int, default=1)
     parser.add_argument("--fps", type=float, default=DEFAULT_FPS)
+    parser.add_argument(
+        "--dataset",
+        default="default",
+        help="Fake-backend initial condition dataset name/path (default: default). Names are read from programs/nbody-3d/datasets/.",
+    )
     parser.add_argument("--http-host", default=DEFAULT_HTTP_HOST)
     parser.add_argument("--http-port", type=int, default=DEFAULT_HTTP_PORT)
     parser.add_argument("--no-browser", action="store_true")
@@ -763,21 +1108,25 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> int:
     args = build_parser().parse_args()
     if not args.fake and not args.port:
-        raise SystemExit("Choose --fake for local testing or pass --port /dev/tty... for FPGA UART mode")
+        raise SystemExit("Choose --fake or pass --port for the FPGA UART backend")
+    dataset = load_dataset(args.dataset)
+    backend_label = f"fake:{dataset.name}" if args.fake else f"fpga-uart:{dataset.name}"
     state = SharedState(
         steps_per_frame=clamp(args.steps_per_frame, 1, 10240),
         target_fps=max(1.0, min(60.0, args.fps)),
-        backend="fake" if args.fake else "fpga-uart",
+        backend=backend_label,
     )
     commands: queue.Queue[tuple[str, Any]] = queue.Queue()
     if args.fake:
-        backend: Backend = FakeNbodyBackend()
-        state.add_frame(backend.step(0))
+        backend: Backend = FakeNbody3DBackend(dataset)
     else:
-        backend = FpgaUartBackend(
+        backend = FpgaNbody3DBackend(
             port=args.port,
             baud=args.baud,
             imem=args.imem,
+            dataset=dataset,
+            data_base_bytes=args.data_base,
+            data_limit_bytes=args.data_limit,
             skip_load_imem=args.skip_load_imem,
             verbose=args.verbose,
         )
@@ -785,8 +1134,10 @@ def main() -> int:
     worker.start()
     server = ControlServer((args.http_host, args.http_port), Handler, state=state, commands=commands)
     url = f"http://{args.http_host}:{args.http_port}/"
-    print(f"[INFO] Interactive nbody UI: {url}", flush=True)
-    print("[INFO] Browser keys: Space play/pause, n step one, Enter step by speed, +/- speed", flush=True)
+    print(f"[INFO] Interactive nbody-3d three.js UI: {url}", flush=True)
+    print(f"[INFO] Dataset: {dataset.name}", flush=True)
+    print("[INFO] Mouse: drag to rotate/orbit, scroll to zoom", flush=True)
+    print("[INFO] Browser keys: Space play/pause, n step one, r reset, Enter step by speed, +/- speed", flush=True)
     if not args.no_browser:
         webbrowser.open(url)
     try:

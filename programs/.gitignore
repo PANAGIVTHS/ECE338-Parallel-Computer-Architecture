@@ -2,7 +2,6 @@
 *.asm
 *_x86
 *.csv
-!*_program.asm
 *.gif
 *.map
 *.mp4
