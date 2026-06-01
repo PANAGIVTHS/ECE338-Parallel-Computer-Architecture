@@ -6,12 +6,10 @@
 /* Linker-provided DMEM symbols from gpgpu.ld.  These are byte addresses from
  * the RISC-V core's point of view; host UART DMEM word offset = address / 4. */
 extern volatile int __gpu_args_base[];
-extern volatile int __gpu_output_base[];
 extern char __gpu_stack_bottom[];
 extern char __stack_top[];
 
 #define GPGPU_ARGS   ((volatile int *)__gpu_args_base)
-#define GPGPU_OUTPUT ((volatile int *)__gpu_output_base)
 
 #define GPGPU_NUM_CORES    32u
 #define GPGPU_STACK_STRIDE 64u

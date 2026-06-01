@@ -1,83 +1,73 @@
 #!/usr/bin/env bash
 
-set -e
+set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROGRAMS_DIR="$SCRIPT_DIR"
 
-# ==========================================
-# Discover available programs
-# ==========================================
 mapfile -t PROGRAMS < <(
     find "$PROGRAMS_DIR" -mindepth 1 -maxdepth 1 -type d ! -name '__pycache__' \
-    | xargs -n1 basename \
+    | xargs -r -n1 basename \
     | sort
 )
 
-if [ ${#PROGRAMS[@]} -eq 0 ]; then
+if [[ ${#PROGRAMS[@]} -eq 0 ]]; then
     echo "No program directories found."
     exit 1
 fi
 
-# ==========================================
-# Defaults
-# ==========================================
 SELECTED=""
 TARGET="all"
+
 RUN_X86=""
-VISUALIZE=""
 RUN_FPGA=0
+VISUALIZE=""
+
 FPGA_PORT=""
 FPGA_BAUD=115200
-FPGA_RUNS=""
-FPGA_STEPS_PER_RUN=50
-FPGA_TOTAL_STEPS=""
+FPGA_KERNEL_CALLS=""
 FPGA_SKIP_LOAD_IMEM=0
+FPGA_VERBOSE=0
+FPGA_EXTRA_ARGS=()
+
 RUN_FLAG_PROVIDED=0
 VISUALIZE_FLAG_PROVIDED=0
 
-# ==========================================
-# Print usage
-# ==========================================
 usage() {
-    echo "Usage:"
-    echo "  $0                              # Interactive selection"
-    echo "  $0 -p PROGRAM                   # Compile selected program"
-    echo "  $0 --program NAME"
-    echo ""
-    echo "Optional build targets:"
-    echo "  all     (default)"
-    echo "  riscv"
-    echo "  x86"
-    echo "  clean"
-    echo ""
-    echo "Run options:"
-    echo "  -x, --x86, --run-x86            Run the compiled native x86 binary"
-    echo "  --no-x86                        Do not run the native x86 binary"
-    echo "  -v, --visualize                 Run visualize.py if the program has one"
-    echo "  --no-visualize                  Do not run visualization"
-    echo "  --fpga                          Run the program on FPGA through UART"
-    echo "  --port PORT                     UART serial port for --fpga, e.g. /dev/ttyUSB1"
-    echo "  --baud BAUD                     UART baud rate for --fpga (default: 115200)"
-    echo "  --steps N                       Logical program steps per FPGA kernel run (default: 50)"
-    echo "  --runs N                        Number of FPGA kernel launches/chunks"
-    echo "  --total-steps N                 Run enough FPGA chunks to cover N logical steps"
-    echo "  --skip-load-imem                Reuse already-loaded IMEM for --fpga"
-    echo ""
-    echo "If neither x86, FPGA, nor visualization options are provided, the script prompts."
-    echo "x86 output is written to: programs/<program>/data.csv"
-    echo ""
-    echo "Examples:"
-    echo "  $0"
-    echo "  $0 -p nbody --x86 --visualize"
-    echo "  $0 -p nbody --fpga --port /dev/ttyUSB1 --steps 50 --runs 10 --visualize"
-    echo "  $0 --program simple riscv --no-x86 --no-visualize"
-    echo "  $0 -p differences clean"
+    cat <<EOF
+Usage:
+  $0
+  $0 -p PROGRAM
+  $0 --program NAME
+
+Optional build targets:
+  all     (default)
+  riscv
+  x86
+  clean
+
+Generic run options:
+  -x, --x86, --run-x86            Run the compiled native x86 binary
+  --no-x86                        Do not run the native x86 binary
+  -v, --visualize                 Run visualize.py if the program has one
+  --no-visualize                  Do not run visualization
+  --fpga                          Run the program on FPGA through UART
+  --port PORT                     UART serial port for --fpga, e.g. /dev/ttyUSB1
+  --baud BAUD                     UART baud rate for --fpga (default: 115200)
+  --kernel-calls N                Number of FPGA kernel launches
+  --skip-load-imem                Reuse already-loaded IMEM for --fpga
+  --fpga-verbose                  Print verbose FPGA/UART framework logs
+
+Adapter-specific FPGA options:
+  Put program-specific options after -- and they will be forwarded to fpga_run.py
+  and then to programs/<program>/fpga.py.
+
+Examples:
+  $0 -p nbody riscv --fpga --port /dev/ttyUSB1 --kernel-calls 1000 --visualize -- --steps 1
+  $0 -p mandelbrot riscv --fpga --port /dev/ttyUSB1 --kernel-calls 10240 --visualize -- --frames 160
+EOF
 }
 
-# ==========================================
-# Parse arguments
-# ==========================================
 while [[ $# -gt 0 ]]; do
     case "$1" in
         -p|--program)
@@ -132,40 +122,37 @@ while [[ $# -gt 0 ]]; do
             FPGA_BAUD="$2"
             shift 2
             ;;
-        --steps|--steps-per-run)
+        --kernel-calls)
             if [[ $# -lt 2 ]]; then
                 echo "Missing value for $1"
                 exit 1
             fi
-            FPGA_STEPS_PER_RUN="$2"
-            shift 2
-            ;;
-        --runs)
-            if [[ $# -lt 2 ]]; then
-                echo "Missing value for $1"
-                exit 1
-            fi
-            FPGA_RUNS="$2"
-            shift 2
-            ;;
-        --total-steps)
-            if [[ $# -lt 2 ]]; then
-                echo "Missing value for $1"
-                exit 1
-            fi
-            FPGA_TOTAL_STEPS="$2"
+            FPGA_KERNEL_CALLS="$2"
             shift 2
             ;;
         --skip-load-imem)
             FPGA_SKIP_LOAD_IMEM=1
             shift
             ;;
+        --fpga-verbose)
+            FPGA_VERBOSE=1
+            shift
+            ;;
+        --)
+            shift
+            FPGA_EXTRA_ARGS+=("$@")
+            break
+            ;;
         -h|--help)
             usage
             exit 0
             ;;
         *)
-            echo "Unknown option: $1"
+            echo "Unknown generic option: $1"
+            echo ""
+            echo "If this is a program-specific FPGA option, put it after --."
+            echo "Example:"
+            echo "  $0 -p nbody --fpga --port /dev/ttyUSB1 --kernel-calls 1000 -- --steps 1"
             echo ""
             usage
             exit 1
@@ -173,9 +160,6 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# ==========================================
-# Helpers
-# ==========================================
 yes_no_prompt() {
     local prompt="$1"
     local answer=""
@@ -190,15 +174,12 @@ yes_no_prompt() {
     done
 }
 
-# ==========================================
-# Interactive selection if needed
-# ==========================================
 if [[ -z "$SELECTED" ]]; then
     echo "Available programs:"
     echo ""
 
     for i in "${!PROGRAMS[@]}"; do
-        printf "  [%d] %s\n" "$((i+1))" "${PROGRAMS[$i]}"
+        printf "  [%d] %s\n" "$((i + 1))" "${PROGRAMS[$i]}"
     done
 
     echo ""
@@ -210,7 +191,6 @@ if [[ -z "$SELECTED" ]]; then
     fi
 
     INDEX=$((CHOICE - 1))
-
     if (( INDEX < 0 || INDEX >= ${#PROGRAMS[@]} )); then
         echo "Selection out of range."
         exit 1
@@ -219,11 +199,7 @@ if [[ -z "$SELECTED" ]]; then
     SELECTED="${PROGRAMS[$INDEX]}"
 fi
 
-# ==========================================
-# Validate selected program
-# ==========================================
 VALID=0
-
 for p in "${PROGRAMS[@]}"; do
     if [[ "$p" == "$SELECTED" ]]; then
         VALID=1
@@ -231,7 +207,7 @@ for p in "${PROGRAMS[@]}"; do
     fi
 done
 
-if [[ $VALID -eq 0 ]]; then
+if [[ "$VALID" -eq 0 ]]; then
     echo "Program '$SELECTED' does not exist."
     exit 1
 fi
@@ -241,16 +217,13 @@ X86_EXE="$PROGRAM_DIR/${SELECTED}_x86"
 DATA_CSV="$PROGRAM_DIR/data.csv"
 VISUALIZE_SCRIPT="$PROGRAM_DIR/visualize.py"
 
-# ==========================================
-# Prompt for run/visualize behavior if needed
-# ==========================================
 if [[ "$TARGET" == "clean" ]]; then
     RUN_X86=0
     VISUALIZE=0
-elif [[ "$RUN_FPGA" -eq 1 && $RUN_FLAG_PROVIDED -eq 0 && $VISUALIZE_FLAG_PROVIDED -eq 0 ]]; then
+elif [[ "$RUN_FPGA" -eq 1 && "$RUN_FLAG_PROVIDED" -eq 0 && "$VISUALIZE_FLAG_PROVIDED" -eq 0 ]]; then
     RUN_X86=0
     VISUALIZE=0
-elif [[ $RUN_FLAG_PROVIDED -eq 0 && $VISUALIZE_FLAG_PROVIDED -eq 0 ]]; then
+elif [[ "$RUN_FLAG_PROVIDED" -eq 0 && "$VISUALIZE_FLAG_PROVIDED" -eq 0 ]]; then
     if yes_no_prompt "Run the native x86 version after compiling?"; then
         RUN_X86=1
     else
@@ -271,10 +244,7 @@ else
     fi
 fi
 
-# Visualization normally needs fresh data from the native run. If the user asked
-# for visualization but did not make an explicit x86/no-x86 choice, enable x86
-# automatically so programs/<program>/data.csv is regenerated first.
-if [[ "$VISUALIZE" -eq 1 && "$RUN_X86" -eq 0 && "$RUN_FPGA" -eq 0 && $RUN_FLAG_PROVIDED -eq 0 ]]; then
+if [[ "$VISUALIZE" -eq 1 && "$RUN_X86" -eq 0 && "$RUN_FPGA" -eq 0 && "$RUN_FLAG_PROVIDED" -eq 0 ]]; then
     echo "Visualization needs $DATA_CSV, so enabling x86 run."
     RUN_X86=1
 fi
@@ -295,16 +265,14 @@ if [[ "$RUN_X86" -eq 1 && "$TARGET" == "riscv" ]]; then
     exit 1
 fi
 
-# ==========================================
-# Build
-# ==========================================
 echo ""
 echo "=========================================="
-echo "Program   : $SELECTED"
-echo "Target    : $TARGET"
-echo "Run x86   : $RUN_X86"
-echo "Run FPGA  : $RUN_FPGA"
-echo "Visualize : $VISUALIZE"
+echo "Program      : $SELECTED"
+echo "Target       : $TARGET"
+echo "Run x86      : $RUN_X86"
+echo "Run FPGA     : $RUN_FPGA"
+echo "Kernel calls : ${FPGA_KERNEL_CALLS:-1}"
+echo "Visualize    : $VISUALIZE"
 echo "=========================================="
 echo ""
 
@@ -315,9 +283,6 @@ if [[ "$RUN_FPGA" -eq 1 ]]; then
     make -C "$PROGRAMS_DIR" PROG="$SELECTED" "$SELECTED/${SELECTED}_instructions.mem"
 fi
 
-# ==========================================
-# Optional x86 run
-# ==========================================
 if [[ "$RUN_X86" -eq 1 ]]; then
     if [[ ! -x "$X86_EXE" ]]; then
         echo "x86 executable not found or not executable: $X86_EXE"
@@ -331,39 +296,31 @@ if [[ "$RUN_X86" -eq 1 ]]; then
     "$X86_EXE" > "$DATA_CSV"
 fi
 
-
-# ==========================================
-# Optional FPGA run
-# ==========================================
 if [[ "$RUN_FPGA" -eq 1 ]]; then
     FPGA_ARGS=(
         --program "$SELECTED"
         --port "$FPGA_PORT"
         --baud "$FPGA_BAUD"
-        --steps-per-run "$FPGA_STEPS_PER_RUN"
+        --kernel-calls "${FPGA_KERNEL_CALLS:-1}"
     )
 
-    if [[ -n "$FPGA_RUNS" ]]; then
-        FPGA_ARGS+=(--runs "$FPGA_RUNS")
-    fi
-    if [[ -n "$FPGA_TOTAL_STEPS" ]]; then
-        FPGA_ARGS+=(--total-steps "$FPGA_TOTAL_STEPS")
-    fi
     if [[ "$FPGA_SKIP_LOAD_IMEM" -eq 1 ]]; then
         FPGA_ARGS+=(--skip-load-imem)
     fi
     if [[ "$VISUALIZE" -eq 0 ]]; then
         FPGA_ARGS+=(--no-visualize)
     fi
+    if [[ "$FPGA_VERBOSE" -eq 1 ]]; then
+        FPGA_ARGS+=(--verbose)
+    fi
+
+    FPGA_ARGS+=("${FPGA_EXTRA_ARGS[@]}")
 
     echo ""
     echo "Running FPGA program through UART..."
     python3 "$PROGRAMS_DIR/fpga_run.py" "${FPGA_ARGS[@]}"
 fi
 
-# ==========================================
-# Optional visualization
-# ==========================================
 if [[ "$VISUALIZE" -eq 1 && "$RUN_FPGA" -eq 0 ]]; then
     if [[ -f "$VISUALIZE_SCRIPT" ]]; then
         echo ""
