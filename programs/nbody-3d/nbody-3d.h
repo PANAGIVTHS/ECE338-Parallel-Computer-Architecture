@@ -54,11 +54,6 @@ static inline __attribute__((always_inline)) int init_vz(unsigned int i)
     return (int)(((i >> 2) & 1u) << 1) - 1;
 }
 
-static inline __attribute__((always_inline)) int body_mass(unsigned int i)
-{
-    return 1 + (int)(i & 3u);
-}
-
 static inline __attribute__((always_inline)) int force_weight(int dx, int dy, int dz)
 {
     int dist = iabs_int(dx) + iabs_int(dy) + iabs_int(dz);

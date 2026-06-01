@@ -21,8 +21,9 @@
 #define VEL_X_OFFSET (3u * CORES)
 #define VEL_Y_OFFSET (4u * CORES)
 #define VEL_Z_OFFSET (5u * CORES)
+#define MASS_OFFSET (6u * CORES)
 
-#define STATE_WORDS  (6u * CORES)
+#define STATE_WORDS  (7u * CORES)
 
 /*
  * One lane/body update.
@@ -48,6 +49,7 @@ static inline __attribute__((always_inline)) void nbody_3d_lane(
     volatile int *vel_x = base + VEL_X_OFFSET;
     volatile int *vel_y = base + VEL_Y_OFFSET;
     volatile int *vel_z = base + VEL_Z_OFFSET;
+    volatile int *mass = base + MASS_OFFSET;
 
     int reset_mask = -nonzero_int(reset);
 
@@ -83,7 +85,7 @@ static inline __attribute__((always_inline)) void nbody_3d_lane(
             int dy = yj - yi;
             int dz = zj - zi;
 
-            int w = force_weight(dx, dy, dz) * body_mass(j);
+            int w = force_weight(dx, dy, dz) * mass[j];
 
             ax += sign_int(dx) * w;
             ay += sign_int(dy) * w;
