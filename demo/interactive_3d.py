@@ -163,15 +163,19 @@ class Frame:
     positions: list[tuple[int, int, int]]
     source: str
     elapsed_ms: float = 0.0
+    masses: list[int] = field(default_factory=list)
 
     def to_json(self) -> dict[str, Any]:
-        return {
+        event = {
             "type": "frame",
             "step": self.step,
             "positions": [[x, y, z] for x, y, z in self.positions],
             "source": self.source,
             "elapsed_ms": round(self.elapsed_ms, 3),
         }
+        if self.masses:
+            event["masses"] = list(self.masses)
+        return event
 
 
 @dataclass
@@ -295,6 +299,7 @@ class FakeNbody3DBackend(Backend):
             positions=list(zip(self.pos_x, self.pos_y, self.pos_z)),
             source=self.source,
             elapsed_ms=0.0,
+            masses=list(self.masses),
         )
 
     def step(self, steps: int) -> Frame:
@@ -341,6 +346,7 @@ class FakeNbody3DBackend(Backend):
             positions=list(zip(self.pos_x, self.pos_y, self.pos_z)),
             source=self.source,
             elapsed_ms=elapsed_ms,
+            masses=list(self.masses),
         )
 
 
@@ -472,6 +478,7 @@ class FpgaNbody3DBackend(Backend):
             positions=list(zip(self.dataset.pos_x, self.dataset.pos_y, self.dataset.pos_z)),
             source=self.source,
             elapsed_ms=elapsed_ms,
+            masses=list(self.dataset.masses),
         )
 
     def step(self, steps: int) -> Frame:
@@ -489,6 +496,7 @@ class FpgaNbody3DBackend(Backend):
             positions=positions,
             source=self.source,
             elapsed_ms=elapsed_ms,
+            masses=list(self.dataset.masses),
         )
 
 
@@ -643,6 +651,8 @@ scene.add(stars);
 
 const colors = [0xffd700,0x38bdf8,0xfb7185,0x4ade80,0xe879f9,0x22d3ee,0xf472b6,0xa3e635];
 const bodies = [];
+const bodyMeshes = [];
+const bodyMasses = Array(32).fill(1);
 const trails = [];
 const trailPositions = [];
 const trailColors = [];
@@ -672,14 +682,36 @@ function initialPositions() {
   return out;
 }
 
+function visualRadiusForMass(mass) {
+  // Use cube-root scaling so rendered sphere volume tracks mass instead of
+  // making a mass-1000 body 1000x wider.  Clamp keeps malformed values sane.
+  const m = Number.isFinite(Number(mass)) && Number(mass) > 0 ? Number(mass) : 1;
+  return THREE.MathUtils.clamp(4.5 + Math.cbrt(m) * 3.5, 6.0, 48.0);
+}
+function applyMassToBody(i, mass) {
+  if (!bodies[i]) return;
+  const radius = visualRadiusForMass(mass);
+  bodies[i].scale.setScalar(radius);
+  bodies[i].userData.mass = mass;
+  if (bodyMeshes[i]) {
+    bodyMeshes[i].material.emissiveIntensity = mass >= 64 ? 0.55 : 0.16 + Math.min(0.24, Math.cbrt(Math.max(1, mass)) * 0.035);
+  }
+}
+function updateBodyMasses(masses) {
+  if (!Array.isArray(masses)) return;
+  for (let i = 0; i < Math.min(masses.length, bodies.length); i++) {
+    bodyMasses[i] = masses[i];
+    applyMassToBody(i, masses[i]);
+  }
+}
+
 for (let i = 0; i < 32; i++) {
   const group = new THREE.Group();
-  const radius = i === 0 ? 13 : 6 + (i % 4) * 0.9;
-  const geo = new THREE.SphereGeometry(radius, 24, 16);
+  const geo = new THREE.SphereGeometry(1, 24, 16);
   const mat = new THREE.MeshStandardMaterial({
     color: colors[i % colors.length],
     emissive: colors[i % colors.length],
-    emissiveIntensity: i === 0 ? 0.42 : 0.18,
+    emissiveIntensity: 0.18,
     roughness: 0.38,
     metalness: 0.1,
   });
@@ -687,6 +719,8 @@ for (let i = 0; i < 32; i++) {
   group.add(mesh);
   scene.add(group);
   bodies.push(group);
+  bodyMeshes.push(mesh);
+  applyMassToBody(i, bodyMasses[i]);
 
   const lineArray = new Float32Array(TRAIL_POINTS * 3);
   const colorArray = new Float32Array(TRAIL_POINTS * 4);
@@ -798,6 +832,7 @@ function appendTrail(bodyIndex, v) {
 }
 function applyFrame(frame, {resetTrail=false}={}) {
   latest = frame;
+  if (frame.masses) updateBodyMasses(frame.masses);
   currentTrailStep = frame.step ?? currentTrailStep;
   if (resetTrail) rebuildTrailFromScratch();
   const center = new THREE.Vector3();
