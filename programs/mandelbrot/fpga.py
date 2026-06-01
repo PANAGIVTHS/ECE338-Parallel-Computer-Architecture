@@ -1,181 +1,377 @@
-"""FPGA execution adapter for the mandelbrot program.
+"""FPGA execution adapter for the Mandelbrot program.
 
-One kernel launch computes one 64-pixel row.
-64 kernel launches compute one full 64x64 zoom frame.
+This adapter targets the refactored programs/fpga_run.py API.
+
+The runner is generic and only knows how to:
+  - load IMEM
+  - write GPGPU_ARGS when they change
+  - run one kernel call
+  - dump the DMEM window requested by this adapter
+  - pass the dumped words back to this adapter
+
+Mandelbrot-specific ABI
+-----------------------
+
+Because GPGPU_ARGS has only 4 words and GPGPU_ARGS[0] is now used as an output
+pointer, row and scale_q are packed into one argument.
+
+GPGPU_ARGS / DMEM[16..19]:
+
+    GPGPU_ARGS[0] = output row pointer, byte address, default 0x00001000
+    GPGPU_ARGS[1] = packed row + scale_q
+                    bits [31:26] = row, 0..63
+                    bits [25:0]  = scale_q
+    GPGPU_ARGS[2] = center_re_q
+    GPGPU_ARGS[3] = center_im_q
+
+The C kernel can unpack it like this:
+
+    #define MANDEL_ROW_SHIFT 26
+    #define MANDEL_SCALE_MASK ((1u << MANDEL_ROW_SHIFT) - 1u)
+
+    volatile int *output = (volatile int *)(uintptr_t)GPGPU_ARGS[0];
+
+    unsigned int packed = (unsigned int)GPGPU_ARGS[1];
+    unsigned int row = packed >> MANDEL_ROW_SHIFT;
+    int scale_q = (int)(packed & MANDEL_SCALE_MASK);
+
+    int center_re_q = GPGPU_ARGS[2];
+    int center_im_q = GPGPU_ARGS[3];
+
+Default output layout:
+
+    output[64] at --data-base
+
+Each kernel call computes one 64-pixel row. 64 kernel calls form one full frame.
+The adapter writes CSV rows in the format expected by visualize.py:
+
+    frame,row,p0,p1,...,p63
 """
 
 from __future__ import annotations
 
+import argparse
 import csv
 import subprocess
 import sys
 from pathlib import Path
 
+from fpga_run import DmemWindow, ProgramAdapter as BaseProgramAdapter
+
+
 WIDTH = 64
 HEIGHT = 64
-OUTPUT_WORDS = WIDTH
 
-# Must match mandelbrot.c.
-FP_SHIFT = 13
-MAX_ITER = 64
+DEFAULT_DATA_BASE_BYTES = 0x00001000
+DEFAULT_DATA_LIMIT_BYTES = 0x00001800
 
-GPU_ARGS_BASE_WORDS = 0x00000040 // 4      # 16
-GPU_OUTPUT_BASE_WORDS = 0x00001000 // 4    # 1024
-GPU_OUTPUT_WORDS = OUTPUT_WORDS            # 64
+DEFAULT_CENTER_RE_Q = -6092
+DEFAULT_CENTER_IM_Q = 1080
+DEFAULT_SCALE_Q = 24576
 
-# Boundary-focused viewport near Seahorse Valley.
-DEFAULT_CENTER_RE_Q = -6092   # -0.74365 * 8192
-DEFAULT_CENTER_IM_Q = 1080    #  0.13184 * 8192
-DEFAULT_SCALE_Q = 24576       #  3.00000 * 8192
+DEFAULT_ZOOM_NUM = 97
+DEFAULT_ZOOM_DEN = 100
 
-ZOOM_NUM = 97
-ZOOM_DEN = 100
-MIN_SCALE_Q = 64
+ROW_SHIFT = 26
+SCALE_MASK = (1 << ROW_SHIFT) - 1
+
+
+def parse_int_auto(value: str) -> int:
+    """Parse decimal or 0x-prefixed integers for CLI options."""
+    return int(value, 0)
 
 
 def u32_hex(value: int) -> str:
     return f"{value & 0xFFFFFFFF:08x}"
 
 
-def u32_from_hex(word: str) -> int:
-    return int(word, 16) & 0xFFFFFFFF
+def int32_from_hex(word: str) -> int:
+    value = int(word, 16) & 0xFFFFFFFF
+    if value & 0x80000000:
+        value -= 0x100000000
+    return value
 
 
-class ProgramAdapter:
+class ProgramAdapter(BaseProgramAdapter):
     def __init__(self, program_dir: Path):
-        self.program_dir = Path(program_dir)
-        self.csv_path = self.program_dir / "data.csv"
-        self.latest_pgm_path = self.program_dir / "fpga_latest.pgm"
+        super().__init__(program_dir)
 
-        self.runs = 1
-        self.zoom_frames = 1
+        self.csv_path = self.program_dir / "data.csv"
+
+        # Set from adapter CLI options in configure().
+        self.data_base_bytes = DEFAULT_DATA_BASE_BYTES
+        self.data_limit_bytes = DEFAULT_DATA_LIMIT_BYTES
 
         self.center_re_q = DEFAULT_CENTER_RE_Q
         self.center_im_q = DEFAULT_CENTER_IM_Q
         self.initial_scale_q = DEFAULT_SCALE_Q
-        self.zoom_num = ZOOM_NUM
-        self.zoom_den = ZOOM_DEN
 
-        self.current_frame_index: int | None = None
-        self.current_image: list[list[int] | None] = [None for _ in range(HEIGHT)]
-        self.scale_cache: dict[int, int] = {}
+        self.zoom_num = DEFAULT_ZOOM_NUM
+        self.zoom_den = DEFAULT_ZOOM_DEN
 
-    def configure(self, *, steps_per_run: int, runs: int, total_steps: int | None, visualize: bool) -> None:
-        self.runs = runs
-        self.zoom_frames = (runs + HEIGHT - 1) // HEIGHT
+        self.frames = 1
+        self.scales: list[int] = []
 
-        if runs % HEIGHT != 0:
-            print(
-                f"[WARNING] Mandelbrot expects runs to be a multiple of {HEIGHT}. "
-                f"Got runs={runs}; the last frame will be incomplete."
+        self.clear_output = True
+
+    def add_arguments(self, parser: argparse.ArgumentParser) -> None:
+        group = parser.add_argument_group("Mandelbrot FPGA options")
+
+        group.add_argument(
+            "--frames",
+            type=int,
+            default=None,
+            help=(
+                "Number of zoom frames. If provided, --kernel-calls must equal "
+                f"--frames * {HEIGHT}."
+            ),
+        )
+        group.add_argument(
+            "--data-base",
+            type=parse_int_auto,
+            default=DEFAULT_DATA_BASE_BYTES,
+            help="Byte address passed to the kernel as output row pointer, default: 0x1000",
+        )
+        group.add_argument(
+            "--data-limit",
+            type=parse_int_auto,
+            default=DEFAULT_DATA_LIMIT_BYTES,
+            help="End byte address of the usable data region, default: 0x1800",
+        )
+        group.add_argument(
+            "--center-re-q",
+            type=int,
+            default=DEFAULT_CENTER_RE_Q,
+            help=f"Q13 real center coordinate, default: {DEFAULT_CENTER_RE_Q}",
+        )
+        group.add_argument(
+            "--center-im-q",
+            type=int,
+            default=DEFAULT_CENTER_IM_Q,
+            help=f"Q13 imaginary center coordinate, default: {DEFAULT_CENTER_IM_Q}",
+        )
+        group.add_argument(
+            "--scale-q",
+            type=int,
+            default=DEFAULT_SCALE_Q,
+            help=f"Initial Q13 viewport scale, default: {DEFAULT_SCALE_Q}",
+        )
+        group.add_argument(
+            "--zoom-num",
+            type=int,
+            default=DEFAULT_ZOOM_NUM,
+            help=f"Zoom ratio numerator, default: {DEFAULT_ZOOM_NUM}",
+        )
+        group.add_argument(
+            "--zoom-den",
+            type=int,
+            default=DEFAULT_ZOOM_DEN,
+            help=f"Zoom ratio denominator, default: {DEFAULT_ZOOM_DEN}",
+        )
+        group.add_argument(
+            "--min-scale-q",
+            type=int,
+            default=64,
+            help="Clamp scale_q to this minimum to avoid pixel_step becoming zero, default: 64",
+        )
+        group.add_argument(
+            "--no-clear-output",
+            action="store_true",
+            help="Do not clear the output row window before the first kernel call",
+        )
+
+    def configure(
+        self,
+        *,
+        kernel_calls: int,
+        visualize: bool,
+        adapter_args: argparse.Namespace,
+    ) -> None:
+        if kernel_calls < 1:
+            raise SystemExit("--kernel-calls must be >= 1")
+        if kernel_calls % HEIGHT != 0:
+            raise SystemExit(
+                f"Mandelbrot needs one kernel call per row. "
+                f"--kernel-calls must be a multiple of HEIGHT={HEIGHT}."
             )
 
-        header = ["frame", "row"]
-        header.extend(f"p{x}" for x in range(WIDTH))
+        inferred_frames = kernel_calls // HEIGHT
+        if adapter_args.frames is not None:
+            if adapter_args.frames < 1:
+                raise SystemExit("--frames must be >= 1")
+            expected_calls = adapter_args.frames * HEIGHT
+            if expected_calls != kernel_calls:
+                raise SystemExit(
+                    f"--frames {adapter_args.frames} requires --kernel-calls {expected_calls}, "
+                    f"but got --kernel-calls {kernel_calls}"
+                )
+            self.frames = adapter_args.frames
+        else:
+            self.frames = inferred_frames
+
+        if adapter_args.data_base % 4 != 0:
+            raise SystemExit("--data-base must be 4-byte aligned")
+        if adapter_args.data_limit % 4 != 0:
+            raise SystemExit("--data-limit must be 4-byte aligned")
+        if adapter_args.data_limit <= adapter_args.data_base:
+            raise SystemExit("--data-limit must be greater than --data-base")
+
+        available_words = (adapter_args.data_limit - adapter_args.data_base) // 4
+        if available_words < WIDTH:
+            raise SystemExit(
+                f"Mandelbrot needs at least {WIDTH} output words at --data-base, "
+                f"but only {available_words} are available"
+            )
+
+        if adapter_args.scale_q < 1:
+            raise SystemExit("--scale-q must be >= 1")
+        if adapter_args.scale_q > SCALE_MASK:
+            raise SystemExit(
+                f"--scale-q must fit in {ROW_SHIFT} packed bits, max {SCALE_MASK}"
+            )
+        if adapter_args.zoom_num < 1:
+            raise SystemExit("--zoom-num must be >= 1")
+        if adapter_args.zoom_den < 1:
+            raise SystemExit("--zoom-den must be >= 1")
+        if adapter_args.min_scale_q < 1:
+            raise SystemExit("--min-scale-q must be >= 1")
+        if adapter_args.min_scale_q > SCALE_MASK:
+            raise SystemExit(f"--min-scale-q must be <= {SCALE_MASK}")
+
+        self.data_base_bytes = adapter_args.data_base
+        self.data_limit_bytes = adapter_args.data_limit
+
+        self.center_re_q = adapter_args.center_re_q
+        self.center_im_q = adapter_args.center_im_q
+        self.initial_scale_q = adapter_args.scale_q
+
+        self.zoom_num = adapter_args.zoom_num
+        self.zoom_den = adapter_args.zoom_den
+
+        self.clear_output = not adapter_args.no_clear_output
+
+        self.scales = self.build_scales(
+            frames=self.frames,
+            initial_scale_q=self.initial_scale_q,
+            zoom_num=self.zoom_num,
+            zoom_den=self.zoom_den,
+            min_scale_q=adapter_args.min_scale_q,
+        )
 
         with self.csv_path.open("w", newline="") as f:
-            csv.writer(f).writerow(header)
-
-        self.current_frame_index = None
-        self.current_image = [None for _ in range(HEIGHT)]
-        self.scale_cache.clear()
+            writer = csv.writer(f)
+            header = ["frame", "row"]
+            header.extend(f"p{x}" for x in range(WIDTH))
+            writer.writerow(header)
 
         print(
-            f"[INFO] Mandelbrot adapter configured for {runs} kernel launches "
-            f"≈ {self.zoom_frames} zoom frame(s)."
+            f"[INFO] Mandelbrot adapter: kernel_calls={kernel_calls}, "
+            f"frames={self.frames}, rows/frame={HEIGHT}, "
+            f"data_base=0x{self.data_base_bytes:08x}, "
+            f"center=({self.center_re_q}, {self.center_im_q}), "
+            f"scale_q={self.initial_scale_q}, zoom={self.zoom_num}/{self.zoom_den}"
         )
-        print(
-            f"[INFO] Viewport: center_re_q={self.center_re_q}, "
-            f"center_im_q={self.center_im_q}, scale_q={self.initial_scale_q}, "
-            f"zoom={self.zoom_num}/{self.zoom_den}, FP_SHIFT={FP_SHIFT}"
-        )
+
+    @staticmethod
+    def build_scales(
+        *,
+        frames: int,
+        initial_scale_q: int,
+        zoom_num: int,
+        zoom_den: int,
+        min_scale_q: int,
+    ) -> list[int]:
+        scales: list[int] = []
+        scale_q = initial_scale_q
+
+        for _ in range(frames):
+            scale_q = max(min(scale_q, SCALE_MASK), min_scale_q)
+            scales.append(scale_q)
+
+            scale_q = (scale_q * zoom_num) // zoom_den
+            if scale_q < min_scale_q:
+                scale_q = min_scale_q
+
+        return scales
 
     def initial_dmem(self):
+        if not self.clear_output:
+            return None
+
+        return (
+            self.data_base_bytes // 4,
+            [u32_hex(0)] * WIDTH,
+        )
+
+    def kernel_arguments(
+        self,
+        *,
+        call_index: int,
+        adapter_args: argparse.Namespace,
+    ):
+        frame = call_index // HEIGHT
+        row = call_index % HEIGHT
+
+        scale_q = self.scales[frame]
+
+        if row >= HEIGHT:
+            raise RuntimeError(f"Internal error: row={row} outside 0..{HEIGHT - 1}")
+        if scale_q < 0 or scale_q > SCALE_MASK:
+            raise RuntimeError(f"scale_q={scale_q} does not fit packed field")
+
+        packed = (row << ROW_SHIFT) | (scale_q & SCALE_MASK)
+
         return [
-            (GPU_OUTPUT_BASE_WORDS, [u32_hex(0)] * GPU_OUTPUT_WORDS),
+            self.data_base_bytes,  # GPGPU_ARGS[0]: output row pointer byte address
+            packed,                # GPGPU_ARGS[1]: row + scale_q
+            self.center_re_q,      # GPGPU_ARGS[2]: Q13 center real
+            self.center_im_q,      # GPGPU_ARGS[3]: Q13 center imaginary
         ]
 
-    def output_offset_words(self) -> int:
-        return GPU_OUTPUT_BASE_WORDS
+    def output_window(
+        self,
+        *,
+        call_index: int,
+        kernel_args: list[str],
+        adapter_args: argparse.Namespace,
+    ) -> DmemWindow:
+        # Dump output[0..63] for the current row.
+        return DmemWindow(
+            byte_address=self.data_base_bytes,
+            word_count=WIDTH,
+        )
 
-    def output_word_count(self) -> int:
-        return GPU_OUTPUT_WORDS
+    def process_output(
+        self,
+        *,
+        call_index: int,
+        kernel_args: list[str],
+        output_window: DmemWindow,
+        words: dict[int, str],
+        adapter_args: argparse.Namespace,
+    ) -> None:
+        frame = call_index // HEIGHT
+        row_index = call_index % HEIGHT
 
-    def scale_for_frame(self, frame_index: int) -> int:
-        if frame_index in self.scale_cache:
-            return self.scale_cache[frame_index]
+        base_word = self.data_base_bytes // 4
 
-        scale = self.initial_scale_q
-        for _ in range(frame_index):
-            scale = (scale * self.zoom_num) // self.zoom_den
-            if scale < MIN_SCALE_Q:
-                scale = MIN_SCALE_Q
+        row = [frame, row_index]
 
-        self.scale_cache[frame_index] = scale
-        return scale
-
-    def frame_row_from_run(self, run_index: int) -> tuple[int, int]:
-        frame_index = run_index // HEIGHT
-        row_index = run_index % HEIGHT
-        return frame_index, row_index
-
-    def before_run(self, *, run_index: int, start_step: int, steps: int):
-        frame_index, row_index = self.frame_row_from_run(run_index)
-        scale_q = self.scale_for_frame(frame_index)
-
-        args = [
-            u32_hex(row_index),          # GPGPU_ARGS[0]
-            u32_hex(self.center_re_q),   # GPGPU_ARGS[1]
-            u32_hex(self.center_im_q),   # GPGPU_ARGS[2]
-            u32_hex(scale_q),            # GPGPU_ARGS[3]
-        ]
-
-        return (GPU_ARGS_BASE_WORDS, args)
-
-    def process_output(self, *, run_index: int, start_step: int, steps: int, words: dict[int, str]) -> None:
-        frame_index, row_index = self.frame_row_from_run(run_index)
-
-        pixels: list[int] = []
         for x in range(WIDTH):
-            addr = GPU_OUTPUT_BASE_WORDS + x
+            addr = base_word + x
+
             if addr not in words:
-                raise RuntimeError(f"Missing Mandelbrot output word for pixel {x}: DMEM[{addr}]")
-            pixels.append(u32_from_hex(words[addr]))
+                raise RuntimeError(f"Missing Mandelbrot output word DMEM[{addr}]")
+
+            row.append(int32_from_hex(words[addr]))
 
         with self.csv_path.open("a", newline="") as f:
-            csv.writer(f).writerow([frame_index, row_index, *pixels])
-
-        self.update_live_preview(frame_index, row_index, pixels)
+            csv.writer(f).writerow(row)
 
         if row_index == HEIGHT - 1:
-            print(
-                f"[INFO] Completed Mandelbrot frame {frame_index} "
-                f"(scale_q={self.scale_for_frame(frame_index)}) -> {self.csv_path}"
-            )
-        else:
-            print(f"[INFO] Appended Mandelbrot frame={frame_index}, row={row_index}")
+            print(f"[INFO] Completed Mandelbrot frame {frame + 1}/{self.frames}")
 
-    def update_live_preview(self, frame_index: int, row_index: int, pixels: list[int]) -> None:
-        if self.current_frame_index != frame_index:
-            self.current_frame_index = frame_index
-            self.current_image = [None for _ in range(HEIGHT)]
-
-        self.current_image[row_index] = pixels
-
-        if any(row is None for row in self.current_image):
-            return
-
-        with self.latest_pgm_path.open("wb") as f:
-            f.write(f"P5\n{WIDTH} {HEIGHT}\n255\n".encode("ascii"))
-            for row in self.current_image:
-                assert row is not None
-                for value in row:
-                    gray = 0 if value >= MAX_ITER else (value * 255) // MAX_ITER
-                    f.write(bytes([gray & 0xFF]))
-
-        print(f"[INFO] Updated live Mandelbrot preview: {self.latest_pgm_path}")
-
-    def finalize(self, *, visualize: bool) -> None:
+    def finalize(self, *, visualize: bool, adapter_args: argparse.Namespace) -> None:
         if not visualize:
             return
 
