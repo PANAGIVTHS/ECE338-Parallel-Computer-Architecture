@@ -3,6 +3,10 @@ CROSS_PREFIX ?= $(shell if command -v riscv64-unknown-elf-gcc >/dev/null 2>&1; t
 CC = $(CROSS_PREFIX)-gcc
 OBJDUMP = $(CROSS_PREFIX)-objdump
 LINKER_SCRIPT = gpgpu.ld
+RECONV_SCRIPT = insert_reconvergence.py
+# Set BRANCH_RECONVERGENCE=1 to use the transformed instruction stream with
+# custom `ssy` reconvergence markers. Default is off until RTL decodes `ssy`.
+BRANCH_RECONVERGENCE ?= 0
 CFLAGS = -O2 -march=rv32im -mabi=ilp32 \
           -ffreestanding -fno-builtin \
           -fomit-frame-pointer -ffixed-x31 \
@@ -34,8 +38,15 @@ MAP      = $(DIR)/$(PROG).map
 # address + hex + instruction
 DUMP_ASM = $(DIR)/$(PROG)_dump_real.asm
 
-# Clean assembly only
+# Clean assembly only. With BRANCH_RECONVERGENCE=1 this file is rewritten by
+# insert_reconvergence.py and contains custom `ssy` markers before branches.
 PROG_ASM = $(DIR)/$(PROG)_program.asm
+
+# Optional review artifacts generated without replacing the normal program asm/mem.
+RECONV_ASM    = $(DIR)/$(PROG)_program_reconv.asm
+RECONV_MEM    = $(DIR)/$(PROG)_instructions_reconv.mem
+RECONV_REPORT = $(DIR)/$(PROG)_reconvergence.json
+RECONV_STAMP  = $(DIR)/.reconvergence.stamp
 
 # Raw hex instructions
 MEM      = $(DIR)/$(PROG)_instructions.mem
@@ -52,6 +63,7 @@ all: riscv x86
 
 riscv: $(PROG_ASM)
 x86: $(NATIVE_EXE)
+reconvergence: $(RECONV_ASM) $(RECONV_MEM)
 
 # ==========================================
 # NATIVE x86 BUILD TARGET
@@ -82,6 +94,17 @@ $(DUMP_ASM): $(ELF)
 # ------------------------------------------
 # Clean assembly only
 # ------------------------------------------
+ifeq ($(BRANCH_RECONVERGENCE),1)
+$(PROG_ASM) $(MEM): $(DUMP_ASM) $(RECONV_SCRIPT)
+	@echo "Generating assembly and memory with SSY reconvergence markers..."
+	@python3 $(RECONV_SCRIPT) \
+		--input $(DUMP_ASM) \
+		--asm-out $(PROG_ASM) \
+		--mem-out $(MEM) \
+		--report-out $(RECONV_REPORT)
+	@echo "Success! Reconvergence-enabled assembly ready: $(PROG_ASM)"
+	@echo "Success! Reconvergence-enabled memory ready: $(MEM)"
+else
 $(PROG_ASM): $(DUMP_ASM)
 	@echo "Generating clean assembly listing..."
 
@@ -109,6 +132,22 @@ $(MEM): $(DUMP_ASM)
 	}' $< > $@
 
 	@echo "Success! Memory file ready: $@"
+endif
+
+# ------------------------------------------
+# Optional reconvergence review artifacts without replacing normal outputs
+# ------------------------------------------
+$(RECONV_STAMP): $(DUMP_ASM) $(RECONV_SCRIPT)
+	@echo "Generating optional SSY reconvergence review artifacts..."
+	@python3 $(RECONV_SCRIPT) \
+		--input $(DUMP_ASM) \
+		--asm-out $(RECONV_ASM) \
+		--mem-out $(RECONV_MEM) \
+		--report-out $(RECONV_REPORT)
+	@touch $@
+
+$(RECONV_ASM) $(RECONV_MEM): $(RECONV_STAMP)
+	@true
 
 # ==========================================
 # Compile C -> ELF
@@ -129,9 +168,13 @@ clean:
 		$(DUMP_ASM) \
 		$(PROG_ASM) \
 		$(MEM) \
+		$(RECONV_ASM) \
+		$(RECONV_MEM) \
+		$(RECONV_REPORT) \
+		$(RECONV_STAMP) \
 		$(NATIVE_EXE)
 
 # ==========================================
 # Phony targets
 # ==========================================
-.PHONY: all riscv x86 clean
+.PHONY: all riscv x86 reconvergence clean

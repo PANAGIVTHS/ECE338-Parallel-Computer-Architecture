@@ -22,6 +22,7 @@ TARGET="all"
 RUN_X86=""
 RUN_FPGA=0
 VISUALIZE=""
+BRANCH_RECONVERGENCE=1
 
 FPGA_PORT=""
 FPGA_BAUD=115200
@@ -51,6 +52,8 @@ Generic run options:
   --no-x86                        Do not run the native x86 binary
   -v, --visualize                 Run visualize.py if the program has one
   --no-visualize                  Do not run visualization
+  --branch-reconvergence 0|1      Disable/enable inserted custom SSY reconvergence markers
+                                  (default: 1/enabled - code shouldn't diverge if disabled)
   --fpga                          Run the program on FPGA through UART
   --port PORT                     UART serial port for --fpga, e.g. /dev/ttyUSB1
   --baud BAUD                     UART baud rate for --fpga (default: 115200)
@@ -100,6 +103,18 @@ while [[ $# -gt 0 ]]; do
         --no-visualize)
             VISUALIZE=0
             VISUALIZE_FLAG_PROVIDED=1
+            shift
+            ;;
+        --branch-reconvergence)
+            if [[ $# -lt 2 || ! "$2" =~ ^[01]$ ]]; then
+                echo "--branch-reconvergence requires 0 or 1"
+                exit 1
+            fi
+            BRANCH_RECONVERGENCE="$2"
+            shift 2
+            ;;
+        --branch-reconvergence=0|--branch-reconvergence=1)
+            BRANCH_RECONVERGENCE="${1#*=}"
             shift
             ;;
         --fpga)
@@ -272,15 +287,16 @@ echo "Target       : $TARGET"
 echo "Run x86      : $RUN_X86"
 echo "Run FPGA     : $RUN_FPGA"
 echo "Kernel calls : ${FPGA_KERNEL_CALLS:-1}"
+echo "Reconvergence: $BRANCH_RECONVERGENCE"
 echo "Visualize    : $VISUALIZE"
 echo "=========================================="
 echo ""
 
 make -C "$PROGRAMS_DIR" PROG="$SELECTED" clean
-make -C "$PROGRAMS_DIR" PROG="$SELECTED" "$TARGET"
+make -C "$PROGRAMS_DIR" PROG="$SELECTED" BRANCH_RECONVERGENCE="$BRANCH_RECONVERGENCE" "$TARGET"
 
 if [[ "$RUN_FPGA" -eq 1 ]]; then
-    make -C "$PROGRAMS_DIR" PROG="$SELECTED" "$SELECTED/${SELECTED}_instructions.mem"
+    make -C "$PROGRAMS_DIR" PROG="$SELECTED" BRANCH_RECONVERGENCE="$BRANCH_RECONVERGENCE" "$SELECTED/${SELECTED}_instructions.mem"
 fi
 
 if [[ "$RUN_X86" -eq 1 ]]; then

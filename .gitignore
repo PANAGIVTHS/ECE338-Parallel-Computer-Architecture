@@ -4,6 +4,8 @@
 *.csv
 *_vitis/
 *_vivado/
+*.stamp
+*.json
 venv/
 __pycache__
 SSOT.md
