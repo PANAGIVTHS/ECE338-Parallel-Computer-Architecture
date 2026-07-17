@@ -24,6 +24,13 @@ module StreamingMultiprocessor #(
     wire data_hazard, flush;
     reg [4:0] idex_rd;
 
+    wire [NUM_CORES-1:0] core_ex_branch_taken, core_complete;
+    wire [$clog2(`IMEM_ENTRIES)-1:0] core_ex_beq_target_idx [0:NUM_CORES-1];
+    wire [NUM_CORES-1:0] core_mul1_valid, core_mul2_valid, core_mul3_valid;
+    wire [4:0] core_mul1_rd [0:NUM_CORES-1];
+    wire [4:0] core_mul2_rd [0:NUM_CORES-1];
+    wire [4:0] core_mul3_rd [0:NUM_CORES-1];
+
     //& ===============
     //& CROSSBAR & STALL LOGIC
     //& ===============
@@ -87,30 +94,126 @@ module StreamingMultiprocessor #(
     //! =========================================================================
     //! STAGE 1: INSTRUCTION FETCH
     //! =========================================================================
-    (* dont_touch = `DEBUG *) wire [$clog2(`IMEM_ENTRIES)+1:0] program_counter;
-    wire [$clog2(`IMEM_ENTRIES)-1:0] instr_idx;
+    localparam PC_BITS = $clog2(`IMEM_ENTRIES);
+    localparam STACK_DEPTH = 8;
+    localparam STACK_BITS = 3;
+
+    (* dont_touch = `DEBUG *) wire [PC_BITS+1:0] program_counter;
+    wire [PC_BITS-1:0] instr_idx;
+
+    reg [NUM_CORES-1:0] active_mask;
+    reg [PC_BITS-1:0] pending_reconv_idx;
+    reg pending_reconv_valid;
+
+    reg [NUM_CORES-1:0] stack_pending_mask [0:STACK_DEPTH-1];
+    reg [NUM_CORES-1:0] stack_parent_mask [0:STACK_DEPTH-1];
+    reg [PC_BITS-1:0] stack_pending_idx [0:STACK_DEPTH-1];
+    reg [PC_BITS-1:0] stack_reconv_idx [0:STACK_DEPTH-1];
+    reg stack_pending_valid [0:STACK_DEPTH-1];
+    reg [STACK_BITS:0] div_sp;
+
+    wire idex_is_cond_branch = (idex_opcode == `OP_BEQ);
+    wire idex_is_ssy = (idex_opcode == `OP_SSY);
+    wire [31:0] idex_ssy_offset = {{12{idex_imm_31_12[19]}}, idex_imm_31_12[7:0], idex_imm_31_12[8], idex_imm_31_12[18:9], 1'b0};
+    wire [31:0] idex_ssy_target_addr = idex_program_counter + idex_ssy_offset;
+    wire [PC_BITS-1:0] idex_ssy_target_idx = idex_ssy_target_addr[PC_BITS+1:2];
+
+    wire [NUM_CORES-1:0] branch_taken_mask = active_mask & core_ex_branch_taken;
+    wire [NUM_CORES-1:0] branch_not_taken_mask = active_mask & ~core_ex_branch_taken;
+    wire cond_any_taken = |branch_taken_mask;
+    wire cond_any_not_taken = |branch_not_taken_mask;
+    wire cond_divergent = idex_is_cond_branch && cond_any_taken && cond_any_not_taken;
+    wire cond_uniform_taken = idex_is_cond_branch && cond_any_taken && !cond_any_not_taken;
+    wire noncond_control_taken = !idex_is_cond_branch && core_ex_branch_taken[0];
+    wire branch_control_taken_raw = cond_uniform_taken || cond_divergent || noncond_control_taken;
+    wire branch_control_taken = branch_control_taken_raw && !global_stall;
+
+    wire stack_nonempty = (div_sp != 0);
+    wire [STACK_BITS-1:0] stack_top = div_sp[STACK_BITS-1:0] - 1'b1;
+    wire ifid_at_reconv = stack_nonempty &&
+                           (ifid_program_counter[PC_BITS+1:2] == stack_reconv_idx[stack_top]) &&
+                           !global_stall && !data_hazard && !branch_control_taken;
+    wire reconv_switch_pending = ifid_at_reconv && stack_pending_valid[stack_top];
+    wire reconv_pop = ifid_at_reconv && !stack_pending_valid[stack_top];
+    wire control_state_enable = !global_stall && (!data_hazard || branch_control_taken || ifid_at_reconv);
+
+    // On reconvergence pop, refetch the reconvergence instruction with the
+    // restored parent mask. Otherwise the first post-branch instruction would
+    // execute only for the just-finished subset, corrupting nested divergence.
+    wire pc_redirect = branch_control_taken || reconv_switch_pending || reconv_pop;
+    wire [PC_BITS-1:0] pc_redirect_idx = branch_control_taken ? ex_beq_target_idx :
+                                         reconv_switch_pending ? stack_pending_idx[stack_top] :
+                                         stack_reconv_idx[stack_top];
+    wire [NUM_CORES-1:0] fetch_active_mask = reconv_switch_pending ? stack_pending_mask[stack_top] :
+                                             reconv_pop ? stack_parent_mask[stack_top] :
+                                             active_mask;
 
     (* dont_touch = `DEBUG *)
-    GUCounter #(.BITS($clog2(`IMEM_ENTRIES))) 
-        programCounter (.clk(clk), .i_set_reset({rst, ex_branch_taken}), .i_count_enable(!data_hazard && !global_stall), .i_count_set(ex_beq_target_idx + 1'b1), .o_count_cur(instr_idx));
+    GUCounter #(.BITS(PC_BITS))
+        programCounter (.clk(clk), .i_set_reset({rst, pc_redirect}), .i_count_enable(!data_hazard && !global_stall), .i_count_set(pc_redirect_idx + 1'b1), .o_count_cur(instr_idx));
 
     assign program_counter = {instr_idx, 2'b00};
-    assign o_imem_ren = (!data_hazard && !global_stall) | flush;
-    assign o_imem_addr = flush ? ex_beq_target_idx : instr_idx;
+    assign o_imem_ren = (!data_hazard && !global_stall) | pc_redirect;
+    assign o_imem_addr = pc_redirect ? pc_redirect_idx : instr_idx;
+
+    integer div_i;
+    always @(posedge clk) begin
+        if (!rst) begin
+            active_mask <= {NUM_CORES{1'b1}};
+            pending_reconv_idx <= {PC_BITS{1'b0}};
+            pending_reconv_valid <= 1'b0;
+            div_sp <= {(STACK_BITS+1){1'b0}};
+            for (div_i = 0; div_i < STACK_DEPTH; div_i = div_i + 1) begin
+                stack_pending_mask[div_i] <= {NUM_CORES{1'b0}};
+                stack_parent_mask[div_i] <= {NUM_CORES{1'b0}};
+                stack_pending_idx[div_i] <= {PC_BITS{1'b0}};
+                stack_reconv_idx[div_i] <= {PC_BITS{1'b0}};
+                stack_pending_valid[div_i] <= 1'b0;
+            end
+        end else if (control_state_enable) begin
+            if (idex_is_ssy) begin
+                pending_reconv_idx <= idex_ssy_target_idx;
+                pending_reconv_valid <= 1'b1;
+            end
+
+            if (cond_divergent && pending_reconv_valid && (div_sp < STACK_DEPTH)) begin
+                stack_pending_mask[div_sp[STACK_BITS-1:0]] <= branch_not_taken_mask;
+                stack_parent_mask[div_sp[STACK_BITS-1:0]] <= active_mask;
+                stack_pending_idx[div_sp[STACK_BITS-1:0]] <= idex_program_counter[PC_BITS+1:2] + 1'b1;
+                stack_reconv_idx[div_sp[STACK_BITS-1:0]] <= pending_reconv_idx;
+                stack_pending_valid[div_sp[STACK_BITS-1:0]] <= 1'b1;
+                div_sp <= div_sp + 1'b1;
+                active_mask <= branch_taken_mask;
+                pending_reconv_valid <= 1'b0;
+            end else if (idex_is_cond_branch) begin
+                pending_reconv_valid <= 1'b0;
+            end else if (reconv_switch_pending) begin
+                active_mask <= stack_pending_mask[stack_top];
+                stack_pending_valid[stack_top] <= 1'b0;
+            end else if (reconv_pop) begin
+                active_mask <= stack_parent_mask[stack_top];
+                div_sp <= div_sp - 1'b1;
+            end
+        end
+    end
 
     //* =========================================================================
     //* PIPELINE REGISTER 1: INSTRUCTION FETCH -> INSTRUCTION DECODE
     //* =========================================================================
     reg [$clog2(`IMEM_ENTRIES)+1:0] ifid_program_counter;
+    reg [NUM_CORES-1:0] ifid_active_mask;
     always @(posedge clk) begin
         if (!rst) begin
             ifid_program_counter <= `INITIAL_PC;
+            ifid_active_mask <= {NUM_CORES{1'b1}};
         end else if (global_stall) begin
             // Retain state during memory stall
-        end else if (flush) begin 
-            ifid_program_counter <= {ex_beq_target_idx, 2'b00};
+        end else if (pc_redirect) begin
+            ifid_program_counter <= {pc_redirect_idx, 2'b00};
+            ifid_active_mask <= fetch_active_mask;
         end else if (!data_hazard) begin
             ifid_program_counter <= program_counter;
+            ifid_active_mask <= fetch_active_mask;
         end
     end
 
@@ -151,7 +254,7 @@ module StreamingMultiprocessor #(
         .opcode(id_opcode)
     );
 
-    assign id_wen = (id_rd == 5'b0) ? 1'b0 : (id_opcode == `OP_SW || id_opcode == `OP_BEQ) ? 1'b0 : 1'b1;
+    assign id_wen = (id_rd == 5'b0) ? 1'b0 : (id_opcode == `OP_SW || id_opcode == `OP_BEQ || id_opcode == `OP_SSY) ? 1'b0 : 1'b1;
     assign id_is_mul = (id_opcode == `OP_R_TYPE) && (id_imm_31_25 == `FUNCT7_MULDIV);
 
     assign id_mux_rs1 = id_rs1;
@@ -168,6 +271,7 @@ module StreamingMultiprocessor #(
     reg [1:0] idex_instr_type;
     reg [6:0] idex_opcode, idex_imm_31_25;
     reg [$clog2(`IMEM_ENTRIES)+1:0] idex_program_counter;
+    reg [NUM_CORES-1:0] idex_active_mask;
     reg idex_wen;
 
     always @(posedge clk) begin
@@ -183,6 +287,7 @@ module StreamingMultiprocessor #(
             idex_opcode <= 7'b0;
             idex_imm_31_25 <= 7'b0;
             idex_program_counter <= `INITIAL_PC;
+            idex_active_mask <= {NUM_CORES{1'b0}};
             idex_wen <= 1'b0;
         end else if (global_stall) begin
             // Retain state during memory stall
@@ -198,6 +303,7 @@ module StreamingMultiprocessor #(
             idex_opcode <= 7'b0;
             idex_imm_31_25 <= 7'b0;
             idex_program_counter <= ifid_program_counter;
+            idex_active_mask <= {NUM_CORES{1'b0}};
             idex_wen <= 1'b0;
         end else begin
             idex_rs1 <= id_rs1;
@@ -211,6 +317,7 @@ module StreamingMultiprocessor #(
             idex_instr_type <= id_instr_type;
             idex_opcode <= id_opcode;
             idex_program_counter <= ifid_program_counter;
+            idex_active_mask <= ifid_active_mask;
             idex_wen <= id_wen;
         end
     end
@@ -297,15 +404,11 @@ module StreamingMultiprocessor #(
     //& ===============
     //& STREAMING PROCESSOR CORES
     //& ===============
-    wire [NUM_CORES-1:0] core_ex_branch_taken, core_complete;
-    wire [$clog2(`IMEM_ENTRIES)-1:0] core_ex_beq_target_idx [0:NUM_CORES-1];
-    wire [NUM_CORES-1:0] core_mul1_valid, core_mul2_valid, core_mul3_valid;
-    wire [4:0] core_mul1_rd [0:NUM_CORES-1];
-    wire [4:0] core_mul2_rd [0:NUM_CORES-1];
-    wire [4:0] core_mul3_rd [0:NUM_CORES-1];
 
-    // Since execution is lockstep, use Core 0 for shared hazard tracking
-    assign ex_branch_taken = core_ex_branch_taken[0];
+    // Since execution is lockstep, use Core 0 for shared hazard tracking.
+    // Conditional branch redirects are driven from the active-lane branch masks
+    // so divergence still works when lane/core 0 is inactive.
+    assign ex_branch_taken = branch_control_taken;
     assign ex_beq_target_idx = core_ex_beq_target_idx[0];
     assign mul1_valid = core_mul1_valid[0];
     assign mul1_rd = core_mul1_rd[0];
@@ -339,6 +442,7 @@ module StreamingMultiprocessor #(
                 .i_idex_opcode(idex_opcode),
                 .i_idex_program_counter(idex_program_counter),
                 .i_idex_wen(idex_wen),
+                .i_idex_lane_active(idex_active_mask[i]),
 
                 //! Feedback wires Hazard & PC 
                 .o_ex_branch_taken(core_ex_branch_taken[i]),

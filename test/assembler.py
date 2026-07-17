@@ -31,6 +31,60 @@ def has_objdump_symbol(parts, target_index):
     """Return true for objdump operands like: jal x1,1c <nbody_kernel>."""
     return len(parts) > target_index + 1 and parts[target_index + 1].startswith('<')
 
+
+def strip_comment(line):
+    return line.split('#')[0].split('//')[0].strip()
+
+
+def parse_asm_source(lines):
+    """Return (instructions, labels) from handwritten or generated program asm.
+
+    Supports ordinary labels, local dot-labels such as .Lpc_00000040,
+    labels with an instruction on the same line, and objdump-style labels such
+    as '0000001c <main>:'. Assembler directives are ignored so compiler output
+    can be pasted into tests after unsupported sections are removed.
+    """
+    instructions = []
+    labels = {}
+
+    for line_no, line in enumerate(lines, start=1):
+        code = strip_comment(line)
+        if not code:
+            continue
+
+        # Drop optional objdump address/encoding prefix, e.g.
+        # '  1c:\t000f8713\taddi x14,x31,0' -> 'addi x14,x31,0'.
+        match = re.match(r'^\s*[0-9a-fA-F]+:\s*(?:[0-9a-fA-F]{8}\s+)?(.*)$', code)
+        if match:
+            code = match.group(1).strip()
+            if not code:
+                continue
+
+        # A line can contain multiple labels before the instruction:
+        # 'foo: bar: addi x1,x0,1'
+        while True:
+            objdump_label = re.match(r'^[0-9a-fA-F]+\s+<([^>]+)>:\s*(.*)$', code)
+            plain_label = re.match(r'^([A-Za-z_.$][\w.$]*):\s*(.*)$', code)
+            if objdump_label:
+                labels[objdump_label.group(1)] = len(instructions)
+                code = objdump_label.group(2).strip()
+            elif plain_label:
+                labels[plain_label.group(1)] = len(instructions)
+                code = plain_label.group(2).strip()
+            else:
+                break
+            if not code:
+                break
+
+        if not code:
+            continue
+        if code.startswith('.'):
+            # Ignore assembler directives such as .text/.globl/.align.
+            continue
+        instructions.append(code)
+
+    return instructions, labels
+
 def resolve_control_offset(target, pc, labels, absolute_address=False):
     """Return a byte offset for branch/jal targets.
 
@@ -131,6 +185,15 @@ def assemble_line(inst, pc, labels):
         offset &= 0x1FFF
         return (((offset >> 12) & 1) << 31) | (((offset >> 5) & 0x3F) << 25) | (rs2 << 20) | (rs1 << 15) | (f3 << 12) | (((offset >> 1) & 0xF) << 8) | (((offset >> 11) & 1) << 7) | opcode
 
+    # SSY: custom-0 opcode with J-type immediate layout and rd=x0
+    elif op == 'ssy':
+        target = parts[1]
+        offset = resolve_control_offset(target, pc, labels, has_objdump_symbol(parts, 1))
+        opcode = 0x0B
+        rd = 0
+        offset &= 0x1FFFFF
+        return (((offset >> 20) & 1) << 31) | (((offset >> 1) & 0x3FF) << 21) | (((offset >> 11) & 1) << 20) | (((offset >> 12) & 0xFF) << 12) | (rd << 7) | opcode
+
     # JAL
     elif op == 'jal':
         rd, target = parse_reg(parts[1]), parts[2]
@@ -168,22 +231,10 @@ def compile_all_tests():
             with open(asm_path, 'r', encoding='utf-8') as f:
                 lines = f.read().splitlines()
 
-            instructions = []
-            labels = {}
-
             # ==========================================
             # PASS 1: Extract instructions and labels
             # ==========================================
-            for line in lines:
-                code = line.split('#')[0].split('//')[0].strip()
-                if not code: continue
-                
-                if ':' in code:
-                    parts = code.split(':', 1)
-                    labels[parts[0].strip()] = len(instructions)
-                    if parts[1].strip(): instructions.append(parts[1].strip())
-                else:
-                    instructions.append(code)
+            instructions, labels = parse_asm_source(lines)
 
             # ==========================================
             # PASS 2: Assemble mapped instructions to hex

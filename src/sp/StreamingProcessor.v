@@ -23,6 +23,7 @@ module StreamingProcessor #(
     input [6:0] i_idex_opcode,
     input [$clog2(`IMEM_ENTRIES)+1:0] i_idex_program_counter,
     input i_idex_wen,
+    input i_idex_lane_active,
 
     //! Hazard and Branch feedback
     output o_ex_branch_taken,
@@ -63,6 +64,10 @@ module StreamingProcessor #(
     reg [31:0] ex_actual_alu_in_b;
     wire [1:0] forward_alu_a, forward_alu_b;
     wire ex_is_mul, mul_not_ready;
+    reg [31:0] mul1_program_counter, mul2_program_counter, mul3_program_counter;
+    reg [4:0] mul1_rd, mul2_rd, mul3_rd;
+    reg mul1_valid, mul2_valid, mul3_valid;
+    reg mul1_lane_active, mul2_lane_active, mul3_lane_active;
     reg [4:0] memwb_rd;
     reg memwb_wen;
     wire [31:0] wb_wdata;
@@ -123,15 +128,13 @@ module StreamingProcessor #(
     //? =========================
     //? MUL PIPELINE TRACKING
     //? =========================
-    reg [31:0] mul1_program_counter, mul2_program_counter, mul3_program_counter;
-    reg [4:0] mul1_rd, mul2_rd, mul3_rd;
-    reg mul1_valid, mul2_valid, mul3_valid;
 
     always @(posedge clk) begin
         if (!rst) begin
             mul1_rd <= 0;
             mul2_rd <= 0; mul3_rd <= 0;
             mul1_valid <= 0; mul2_valid <= 0; mul3_valid <= 0;
+            mul1_lane_active <= 0; mul2_lane_active <= 0; mul3_lane_active <= 0;
             mul1_program_counter <= 0;
             mul2_program_counter <= 0; mul3_program_counter <= 0;
         end else if (i_global_stall) begin
@@ -143,6 +146,9 @@ module StreamingProcessor #(
             mul1_valid <= ex_is_mul && (i_idex_rd != 5'b0);
             mul2_valid <= mul1_valid;
             mul3_valid <= mul2_valid;
+            mul1_lane_active <= i_idex_lane_active;
+            mul2_lane_active <= mul1_lane_active;
+            mul3_lane_active <= mul2_lane_active;
             mul1_program_counter <= i_idex_program_counter;
             mul2_program_counter <= mul1_program_counter;
             mul3_program_counter <= mul2_program_counter;
@@ -187,6 +193,7 @@ module StreamingProcessor #(
     //* =========================================================================
     reg [31:0] exmem_alu_out, exmem_reg_b;
     reg [31:0] exmem_program_counter;
+    reg exmem_lane_active;
     reg [6:0] exmem_opcode;
     reg [1:0] exmem_instr_type;
     reg [4:0] exmem_rd;
@@ -201,6 +208,7 @@ module StreamingProcessor #(
             exmem_wen <= 1'b0;
             exmem_mul3_valid <= 1'b0;
             exmem_core_complete <= 1'b0;
+            exmem_lane_active <= 1'b0;
             exmem_program_counter <= `INITIAL_PC;
         end else if (i_global_stall) begin
             // Retain state during memory stall
@@ -212,15 +220,17 @@ module StreamingProcessor #(
             exmem_wen <= 1'b0;
             exmem_mul3_valid <= 1'b0;
             exmem_core_complete <= 1'b0;
+            exmem_lane_active <= 1'b0;
             exmem_program_counter <= `INITIAL_PC;
         end else begin
             exmem_alu_out <= (ex_is_jalr) ? ex_branch_target_addr : ex_alu_out;
             exmem_reg_b <= forwarded_rs2;
             exmem_mul3_valid <= mul3_valid;
+            exmem_lane_active <= mul3_valid ? mul3_lane_active : i_idex_lane_active;
             exmem_rd <= mul3_valid ? mul3_rd : i_idex_rd;
             exmem_opcode <= mul3_valid ? `OP_R_TYPE : i_idex_opcode;
-            exmem_wen <= mul3_valid ? (mul3_rd != 5'b0) : (i_idex_wen && i_idex_rd != 5'b0);
-            exmem_core_complete <= ex_is_jalr &&
+            exmem_wen <= (mul3_valid ? mul3_lane_active : i_idex_lane_active) && (mul3_valid ? (mul3_rd != 5'b0) : (i_idex_wen && i_idex_rd != 5'b0));
+            exmem_core_complete <= i_idex_lane_active && ex_is_jalr &&
                                    (i_idex_rd == 5'b0) &&
                                    (i_idex_rs1 == 5'd1) &&
                                    (ex_imm_i_type == 32'b0);
@@ -236,8 +246,8 @@ module StreamingProcessor #(
     assign mem_is_store = (exmem_opcode == `OP_SW);
 
     assign o_mem_addr = exmem_alu_out[$clog2(`DMEM_ENTRIES)+1 : 2];
-    assign o_mem_ren = mem_is_load | mem_is_store;
-    assign o_mem_wen = mem_is_store;
+    assign o_mem_ren = exmem_lane_active && (mem_is_load | mem_is_store);
+    assign o_mem_wen = exmem_lane_active && mem_is_store;
     assign o_mem_wdata = exmem_reg_b;
     assign o_core_complete = exmem_core_complete;
 

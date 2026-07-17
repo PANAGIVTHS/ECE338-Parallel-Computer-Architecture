@@ -100,6 +100,10 @@ module Decoder (
                 o_aluop = `ALU_LUI;
                 o_instr_type = `INSTR_TYPE_U;
             end
+            `OP_SSY: begin
+                o_aluop = `ALU_ADD;
+                o_instr_type = `INSTR_TYPE_U;
+            end
             default: begin
                 o_aluop = `ALU_ADD; 
                 o_instr_type = `INSTR_TYPE_R;

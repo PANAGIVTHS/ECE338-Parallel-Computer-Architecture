@@ -6,6 +6,7 @@
 `define OP_JAL    7'b1101111
 `define OP_JALR   7'b1100111
 `define OP_LUI    7'b0110111
+`define OP_SSY    7'b0001011
 
 `define FUNCT3_ADD_SUB_MUL 3'b000
 `define FUNCT3_BEQ 3'b000

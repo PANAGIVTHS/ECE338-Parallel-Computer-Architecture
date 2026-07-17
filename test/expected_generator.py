@@ -81,6 +81,49 @@ def resolve_control_target(target, pc, labels, absolute_address=False):
     imm = int(target, 0)
     return pc + (imm // 4)
 
+
+def strip_comment(line):
+    return line.split('#')[0].split('//')[0].strip()
+
+
+def parse_asm_source(lines):
+    """Return (instructions, labels) from handwritten or generated program asm."""
+    instructions = []
+    labels = {}
+
+    for line_no, line in enumerate(lines, start=1):
+        code = strip_comment(line)
+        if not code:
+            continue
+
+        match = re.match(r'^\s*[0-9a-fA-F]+:\s*(?:[0-9a-fA-F]{8}\s+)?(.*)$', code)
+        if match:
+            code = match.group(1).strip()
+            if not code:
+                continue
+
+        while True:
+            objdump_label = re.match(r'^[0-9a-fA-F]+\s+<([^>]+)>:\s*(.*)$', code)
+            plain_label = re.match(r'^([A-Za-z_.$][\w.$]*):\s*(.*)$', code)
+            if objdump_label:
+                labels[objdump_label.group(1)] = len(instructions)
+                code = objdump_label.group(2).strip()
+            elif plain_label:
+                labels[plain_label.group(1)] = len(instructions)
+                code = plain_label.group(2).strip()
+            else:
+                break
+            if not code:
+                break
+
+        if not code:
+            continue
+        if code.startswith('.'):
+            continue
+        instructions.append(code)
+
+    return instructions, labels
+
 def generate_expected_memories(asm_text, num_cores=2, initial_memory=None):
     # Global shared data memory
     memory = [0] * MEM_DEPTH
@@ -88,31 +131,10 @@ def generate_expected_memories(asm_text, num_cores=2, initial_memory=None):
     # 2D Array for register files (one list of 32 registers per core)
     regfiles = [[0] * REG_DEPTH for _ in range(num_cores)]
 
-    instructions = []
-    labels = {}
-
-    # PASS 1: Extract instructions and resolve labels
-    for line in asm_text.splitlines():
-        code = line.split('#')[0].split('//')[0].strip()
-        if not code:
-            continue
-            
-        # Check if line contains a label (e.g., "skip1:" or "end: beq x0, x0, end")
-        if ':' in code:
-            parts = code.split(':', 1)
-            label_name = parts[0].strip()
-            # Record the label pointing to the NEXT instruction index
-            labels[label_name] = len(instructions) 
-            
-            # If there's an instruction on the same line after the colon, add it
-            inst_part = parts[1].strip()
-            if inst_part:
-                instructions.append(inst_part)
-        else:
-            instructions.append(code)
+    instructions, labels = parse_asm_source(asm_text.splitlines())
 
     # PASS 2: Simulate execution in LOCKSTEP (Cycle-by-Cycle)
-    # Initialize state for all cores
+
     core_states = []
     for core_id in range(num_cores):
         regfiles[core_id][31] = core_id  # Hardwire x31 to CORE_ID
@@ -258,6 +280,12 @@ def generate_expected_memories(asm_text, num_cores=2, initial_memory=None):
                         state['halted'] = True
                     else:
                         next_pc = target_pc
+
+            elif op == 'ssy':
+                # Custom SIMT reconvergence marker. The RTL uses this to set a
+                # pending reconvergence PC; the scalar golden model can treat it
+                # as a no-op because each core follows its own PC independently.
+                pass
 
             elif op == 'jal':
                 rd = parse_register(parts[1])

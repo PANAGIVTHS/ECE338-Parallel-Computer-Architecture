@@ -5,6 +5,7 @@
 
 volatile int branch_out[CORES] = {0};
 volatile int join_out[CORES] = {0};
+volatile int test[CORES/4] = {0};
 
 void main(void)
 {
@@ -12,6 +13,11 @@ void main(void)
 
     if (threadIdx_x < 16u) {
         branch_out[threadIdx_x] = 111;
+        if (threadIdx_x < 8u) {
+            test[threadIdx_x] = 444;
+        } else {
+            test[threadIdx_x] = 555;
+        }
     } else {
         branch_out[threadIdx_x] = 222;
     }
