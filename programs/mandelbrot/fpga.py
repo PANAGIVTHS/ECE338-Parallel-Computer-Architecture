@@ -65,12 +65,11 @@ HEIGHT = 64
 DEFAULT_DATA_BASE_BYTES = 0x00001000
 DEFAULT_DATA_LIMIT_BYTES = 0x00001800
 
-DEFAULT_CENTER_RE_Q = -6092
-DEFAULT_CENTER_IM_Q = 1080
-DEFAULT_SCALE_Q = 24576
+DEFAULT_CENTER_RE_Q = -779776
+DEFAULT_CENTER_IM_Q = 138240
+DEFAULT_SCALE_Q = 3145728
 
-DEFAULT_ZOOM_NUM = 97
-DEFAULT_ZOOM_DEN = 100
+DEFAULT_ZOOM_SHIFT = 7
 
 ROW_SHIFT = 26
 SCALE_MASK = (1 << ROW_SHIFT) - 1
@@ -106,8 +105,7 @@ class ProgramAdapter(BaseProgramAdapter):
         self.center_im_q = DEFAULT_CENTER_IM_Q
         self.initial_scale_q = DEFAULT_SCALE_Q
 
-        self.zoom_num = DEFAULT_ZOOM_NUM
-        self.zoom_den = DEFAULT_ZOOM_DEN
+        self.zoom_shift = DEFAULT_ZOOM_SHIFT
 
         self.frames = 1
         self.scales: list[int] = []
@@ -142,37 +140,35 @@ class ProgramAdapter(BaseProgramAdapter):
             "--center-re-q",
             type=int,
             default=DEFAULT_CENTER_RE_Q,
-            help=f"Q13 real center coordinate, default: {DEFAULT_CENTER_RE_Q}",
+            help=f"Q20 real center coordinate, default: {DEFAULT_CENTER_RE_Q}",
         )
         group.add_argument(
             "--center-im-q",
             type=int,
             default=DEFAULT_CENTER_IM_Q,
-            help=f"Q13 imaginary center coordinate, default: {DEFAULT_CENTER_IM_Q}",
+            help=f"Q20 imaginary center coordinate, default: {DEFAULT_CENTER_IM_Q}",
         )
         group.add_argument(
             "--scale-q",
             type=int,
             default=DEFAULT_SCALE_Q,
-            help=f"Initial Q13 viewport scale, default: {DEFAULT_SCALE_Q}",
+            help=f"Initial Q20 viewport scale, default: {DEFAULT_SCALE_Q}",
         )
         group.add_argument(
-            "--zoom-num",
+            "--zoom-shift",
             type=int,
-            default=DEFAULT_ZOOM_NUM,
-            help=f"Zoom ratio numerator, default: {DEFAULT_ZOOM_NUM}",
-        )
-        group.add_argument(
-            "--zoom-den",
-            type=int,
-            default=DEFAULT_ZOOM_DEN,
-            help=f"Zoom ratio denominator, default: {DEFAULT_ZOOM_DEN}",
+            default=DEFAULT_ZOOM_SHIFT,
+            help=(
+                "Shift used for the division-free zoom update "
+                "scale_q -= max(scale_q >> zoom_shift, 1), "
+                f"default: {DEFAULT_ZOOM_SHIFT}"
+            ),
         )
         group.add_argument(
             "--min-scale-q",
             type=int,
-            default=64,
-            help="Clamp scale_q to this minimum to avoid pixel_step becoming zero, default: 64",
+            default=1,
+            help="Clamp scale_q to this minimum, default: 1",
         )
         group.add_argument(
             "--no-clear-output",
@@ -229,10 +225,8 @@ class ProgramAdapter(BaseProgramAdapter):
             raise SystemExit(
                 f"--scale-q must fit in {ROW_SHIFT} packed bits, max {SCALE_MASK}"
             )
-        if adapter_args.zoom_num < 1:
-            raise SystemExit("--zoom-num must be >= 1")
-        if adapter_args.zoom_den < 1:
-            raise SystemExit("--zoom-den must be >= 1")
+        if adapter_args.zoom_shift < 1:
+            raise SystemExit("--zoom-shift must be >= 1")
         if adapter_args.min_scale_q < 1:
             raise SystemExit("--min-scale-q must be >= 1")
         if adapter_args.min_scale_q > SCALE_MASK:
@@ -245,16 +239,14 @@ class ProgramAdapter(BaseProgramAdapter):
         self.center_im_q = adapter_args.center_im_q
         self.initial_scale_q = adapter_args.scale_q
 
-        self.zoom_num = adapter_args.zoom_num
-        self.zoom_den = adapter_args.zoom_den
+        self.zoom_shift = adapter_args.zoom_shift
 
         self.clear_output = not adapter_args.no_clear_output
 
         self.scales = self.build_scales(
             frames=self.frames,
             initial_scale_q=self.initial_scale_q,
-            zoom_num=self.zoom_num,
-            zoom_den=self.zoom_den,
+            zoom_shift=self.zoom_shift,
             min_scale_q=adapter_args.min_scale_q,
         )
 
@@ -269,7 +261,7 @@ class ProgramAdapter(BaseProgramAdapter):
             f"frames={self.frames}, rows/frame={HEIGHT}, "
             f"data_base=0x{self.data_base_bytes:08x}, "
             f"center=({self.center_re_q}, {self.center_im_q}), "
-            f"scale_q={self.initial_scale_q}, zoom={self.zoom_num}/{self.zoom_den}"
+            f"scale_q={self.initial_scale_q}, zoom_shift={self.zoom_shift}"
         )
 
     @staticmethod
@@ -277,8 +269,7 @@ class ProgramAdapter(BaseProgramAdapter):
         *,
         frames: int,
         initial_scale_q: int,
-        zoom_num: int,
-        zoom_den: int,
+        zoom_shift: int,
         min_scale_q: int,
     ) -> list[int]:
         scales: list[int] = []
@@ -288,7 +279,11 @@ class ProgramAdapter(BaseProgramAdapter):
             scale_q = max(min(scale_q, SCALE_MASK), min_scale_q)
             scales.append(scale_q)
 
-            scale_q = (scale_q * zoom_num) // zoom_den
+            delta = scale_q >> zoom_shift
+            if delta == 0:
+                delta = 1
+
+            scale_q -= delta
             if scale_q < min_scale_q:
                 scale_q = min_scale_q
 
@@ -324,8 +319,8 @@ class ProgramAdapter(BaseProgramAdapter):
         return [
             self.data_base_bytes,  # GPGPU_ARGS[0]: output row pointer byte address
             packed,                # GPGPU_ARGS[1]: row + scale_q
-            self.center_re_q,      # GPGPU_ARGS[2]: Q13 center real
-            self.center_im_q,      # GPGPU_ARGS[3]: Q13 center imaginary
+            self.center_re_q,      # GPGPU_ARGS[2]: Q20 center real
+            self.center_im_q,      # GPGPU_ARGS[3]: Q20 center imaginary
         ]
 
     def output_window(
