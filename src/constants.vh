@@ -67,4 +67,9 @@
 `define CORE_RUNNING 2'b01
 `define CORE_DUMPING 2'b10
 
+`define FIFO_ENQ_DEQ 2'b11
+`define FIFO_ENQ 2'b10
+`define FIFO_DEQ 2'b01
+`define FIFO_NOP 2'b00
+
 `define DEBUG "false"
