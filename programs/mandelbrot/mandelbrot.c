@@ -102,7 +102,7 @@ int main(int argc, char **argv)
      *   ./mandelbrot_x86 frames center_re_q center_im_q scale_q
      *
      * Example:
-     *   ./mandelbrot_x86 160 -6092 1080 24576 > data.csv
+     *   ./mandelbrot_x86 160 -779776 138240 3145728 > data.csv
      */
     if (argc >= 2) {
         frames = atoi(argv[1]);
@@ -131,22 +131,8 @@ int main(int argc, char **argv)
             );
         }
 
-        /*
-         * Zoom in for the next frame.
-         *
-         * This division is x86-only host/reference code.
-         * The RISC-V kernel receives the already-computed scale_q.
-         */
-        scale_q = (scale_q * DEFAULT_ZOOM_NUM) / DEFAULT_ZOOM_DEN;
-
-        if (scale_q < 64) {
-            /*
-             * Below 64, pixel_step_q = scale_q >> 6 becomes zero, so every
-             * pixel maps to the same complex coordinate and the image stops
-             * changing.
-             */
-            scale_q = 64;
-        }
+        /* Zoom in for the next frame without division. */
+        scale_q = zoom_next_scale(scale_q);
     }
 
     return 0;

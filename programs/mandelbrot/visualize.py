@@ -1,18 +1,39 @@
 import argparse
 import csv
 import math
+import os
+import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 try:
     import cv2
     import numpy as np
 except ImportError as exc:
+    uv = shutil.which("uv")
+    if uv is not None and os.environ.get("MANDELBROT_VISUALIZE_UV_REEXEC") != "1":
+        env = os.environ.copy()
+        env["MANDELBROT_VISUALIZE_UV_REEXEC"] = "1"
+        cmd = [
+            uv,
+            "run",
+            "--with",
+            "opencv-python-headless",
+            "--with",
+            "numpy",
+            "python",
+            str(Path(__file__).resolve()),
+            *sys.argv[1:],
+        ]
+        raise SystemExit(subprocess.run(cmd, cwd=Path(__file__).resolve().parent, env=env).returncode)
+
     raise SystemExit(
         "visualize.py needs OpenCV and NumPy.\n"
         "Install them with:\n"
-        "  pip install opencv-python numpy\n"
+        "  pip install opencv-python-headless numpy\n"
         "or:\n"
-        "  uv run --with opencv-python --with numpy python visualize.py"
+        "  uv run --with opencv-python-headless --with numpy python visualize.py"
     ) from exc
 
 

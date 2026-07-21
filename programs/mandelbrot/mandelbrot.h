@@ -6,21 +6,30 @@
 #define LOG2_WIDTH 6
 
 /*
- * Fixed-point format: Q13
+ * Fixed-point format: Q20
  *
- * 1.0 = 8192
- * 2.0 = 16384
- * 4.0 = 32768
+ * 1.0 = 1048576
+ * 2.0 = 2097152
+ * 4.0 = 4194304
  *
- * Q13 gives more zoom precision than Q10. With WIDTH=64, the pixel step is:
+ * Q20 gives enough zoom precision for the default 1000-frame x86 animation.
+ * With WIDTH=64, the center-to-center pixel step is roughly:
  *
  *     pixel_step_q = scale_q >> 6
  *
- * so the zoom stops changing only when scale_q < 64, i.e. viewport scale
- * smaller than 64 / 8192 = 0.0078125.
+ * Q13 stopped visibly changing once scale_q was clamped at 64. Q20 moves that
+ * quantization limit 128x deeper while still keeping coordinates in the 26-bit
+ * packed argument field used by the FPGA adapter.
  */
-#define FP_SHIFT 13
+#define FP_SHIFT 20
 #define FP_ONE (1 << FP_SHIFT)
+
+/*
+ * Keep multiplication in 32-bit arithmetic for the RV32/GPU path. Shifting both
+ * operands down before the multiply avoids overflow for escaped z values; the
+ * result still has Q20 scale, with about Q16 effective multiply precision.
+ */
+#define FP_MUL_PRE_SHIFT 8
 
 #define MAX_ITER 64
 #define ESCAPE_RADIUS2_Q (4 << FP_SHIFT)
@@ -37,16 +46,16 @@
  *   center_im ~=  0.13184
  *   scale     =   3.0
  */
-#define DEFAULT_CENTER_RE_Q (-6092)   /* -0.74365 * 8192 */
-#define DEFAULT_CENTER_IM_Q (1080)    /*  0.13184 * 8192 */
-#define DEFAULT_SCALE_Q     (24576)   /*  3.00000 * 8192 */
+#define DEFAULT_CENTER_RE_Q (-779776)  /* old Q13 -6092 converted to Q20 */
+#define DEFAULT_CENTER_IM_Q (138240)   /* old Q13  1080 converted to Q20 */
+#define DEFAULT_SCALE_Q     (3145728)  /* 3.00000 * 1048576 */
 
 /*
- * For x86 CSV generation only.
+ * For x86 CSV generation only. The zoom update uses scale -= scale >> 7, so it
+ * has no division and maps cleanly to the current RV32/GPU instruction subset.
  */
 #define DEFAULT_FRAMES 1000
-#define DEFAULT_ZOOM_NUM 9941
-#define DEFAULT_ZOOM_DEN 10000
+#define DEFAULT_ZOOM_SHIFT 7
 
 static inline int select_int(int old_value, int new_value, int mask)
 {
@@ -55,7 +64,19 @@ static inline int select_int(int old_value, int new_value, int mask)
 
 static inline int fixed_mul(int a, int b)
 {
-    return (a * b) >> FP_SHIFT;
+    return ((a >> FP_MUL_PRE_SHIFT) * (b >> FP_MUL_PRE_SHIFT)) >>
+           (FP_SHIFT - (2 * FP_MUL_PRE_SHIFT));
+}
+
+static inline int zoom_next_scale(int scale_q)
+{
+    int delta = scale_q >> DEFAULT_ZOOM_SHIFT;
+    int delta_is_zero = (delta == 0);
+    delta = select_int(delta, 1, -delta_is_zero);
+
+    int next = scale_q - delta;
+    int below_min = (next < 1);
+    return select_int(next, 1, -below_min);
 }
 
 /*
@@ -98,8 +119,11 @@ static inline int mandel_pixel(
         int active = escaped ^ 1;
         int new_escape = active & escaped_now;
         int new_escape_mask = -new_escape;
+        volatile int keep_escape_iter_mask = ~new_escape_mask;
+        volatile int set_escape_iter_mask = new_escape_mask;
 
-        escape_iter = select_int(escape_iter, iter, new_escape_mask);
+        escape_iter = (escape_iter & keep_escape_iter_mask) |
+                      (iter & set_escape_iter_mask);
 
         escaped = escaped | escaped_now;
 
@@ -116,15 +140,15 @@ static inline int mandel_pixel(
         /*
          * Once a pixel has escaped, set z to 0 instead of freezing it.
          *
-         * This is important with Q13: an escaped z can be much larger than 2,
+         * This is important with Q20: an escaped z can be much larger than 2,
          * and repeatedly squaring it could overflow 32-bit integers. We no
          * longer need z after escape_iter has been recorded, so zeroing it is
          * safe and keeps the arithmetic bounded.
          */
         int update_mask = -(escaped ^ 1);
 
-        zr = select_int(0, zr_next, update_mask);
-        zi = select_int(0, zi_next, update_mask);
+        zr = zr_next & update_mask;
+        zi = zi_next & update_mask;
     }
 
     return escape_iter;
