@@ -1,12 +1,14 @@
 `timescale 1ns/1ps
 
+`include "../constants.vh"
+
 module tb_WarpScheduler;
 
     // Parameters
     localparam WARP_NUM = 32;
     localparam SLOTS = 2;
     localparam STATE_BITS = 2;
-    localparam READY_STATE = 2'b01;
+    localparam READY_STATE = `WARP_READY_STATE;
     localparam WARP_ID_BITS = $clog2(WARP_NUM);
 
     // Signals
@@ -26,8 +28,7 @@ module tb_WarpScheduler;
     WarpScheduler #(
         .WARP_NUM(WARP_NUM),
         .SLOTS(SLOTS),
-        .STATE_BITS(STATE_BITS),
-        .READY_STATE(READY_STATE)
+        .STATE_BITS(STATE_BITS)
     ) dut (
         .clk(clk),
         .rst(rst),

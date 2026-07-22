@@ -1,10 +1,11 @@
 `timescale 1ns / 1ps
 
+`include "../constants.vh"
+
 module WarpScheduler #(
     parameter WARP_NUM = 32,
     parameter SLOTS = 2,
-    parameter STATE_BITS = 2,
-    parameter READY_STATE = 2'b01
+    parameter STATE_BITS = 2
 )(
     input clk,
     input rst,
@@ -38,7 +39,7 @@ module WarpScheduler #(
 
     always @(*) begin
 
-        for (i = 0; i < WARP_NUM; i = i + 1) ready_unissued[i] = (i_all_states[(i * STATE_BITS) +: STATE_BITS] == READY_STATE);
+        for (i = 0; i < WARP_NUM; i = i + 1) ready_unissued[i] = (i_all_states[(i * STATE_BITS) +: STATE_BITS] == `WARP_READY_STATE);
 
         next_eligible_mask = eligible_mask;
 
