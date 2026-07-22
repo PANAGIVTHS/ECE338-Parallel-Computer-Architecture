@@ -1,7 +1,6 @@
 module WarpStateMask #(
     parameter WARP_NUM = 32,
-    parameter STATE_BITS = 2,
-    localparam WARP_ID_BITS = $clog2(WARP_NUM)
+    parameter STATE_BITS = 2
 )(
     input clk,
     input rst,
@@ -14,6 +13,8 @@ module WarpStateMask #(
     //! Flattened Read Port
     output [(WARP_NUM * STATE_BITS)-1:0] o_all_states
 );
+
+    localparam WARP_ID_BITS = $clog2(WARP_NUM);
 
     integer i;
     reg [STATE_BITS-1:0] warp_state [0:WARP_NUM-1];
