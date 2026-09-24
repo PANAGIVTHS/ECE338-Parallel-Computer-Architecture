@@ -45,16 +45,17 @@ def test_create_tasks_preserves_makefile_build_graph_and_flags(tmp_path: Path) -
     prefix = "software:programs:example"
 
     assert set(tasks) == {
+        f"{prefix}:x86:build",
         f"{prefix}:x86",
         f"{prefix}:elf",
         f"{prefix}:dump",
         f"{prefix}:assembly",
         f"{prefix}:mem",
-        f"{prefix}:riscv",
+        f"{prefix}:riscv:build",
         f"{prefix}:all",
     }
 
-    x86_command = tasks[f"{prefix}:x86"]["actions"][0][1][0]
+    x86_command = tasks[f"{prefix}:x86:build"]["actions"][0][1][0]
     assert x86_command == [
         "gcc",
         "-O2",
@@ -75,8 +76,11 @@ def test_create_tasks_preserves_makefile_build_graph_and_flags(tmp_path: Path) -
     assert tasks[f"{prefix}:dump"]["task_dep"] == [f"{prefix}:elf"]
     assert tasks[f"{prefix}:assembly"]["task_dep"] == [f"{prefix}:dump"]
     assert tasks[f"{prefix}:mem"]["task_dep"] == [f"{prefix}:dump"]
-    assert tasks[f"{prefix}:riscv"]["task_dep"] == [f"{prefix}:assembly"]
-    assert tasks[f"{prefix}:all"]["task_dep"] == [f"{prefix}:riscv", f"{prefix}:x86"]
+    assert tasks[f"{prefix}:riscv:build"]["task_dep"] == [f"{prefix}:assembly"]
+    assert tasks[f"{prefix}:all"]["task_dep"] == [
+        f"{prefix}:riscv:build",
+        f"{prefix}:x86:build",
+    ]
 
 
 def test_dump_transformations_match_makefile_filters(tmp_path: Path) -> None:
@@ -118,13 +122,32 @@ def test_non_program_directories_are_ignored(tmp_path: Path) -> None:
 
 
 @pytest.mark.skipif(shutil.which("gcc") is None, reason="gcc is not installed")
-def test_x86_task_action_builds_a_real_executable(tmp_path: Path) -> None:
+def test_x86_task_builds_and_runs_the_native_executable(tmp_path: Path) -> None:
     config = make_repo(tmp_path)
-    task = tasks_by_name(config)["software:programs:example:x86"]
-    action, arguments = task["actions"][0]
+    marker = tmp_path / "executed.txt"
+    source = tmp_path / "software/programs/example/example.c"
+    source.write_text(
+        '#include <stdio.h>\n'
+        'int main(void) {\n'
+        f'    FILE *file = fopen("{marker}", "w");\n'
+        '    if (file == NULL) return 1;\n'
+        '    fputs("executed", file);\n'
+        '    return fclose(file);\n'
+        '}\n',
+        encoding="utf-8",
+    )
+    tasks = tasks_by_name(config)
+    build_task = tasks["software:programs:example:x86:build"]
+    run_task = tasks["software:programs:example:x86"]
 
-    action(*arguments)
+    build_action, build_arguments = build_task["actions"][0]
+    build_action(*build_arguments)
+    run_action, run_arguments = run_task["actions"][0]
+    run_action(*run_arguments)
 
     executable = tmp_path / "software/programs/example/example_x86"
     assert executable.is_file()
     assert executable.stat().st_mode & 0o111
+    assert run_task["task_dep"] == ["software:programs:example:x86:build"]
+    assert run_task["uptodate"] == [False]
+    assert marker.read_text(encoding="utf-8") == "executed"

@@ -141,12 +141,13 @@ def _program_tasks(config: ResolvedConfig, program: str) -> list[dict[str, Any]]
 
     objdump = _objdump_for(riscv_cc)
     prefix = f"software:programs:{program}"
+    x86_build_name = f"{prefix}:x86:build"
     x86_name = f"{prefix}:x86"
     elf_name = f"{prefix}:elf"
     dump_name = f"{prefix}:dump"
     assembly_name = f"{prefix}:assembly"
     mem_name = f"{prefix}:mem"
-    riscv_name = f"{prefix}:riscv"
+    riscv_build_name = f"{prefix}:riscv:build"
 
     native_command = [native_cc, "-O2", "-o", str(native_executable), str(source)]
     elf_command = [
@@ -167,11 +168,17 @@ def _program_tasks(config: ResolvedConfig, program: str) -> list[dict[str, Any]]
 
     return [
         {
-            "name": x86_name,
+            "name": x86_build_name,
             "actions": [(_run_command, [native_command])],
             "file_dep": [str(source)],
             "targets": [str(native_executable)],
             "clean": True,
+        },
+        {
+            "name": x86_name,
+            "actions": [(_run_command, [[str(native_executable)]])],
+            "task_dep": [x86_build_name],
+            "uptodate": [False],
         },
         {
             "name": elf_name,
@@ -205,14 +212,14 @@ def _program_tasks(config: ResolvedConfig, program: str) -> list[dict[str, Any]]
             "clean": True,
         },
         {
-            "name": riscv_name,
+            "name": riscv_build_name,
             "actions": None,
             "task_dep": [assembly_name],
         },
         {
             "name": f"{prefix}:all",
             "actions": None,
-            "task_dep": [riscv_name, x86_name],
+            "task_dep": [riscv_build_name, x86_build_name],
         },
     ]
 
