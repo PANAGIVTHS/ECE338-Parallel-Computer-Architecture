@@ -164,6 +164,25 @@ def test_run_propagates_pydoit_failure_status(
     assert result.exit_code == 3
 
 
+def test_run_help_explains_task_names_and_common_workflows(tmp_path: Path) -> None:
+    result = runner.invoke(create_app(repo_root=make_repo(tmp_path)), ["run", "--help"])
+
+    assert result.exit_code == 0, result.output
+    arguments_index = result.stdout.index("Arguments")
+    possible_values_index = result.stdout.index("Possible values")
+    assert arguments_index < possible_values_index
+    assert "software:programs:" not in result.stdout[:arguments_index]
+    assert "colon-separated" in result.stdout
+    assert "software:programs:<program>:x86" in result.stdout
+    assert "software:programs:<program>:x86:build" in result.stdout
+    assert "software:programs:<program>:riscv:build" in result.stdout
+    assert "software:programs:<program>:elf" in result.stdout
+    assert "software:programs:<program>:mem" in result.stdout
+    assert "software:programs:<program>:all" in result.stdout
+    assert "software:programs:simple:x86" in result.stdout
+    assert "native x86 executable" in result.stdout
+
+
 def test_help_exposes_core_commands_and_completion_flags(tmp_path: Path) -> None:
     app = create_app(repo_root=make_repo(tmp_path))
 
