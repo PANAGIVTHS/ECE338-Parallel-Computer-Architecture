@@ -11,7 +11,9 @@ bootstrap() {
         UV_PROJECT_ENVIRONMENT="$VENV" uv sync --project "$CLI_PROJECT"
     else
         python3 -m venv "$VENV"
-        "$VENV/bin/python" -m pip install --editable "$CLI_PROJECT"
+        "$VENV/bin/python" -m pip install \
+            --editable "$ROOT/tools/gpgpu_tasks" \
+            --editable "$CLI_PROJECT"
     fi
 
     if [[ ! -e "$ROOT/config/local.yaml" ]]; then
