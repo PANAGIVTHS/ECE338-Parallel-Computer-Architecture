@@ -11,34 +11,35 @@ module tmds_top (
     output wire hdmi_clk_p,
     output wire hdmi_clk_n
 );
-    wire [2:0] tmds_10b, tmds_signal;
+    wire [2:0] tmds_signal;
+    wire [9:0] tmds_10b [2:0];
 
     tmds_encoder tmds_red (
-        .clk_in(clk_pixel), // your pixel clock
-        .rst_in(rst),
-        .data_in(rgb[2]),
+        .clk(clk_pixel), // your pixel clock
+        .rst(rst),
+        .data_in({8{rgb[2]}}),
         // 8-bit value
-        .control_in(2’b0),
+        .control_in(2'b0),
         .ve_in(active_draw),
         .tmds_out(tmds_10b[2])
     );
 
     tmds_encoder tmds_green(
-        .clk_in(clk_pixel), // your pixel clock
-        .rst_in(rst),
+        .clk(clk_pixel), // your pixel clock
+        .rst(rst),
         // system reset
-        .data_in(rgb[1]),
+        .data_in({8{rgb[1]}}),
         // 8-bit value
-        .control_in(2’b0),
+        .control_in(2'b0),
         .ve_in(active_draw),
         .tmds_out(tmds_10b[1])
     );
 
     tmds_encoder tmds_blue(
-        .clk_in(clk_pixel), // your pixel clock
-        .rst_in(rst),
+        .clk(clk_pixel), // your pixel clock
+        .rst(rst),
         // system reset
-        .data_in(rgb[0]),
+        .data_in({8{rgb[0]}}),
         // 8-bit value
         .control_in({vsync, hsync}),
         .ve_in(active_draw),
@@ -47,7 +48,7 @@ module tmds_top (
 
     tmds_serializer red_ser(
         .clk_pixel_in(clk_pixel), // your pixel clock
-        .clk_5x_in(clk_5x),
+        .clk_5x_in(clk_pixel_x5),
         // your x5 clock
         .rst_in(rst),
         // system reset
@@ -57,7 +58,7 @@ module tmds_top (
 
     tmds_serializer green_ser(
         .clk_pixel_in(clk_pixel), // your pixel clock
-        .clk_5x_in(clk_5x),
+        .clk_5x_in(clk_pixel_x5),
         // your x5 clock
         .rst_in(rst),
         // system reset
@@ -67,7 +68,7 @@ module tmds_top (
 
     tmds_serializer blue_ser(
         .clk_pixel_in(clk_pixel), // your pixel clock
-        .clk_5x_in(clk_5x),
+        .clk_5x_in(clk_pixel_x5),
         // your x5 clock
         .rst_in(rst),
         // system reset
