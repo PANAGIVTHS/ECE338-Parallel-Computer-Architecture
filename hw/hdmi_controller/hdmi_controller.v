@@ -1,4 +1,4 @@
-module vga_controller (
+module hdmi_controller (
     reset,
     clk,
     enable,
@@ -21,6 +21,7 @@ module vga_controller (
     output hdmi_clk_p;
     output hdmi_clk_n;
 
+    wire [2:0] rgb;
     wire [6:0] hpixel, vpixel;
     wire [2:0] hpixel_upscale_counter;
     wire hrgb_enabled, vrgb_enabled;
@@ -36,6 +37,12 @@ module vga_controller (
     InputDebouncer down_debouncer_inst(.clk(new_clk), .reset(debounced_reset), .input_bounce(down_ctrl), .debounced(down_debounced), .posedge_pulse());
     InputDebouncer left_debouncer_inst(.clk(new_clk), .reset(debounced_reset), .input_bounce(left_ctrl), .debounced(left_debounced), .posedge_pulse());
     InputDebouncer right_debouncer_inst(.clk(new_clk), .reset(debounced_reset), .input_bounce(right_ctrl), .debounced(right_debounced), .posedge_pulse());
+
+    // Clock generation
+    // ...
+
+    // TMDS encoding & serializer
+    // ...
     
     renderer renderer_inst(.clk(new_clk), .reset(debounced_reset), .edit_mode(debounced_edit),  .up_ctrl(up_debounced), .down_ctrl(down_debounced), 
     .left_ctrl(left_debounced), .right_ctrl(right_debounced), .frame_end(frame_end), .write_enable(write_enable), .write_address(write_address), 
@@ -46,7 +53,7 @@ module vga_controller (
         .UPSCALE_CYCLES(4)
     )
     pixel_controller_inst(.clk(new_clk), .reset(debounced_reset), .write_enable(write_enable), .write_address(write_address), .write_data(write_data), .hrgb_enabled(hrgb_enabled), .vrgb_enabled(vrgb_enabled), 
-    .hpixel(hpixel), .hpixel_upscale_counter(hpixel_upscale_counter), .vpixel(vpixel), .r(vga_red), .g(vga_green), .b(vga_blue));
+    .hpixel(hpixel), .hpixel_upscale_counter(hpixel_upscale_counter), .vpixel(vpixel), .rgb(rgb));
 
     // Horizontal sync controller
     gsync_controller #(
@@ -59,7 +66,7 @@ module vga_controller (
         .UPSCALE_CYCLES(4),
         .RESET_PIXEL(128)
     )
-    hsync_controller_inst(.clk(new_clk), .reset(debounced_reset), .enable(debounced_enable), .sync(vga_hsync), .rgb_enabled(hrgb_enabled), .pixel(hpixel), .upscale_counter(hpixel_upscale_counter), .frame_end());
+    hsync_controller_inst(.clk(new_clk), .reset(debounced_reset), .enable(debounced_enable), .sync(hsync), .rgb_enabled(hrgb_enabled), .pixel(hpixel), .upscale_counter(hpixel_upscale_counter), .frame_end());
 
     // Vertical sync controller
     gsync_controller #(
@@ -72,6 +79,6 @@ module vga_controller (
         .UPSCALE_CYCLES(3999),
         .RESET_PIXEL(96)
     )
-    vsync_controller_inst(.clk(new_clk), .reset(debounced_reset), .enable(debounced_enable), .sync(vga_vsync), .rgb_enabled(vrgb_enabled), .pixel(vpixel), .upscale_counter(), .frame_end(frame_end));
+    vsync_controller_inst(.clk(new_clk), .reset(debounced_reset), .enable(debounced_enable), .sync(vsync), .rgb_enabled(vrgb_enabled), .pixel(vpixel), .upscale_counter(), .frame_end(frame_end));
 
 endmodule
