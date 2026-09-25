@@ -29,6 +29,7 @@ module hdmi_controller (
     wire [13:0] write_address;
     wire [2:0] write_data;
 
+    // Clock generation for pixel clock
     clock_divider clock_divider_inst(.clk(clk), .new_clk(new_clk));
     ResetDebouncer reset_debouncer_inst(.clk(new_clk), .input_bounce(reset), .debounced(debounced_reset), .debounced_off(), .debounced_on());
     InputDebouncer enable_debouncer_inst(.clk(new_clk), .reset(debounced_reset), .input_bounce(enable), .debounced(debounced_enable), .posedge_pulse());
@@ -38,11 +39,9 @@ module hdmi_controller (
     InputDebouncer left_debouncer_inst(.clk(new_clk), .reset(debounced_reset), .input_bounce(left_ctrl), .debounced(left_debounced), .posedge_pulse());
     InputDebouncer right_debouncer_inst(.clk(new_clk), .reset(debounced_reset), .input_bounce(right_ctrl), .debounced(right_debounced), .posedge_pulse());
 
-    // Clock generation
-    // ...
-
     // TMDS encoding & serializer
-    // ...
+    tmds_top tmds_top_inst(.clk_pixel(), .clk_pixel_x5(), .rst(reset), .active_draw(hrgb_enabled & vrgb_enabled), .hsync(hsync), .vsync(vsync), .rgb(rgb), .hdmi_tx_p(hdmi_tx_p), .hdmi_tx_n(hdmi_tx_n),
+    .hdmi_clk_p(hdmi_clk_p), .hdmi_clk_n(hdmi_clk_n));
     
     renderer renderer_inst(.clk(new_clk), .reset(debounced_reset), .edit_mode(debounced_edit),  .up_ctrl(up_debounced), .down_ctrl(down_debounced), 
     .left_ctrl(left_debounced), .right_ctrl(right_debounced), .frame_end(frame_end), .write_enable(write_enable), .write_address(write_address), 
