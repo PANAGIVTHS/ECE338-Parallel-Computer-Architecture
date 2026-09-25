@@ -1,3 +1,5 @@
+`timescale 1ns/1ps
+
 module sprite_controller #(
     parameter X_BOUNDARY = 7'd127,
     parameter Y_BOUNDARY = 7'd95,
@@ -18,11 +20,16 @@ module sprite_controller #(
     g,
     b
 );
-    localparam WIDTH = 6'd51;
-    localparam HEIGHT = 6'd22;
-    localparam START_POS = (X_BOUNDARY + 1) * Y_POS + X_POS;
-    localparam END_POS = START_POS + 2_739;
-    localparam FRAME_INTERVAL = 2'b10;
+    localparam [6:0] WIDTH = 7'd51;
+    localparam [6:0] HEIGHT = 7'd23;
+    localparam [6:0] MAX_X_POS = X_BOUNDARY - WIDTH + 7'd1;
+    localparam [6:0] MAX_Y_POS = Y_BOUNDARY - HEIGHT + 7'd1;
+    localparam [13:0] ROW_STRIDE = {7'd0, X_BOUNDARY} + 14'd1;
+    localparam [13:0] START_POS = ROW_STRIDE * Y_POS + {7'd0, X_POS};
+    localparam [13:0] SPRITE_SPAN = ({7'd0, HEIGHT} - 14'd1) * ROW_STRIDE
+                                      + ({7'd0, WIDTH} - 14'd1);
+    localparam [13:0] END_POS = START_POS + SPRITE_SPAN;
+    localparam [1:0] FRAME_INTERVAL = 2'b10;
 
     input clk, reset, edit_mode;
     input up_ctrl, down_ctrl, left_ctrl, right_ctrl;
@@ -32,13 +39,62 @@ module sprite_controller #(
 
     reg [1:0] frame_counter;
     reg [6:0] x_pos, y_pos;
-    reg [6:0] x_velocity, y_velocity;
-    reg [13:0] x_step, y_step;
+    reg x_moving_right, y_moving_down;
+    reg [6:0] next_x_pos, next_y_pos;
+    reg next_x_moving_right, next_y_moving_down;
     reg [2:0] color;
+
+    wire animation_tick;
+    wire horizontal_collision;
+    wire vertical_collision;
+
+    assign animation_tick = frame_end && frame_counter == FRAME_INTERVAL;
+    assign horizontal_collision = (x_moving_right && x_pos >= MAX_X_POS)
+                                || (!x_moving_right && x_pos == 0);
+    assign vertical_collision = (y_moving_down && y_pos >= MAX_Y_POS)
+                              || (!y_moving_down && y_pos == 0);
+
     assign r = color[0];
     assign g = color[1];
     assign b = color[2];
-    
+
+    // Compute a reflected step.  At an edge, move back into the valid area
+    // immediately instead of taking one out-of-bounds step with stale velocity.
+    always @(*) begin
+        next_x_pos = x_pos;
+        next_y_pos = y_pos;
+        next_x_moving_right = x_moving_right;
+        next_y_moving_down = y_moving_down;
+
+        if (x_moving_right) begin
+            if (x_pos >= MAX_X_POS) begin
+                next_x_pos = MAX_X_POS - 7'd1;
+                next_x_moving_right = 1'b0;
+            end else begin
+                next_x_pos = x_pos + 7'd1;
+            end
+        end else if (x_pos == 0) begin
+            next_x_pos = 7'd1;
+            next_x_moving_right = 1'b1;
+        end else begin
+            next_x_pos = x_pos - 7'd1;
+        end
+
+        if (y_moving_down) begin
+            if (y_pos >= MAX_Y_POS) begin
+                next_y_pos = MAX_Y_POS - 7'd1;
+                next_y_moving_down = 1'b0;
+            end else begin
+                next_y_pos = y_pos + 7'd1;
+            end
+        end else if (y_pos == 0) begin
+            next_y_pos = 7'd1;
+            next_y_moving_down = 1'b1;
+        end else begin
+            next_y_pos = y_pos - 7'd1;
+        end
+    end
+
     always @(posedge clk) begin
         if (reset) begin
             frame_counter <= 2'b0;
@@ -54,36 +110,13 @@ module sprite_controller #(
     always @(posedge clk) begin
         if (reset) begin
             color <= 3'b001;
-        end else if (frame_counter == FRAME_INTERVAL && frame_end
-        && ((x_pos + x_velocity + (WIDTH - 1) - 1 == X_BOUNDARY || x_pos + x_velocity + 1 == 0) 
-        || (y_pos + y_velocity + (HEIGHT - 1) - 1 == Y_BOUNDARY || y_pos + y_velocity + 1 == 0))) begin // If any collision is about to happen
-            if (color == 3'b111) begin // Don't use black color
+        end else if (animation_tick && !edit_mode
+                  && (horizontal_collision || vertical_collision)) begin
+            if (color == 3'b111) begin
                 color <= 3'b001;
             end else begin
-                color <= color + 3'b1;
+                color <= color + 3'b001;
             end
-        end
-    end
-
-    always @(posedge clk) begin
-        if (reset) begin
-            x_velocity <= 6'd1;
-            x_step <= 6'd1;
-        end else if (frame_counter == FRAME_INTERVAL && frame_end && 
-        (x_pos + x_velocity + (WIDTH - 1) - 1 == X_BOUNDARY || x_pos + x_velocity + 1 == 0)) begin // Horizontal collision
-            x_velocity <= -x_velocity;
-            x_step <= -x_step;
-        end
-    end
-
-    always @(posedge clk) begin
-        if (reset) begin
-            y_velocity <= 6'd1;
-            y_step <= X_BOUNDARY + 1;
-        end else if (frame_counter == FRAME_INTERVAL && frame_end && 
-        (y_pos + y_velocity + (HEIGHT - 1) - 1 == Y_BOUNDARY || y_pos + y_velocity + 1 == 0)) begin // Vertical collision
-            y_velocity <= -y_velocity;
-            y_step <= -y_step;
         end
     end
 
@@ -93,32 +126,33 @@ module sprite_controller #(
             end_pos <= END_POS;
             x_pos <= X_POS;
             y_pos <= Y_POS;
-        end else if (frame_counter == FRAME_INTERVAL && frame_end) begin
-            if (!edit_mode) begin // If not editing move automatically
-                start_pos <= start_pos + x_step + y_step;
-                end_pos <= end_pos + x_step + y_step;
-                x_pos <= x_pos + x_velocity;
-                y_pos <= y_pos + y_velocity;
-            end else begin // If in edit mode control with buttons
-                if (up_ctrl && y_pos > 0) begin 
-                    start_pos <= start_pos - X_BOUNDARY + 1;
-                    end_pos <= end_pos - X_BOUNDARY + 1;
-                    y_pos <= y_pos - 6'd1;
-                end else if (down_ctrl && y_pos + HEIGHT - 1 < Y_BOUNDARY) begin
-                    start_pos <= start_pos + X_BOUNDARY + 1;
-                    end_pos <= end_pos + X_BOUNDARY + 1;
-                    y_pos <= y_pos + 6'd1;
-                end else if (left_ctrl && x_pos > 0) begin
-                    start_pos <= start_pos - 14'd1;
-                    end_pos <= end_pos - 14'd1;
-                    x_pos <= x_pos - 6'd1;
-                end else if (right_ctrl && x_pos + WIDTH - 1 < X_BOUNDARY) begin
-                    start_pos <= start_pos + 14'd1;
-                    end_pos <= end_pos + 14'd1;
-                    x_pos <= x_pos + 6'd1;
-                end
+            x_moving_right <= 1'b1;
+            y_moving_down <= 1'b1;
+        end else if (animation_tick) begin
+            if (!edit_mode) begin
+                x_pos <= next_x_pos;
+                y_pos <= next_y_pos;
+                x_moving_right <= next_x_moving_right;
+                y_moving_down <= next_y_moving_down;
+                start_pos <= next_y_pos * ROW_STRIDE + {7'd0, next_x_pos};
+                end_pos <= next_y_pos * ROW_STRIDE + {7'd0, next_x_pos} + SPRITE_SPAN;
+            end else if (up_ctrl && y_pos > 0) begin
+                start_pos <= start_pos - ROW_STRIDE;
+                end_pos <= end_pos - ROW_STRIDE;
+                y_pos <= y_pos - 7'd1;
+            end else if (down_ctrl && y_pos < MAX_Y_POS) begin
+                start_pos <= start_pos + ROW_STRIDE;
+                end_pos <= end_pos + ROW_STRIDE;
+                y_pos <= y_pos + 7'd1;
+            end else if (left_ctrl && x_pos > 0) begin
+                start_pos <= start_pos - 14'd1;
+                end_pos <= end_pos - 14'd1;
+                x_pos <= x_pos - 7'd1;
+            end else if (right_ctrl && x_pos < MAX_X_POS) begin
+                start_pos <= start_pos + 14'd1;
+                end_pos <= end_pos + 14'd1;
+                x_pos <= x_pos + 7'd1;
             end
         end
     end
-    
 endmodule
