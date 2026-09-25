@@ -38,7 +38,8 @@ def test_root_launcher_is_executable_and_runs_cli() -> None:
     launcher_text = launcher.read_text(encoding="utf-8")
     assert 'CLI_PROJECT="$ROOT/tools/gpgpu_cli"' in launcher_text
     assert 'uv sync --project "$CLI_PROJECT"' in launcher_text
-    assert 'pip install --editable "$CLI_PROJECT"' in launcher_text
+    assert '--editable "$ROOT/tools/gpgpu_tasks"' in launcher_text
+    assert '--editable "$CLI_PROJECT"' in launcher_text
     assert "uv sync" in launcher_text
     assert "--extra" not in launcher_text
     assert "[dev]" not in launcher_text
@@ -52,3 +53,55 @@ def test_root_launcher_is_executable_and_runs_cli() -> None:
         text=True,
     )
     assert "ece338-gpgpu" in result.stdout
+
+
+
+def test_root_launcher_rebuilds_a_relocated_virtualenv_and_runs_requested_command(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    launcher = repo / "gpgpu"
+    launcher.write_text((REPO_ROOT / "gpgpu").read_text(encoding="utf-8"), encoding="utf-8")
+    launcher.chmod(0o755)
+    (repo / "tools/gpgpu_cli").mkdir(parents=True)
+    (repo / "config").mkdir()
+
+    stale_cli = repo / ".venv/bin/gpgpu"
+    stale_cli.parent.mkdir(parents=True)
+    stale_cli.write_text(
+        "#!/workspace/old-location/.venv/bin/python\nprint('stale')\n",
+        encoding="utf-8",
+    )
+    stale_cli.chmod(0o755)
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_uv = fake_bin / "uv"
+    fake_uv.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        "mkdir -p \"$UV_PROJECT_ENVIRONMENT/bin\"\n"
+        "cat > \"$UV_PROJECT_ENVIRONMENT/bin/gpgpu\" <<'EOF'\n"
+        "#!/usr/bin/env bash\n"
+        "if [[ \"${1:-}\" == doctor ]]; then exit 0; fi\n"
+        "printf 'executed:%s\\n' \"$*\"\n"
+        "EOF\n"
+        "chmod +x \"$UV_PROJECT_ENVIRONMENT/bin/gpgpu\"\n",
+        encoding="utf-8",
+    )
+    fake_uv.chmod(0o755)
+
+    env = os.environ.copy()
+    env["PATH"] = f"{fake_bin}:{env['PATH']}"
+    result = subprocess.run(
+        [str(launcher), "run", "tests:rtl:generate"],
+        cwd=repo,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "Running first-time initialization" in result.stdout
+    assert "executed:run tests:rtl:generate" in result.stdout

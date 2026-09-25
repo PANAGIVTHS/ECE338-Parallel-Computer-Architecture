@@ -22,10 +22,14 @@ bootstrap() {
 
     "$VENV/bin/gpgpu" doctor
     printf 'Activate .venv to have access to GPGPU CLI from anywhere inside the repo\n'
-    exit 0
 }
 
-if [[ ! -x "$VENV/bin/gpgpu" ]]; then
+venv_is_healthy() {
+    [[ -x "$VENV/bin/gpgpu" ]] && "$VENV/bin/gpgpu" --help >/dev/null 2>&1
+}
+
+if ! venv_is_healthy; then
+    rm -rf -- "$VENV"
     bootstrap
 fi
 
