@@ -3,7 +3,8 @@ module pixel_clock_gen (
     input  wire reset,
 
     output wire clk_pixel,    // ~25.1786 MHz
-    output wire clk_pixel_x5 // ~125.893 MHz
+    output wire clk_pixel_x5, // ~125.893 MHz
+    output wire locked
 );
 
     wire clkfb;
@@ -37,7 +38,7 @@ module pixel_clock_gen (
         .CLKOUT0(clk_pixel_x5_raw),
         .CLKOUT1(clk_pixel_raw),
 
-        .LOCKED(),
+        .LOCKED(locked),
 
         .PWRDWN(1'b0),
         .RST(reset),

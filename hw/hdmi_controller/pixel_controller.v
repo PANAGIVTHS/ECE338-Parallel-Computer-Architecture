@@ -25,13 +25,13 @@ module pixel_controller #(
 
     wire rgb_enabled;
     wire [13:0] current_address;
-    wire [15:0] vram_red, vram_green, vram_blue;
+    wire [15:0] vram_rgb [2:0];
     reg [13:0] vram_address;
 
     assign rgb_enabled = hrgb_enabled & vrgb_enabled;
     assign current_address = {vpixel, hpixel};
     
-    vram vram_inst(.clk(clk), .reset(reset), .write_enable(write_enable), .write_address(write_address), .write_data(write_data), .read_address(vram_address), .r(rgb[2]), .g(rgb[1]), .b(rgb[0]));
+    vram vram_inst(.clk(clk), .reset(reset), .write_enable(write_enable), .write_address(write_address), .write_data(write_data), .read_address(vram_address), .r(vram_rgb[2]), .g(vram_rgb[1]), .b(vram_rgb[0]));
 
     always @(current_address or hpixel_upscale_counter) begin
         if (current_address[3:0] == 4'b1111 && hpixel_upscale_counter == UPSCALE_CYCLES) begin
@@ -41,15 +41,13 @@ module pixel_controller #(
         end
     end
 
-    always @(rgb_enabled or vram_red or vram_green or vram_blue or current_address) begin
+    always @(rgb_enabled or vram_rgb or current_address) begin
         if (!rgb_enabled) begin
-            r = 1'b0;
-            g = 1'b0;
-            b = 1'b0;
+            rgb = 3'b0;
         end else begin
-            r = vram_red[current_address[3:0]];
-            g = vram_green[current_address[3:0]];
-            b = vram_blue[current_address[3:0]];
+            rgb[2] = vram_rgb[2][current_address[3:0]];
+            rgb[1] = vram_rgb[1][current_address[3:0]];
+            rgb[0] = vram_rgb[0][current_address[3:0]];
         end
     end
     

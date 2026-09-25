@@ -1,7 +1,6 @@
 module hdmi_controller (
-    reset,
     clk,
-    enable,
+    reset,
     edit_mode, 
     up_ctrl,
     down_ctrl,
@@ -13,9 +12,10 @@ module hdmi_controller (
     hdmi_clk_n
 );
 
-    input reset, clk, enable, edit_mode;
+    input reset, clk, edit_mode;
     input up_ctrl, down_ctrl, left_ctrl, right_ctrl;
 
+    wire enable = 1'b1;
     output [2:0] hdmi_tx_p;
     output [2:0] hdmi_tx_n;
     output hdmi_clk_p;
@@ -31,7 +31,7 @@ module hdmi_controller (
     wire [2:0] write_data;
 
     // Clock generation for pixel clock
-    pixel_clock_gen pixel_clock_gen_inst(.clk(clk), .rst(reset), .clk_pixel(clk_pixel), .clk_pixel_x5(clk_pixel_x5))
+    pixel_clock_gen pixel_clock_gen_inst(.clk(clk), .reset(reset), .clk_pixel(clk_pixel), .clk_pixel_x5(clk_pixel_x5), .locked(pixel_clock_locked));
     ResetDebouncer reset_debouncer_inst(.clk(clk_pixel), .input_bounce(reset), .debounced(debounced_reset), .debounced_off(), .debounced_on());
     InputDebouncer enable_debouncer_inst(.clk(clk_pixel), .reset(debounced_reset), .input_bounce(enable), .debounced(debounced_enable), .posedge_pulse());
     InputDebouncer edit_debouncer_inst(.clk(clk_pixel), .reset(debounced_reset), .input_bounce(edit_mode), .debounced(debounced_edit), .posedge_pulse());
@@ -41,7 +41,8 @@ module hdmi_controller (
     InputDebouncer right_debouncer_inst(.clk(clk_pixel), .reset(debounced_reset), .input_bounce(right_ctrl), .debounced(right_debounced), .posedge_pulse());
 
     // TMDS encoding & serializer
-    tmds_top tmds_top_inst(.clk_pixel(clk_pixel), .clk_pixel_x5(clk_pixel_x5), .rst(reset), .active_draw(active_draw), .hsync(hsync), .vsync(vsync), .rgb(rgb), .hdmi_tx_p(hdmi_tx_p), .hdmi_tx_n(hdmi_tx_n),
+    wire tmds_reset = reset | ~pixel_clock_locked;
+    tmds_top tmds_top_inst(.clk_pixel(clk_pixel), .clk_pixel_x5(clk_pixel_x5), .rst(tmds_reset), .active_draw(active_draw), .hsync(hsync), .vsync(vsync), .rgb(rgb), .hdmi_tx_p(hdmi_tx_p), .hdmi_tx_n(hdmi_tx_n),
     .hdmi_clk_p(hdmi_clk_p), .hdmi_clk_n(hdmi_clk_n));
     
     renderer renderer_inst(.clk(clk_pixel), .reset(debounced_reset), .edit_mode(debounced_edit),  .up_ctrl(up_debounced), .down_ctrl(down_debounced), 
