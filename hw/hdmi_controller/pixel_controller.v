@@ -41,7 +41,7 @@ module pixel_controller #(
         end
     end
 
-    always @(rgb_enabled or vram_rgb or current_address) begin
+    always @(*) begin
         if (!rgb_enabled) begin
             rgb = 3'b0;
         end else begin
