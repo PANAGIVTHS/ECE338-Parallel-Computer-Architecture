@@ -37,7 +37,7 @@ module hdmi_controller (
 
     // Clock generation for pixel clock
     clk_wiz_0 clk_inst(.clk_in1(clk), .clk_out1(clk_pixel), .clk_out2(clk_pixel_x5), .locked(locked));
-    ResetDebouncer reset_debouncer_inst(.clk(clk_pixel), .input_bounce(reset), .debounced(debounced_reset), .debounced_off(), .debounced_on());
+    ResetDebouncer reset_debouncer_inst(.clk(clk_pixel), .input_bounce(~reset), .debounced(debounced_reset), .debounced_off(), .debounced_on());
     InputDebouncer enable_debouncer_inst(.clk(clk_pixel), .reset(debounced_reset), .input_bounce(enable), .debounced(debounced_enable), .posedge_pulse());
     InputDebouncer edit_debouncer_inst(.clk(clk_pixel), .reset(debounced_reset), .input_bounce(edit_mode), .debounced(debounced_edit), .posedge_pulse());
     InputDebouncer up_debouncer_inst(.clk(clk_pixel), .reset(debounced_reset), .input_bounce(up_ctrl), .debounced(up_debounced), .posedge_pulse());
