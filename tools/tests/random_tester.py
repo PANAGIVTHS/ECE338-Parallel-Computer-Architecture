@@ -3,11 +3,14 @@ import random
 import subprocess
 import shutil
 import argparse # NEW: For command line arguments
+import sys
 from pathlib import Path
+from typing import TextIO
 
 # Configuration
 INSTRUCTIONS_PER_TEST = 50
 RANDOM_TEST_DIR = "cases/test999"
+RANDOM_TEST_INDEX = 999
 
 # Register pools
 # x1 is reserved as a safe memory base pointer (0)
@@ -128,66 +131,146 @@ def generate_random_assembly(filepath):
     with open(filepath, 'w') as f:
         f.write("\n".join(asm) + "\n")
 
-def clean_random_test_files():
+def clean_random_test_files(random_test_dir=RANDOM_TEST_DIR):
     """Deletes only the generated files in the random test directory."""
     files_to_remove = [
         "program.mem", 
         "data.mem", 
-        "trace.csv"
+        "trace.csv",
+        ".gpgpu-random-test", # Cleanup marker created by earlier runner versions
     ]
     # Also clean up generated regfiles for all cores
-    for f in os.listdir(RANDOM_TEST_DIR):
+    for f in os.listdir(random_test_dir):
         if f in files_to_remove or f.startswith("regfile_c"):
-            os.remove(os.path.join(RANDOM_TEST_DIR, f))
+            os.remove(os.path.join(random_test_dir, f))
+
+def print_and_log(message, log: TextIO):
+    """Print one status line and append it to the random-test log."""
+    print(message, flush=True)
+    log.write(f"{message}\n")
+    log.flush()
+
+def run_generator(command, cwd, log):
+    """Run one generator and report its captured output if it fails."""
+    result = subprocess.run(command, cwd=cwd, capture_output=True, text=True)
+    if result.returncode == 0:
+        return True
+
+    print_and_log(f"[ERROR] Command failed with status {result.returncode}: {' '.join(command)}", log)
+    for line in (result.stdout + result.stderr).splitlines():
+        print_and_log(line, log)
+    return False
+
+def run_simulation(command, cwd, log):
+    """Stream simulator output to both the terminal and the log."""
+    result_lines = []
+    process = subprocess.Popen(
+        command,
+        cwd=cwd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+    )
+    if process.stdout is None:
+        raise RuntimeError("Random simulator output pipe was not created")
+
+    for line in process.stdout:
+        print(line, end="", flush=True)
+        log.write(line)
+        log.flush()
+        result_lines.append(line)
+
+    return process.wait(), "".join(result_lines)
 
 def main():
     # NEW: Parse command line arguments
     parser = argparse.ArgumentParser(description="Multi-Core RISC-V Random Fuzzer")
     parser.add_argument("-i", "--iterations", type=int, default=100, 
                         help="Number of random tests to generate and run")
+    parser.add_argument("--seed", type=int,
+                        help="Base seed used to reproduce a random-test run")
+    parser.add_argument("--python", default=sys.executable,
+                        help="Python command used for the test generators")
+    parser.add_argument("--vvp", default="vvp",
+                        help="Configured vvp command")
+    parser.add_argument("--simulator", type=Path, default=Path("./main"),
+                        help="Precompiled SMX simulator executable")
+    parser.add_argument("--test-root", type=Path, default=Path.cwd(),
+                        help="RTL test directory containing cases/")
+    parser.add_argument("--log", type=Path, default=Path("random.log"),
+                        help="Random simulation log path")
     args = parser.parse_args()
 
-    if not os.path.exists(RANDOM_TEST_DIR):
-        os.makedirs(RANDOM_TEST_DIR)
+    if args.iterations < 1:
+        parser.error("--iterations must be at least 1")
+
+    random_test_dir = args.test_root.resolve() / RANDOM_TEST_DIR
+    if not os.path.exists(random_test_dir):
+        os.makedirs(random_test_dir)
         
-    asm_filepath = os.path.join(RANDOM_TEST_DIR, "program.asm")
-    
-    print(f"Starting Multi-Core Random Test Fuzzer ({args.iterations} iterations)...")
-    print("==================================================================")
-    
-    for i in range(1, args.iterations + 1):
-        print(f"--> Iteration {i}/{args.iterations}: Generating test...")
+    asm_filepath = os.path.join(random_test_dir, "program.asm")
+    tools_dir = Path(__file__).resolve().parent
+    base_seed = args.seed
+    if base_seed is None:
+        base_seed = random.SystemRandom().getrandbits(64)
+
+    args.log.parent.mkdir(parents=True, exist_ok=True)
+    with args.log.open("w", encoding="utf-8") as log:
+        print_and_log(f"Starting Multi-Core Random Test Fuzzer ({args.iterations} iterations)...", log)
+        print_and_log(f"Base seed: {base_seed}", log)
+        print_and_log("==================================================================", log)
         
-        # 1. Generate new random ASM
-        generate_random_assembly(asm_filepath)
-        
-        # 2. Build ONLY the random test folder to save massive amounts of time
-        subprocess.run(["python3", str(Path(__file__).resolve().parent / "assembler.py"), RANDOM_TEST_DIR], capture_output=True)
-        subprocess.run(["python3", str(Path(__file__).resolve().parent / "expected_generator.py"), RANDOM_TEST_DIR], capture_output=True)
-        
-        # 3. Run the Verilog simulation only
-        subprocess.run(["make", "compile"], capture_output=True)
-        result = subprocess.run(["vvp", "./main", f"+TEST_IDX=999"], capture_output=True, text=True)
-        
-        # 4. Check results
-        if "[WARNING]" in result.stdout or "[ERROR]" in result.stdout or "[SUCCESS]" not in result.stdout:
-            print(f"\n[!!!] ITERATION {i} FAILED! [!!!]")
-            print("==================================================================")
-            # Print the last 30 lines of the simulation output to show the exact mismatch
-            print("\n".join(result.stdout.splitlines()[-30:]))
-            print("==================================================================")
-            print(f"Simulation stopped. The failing test has been preserved in '{RANDOM_TEST_DIR}/'")
-            print("Check 'program.asm' and the generated memories to debug.")
-            break
-        else:
-            print(f"    [PASS] Iteration {i} successful.")
-            # 5. Cleanup to prevent clogging
-            clean_random_test_files()
+        for i in range(1, args.iterations + 1):
+            iteration_seed = base_seed + i - 1
+            print_and_log(f"--> Iteration {i}/{args.iterations}: Generating test with seed {iteration_seed}...", log)
             
-    else:
-        print("\n==================================================================")
-        print(f"SUCCESS! All {args.iterations} random tests passed flawlessly.")
-        print("==================================================================")
+            # 1. Generate new random ASM
+            random.seed(iteration_seed)
+            generate_random_assembly(asm_filepath)
+            
+            # 2. Build ONLY the random test folder to save massive amounts of time
+            if not run_generator([args.python, str(tools_dir / "assembler.py"), str(random_test_dir)], args.test_root, log):
+                print_and_log(f"Simulation stopped. The failing test has been preserved in '{random_test_dir}/'", log)
+                return 1
+            if not run_generator([args.python, str(tools_dir / "expected_generator.py"), str(random_test_dir)], args.test_root, log):
+                print_and_log(f"Simulation stopped. The failing test has been preserved in '{random_test_dir}/'", log)
+                return 1
+            
+            # 3. Run the Verilog simulation only
+            # The tests:rtl:smx:build dependency compiles the simulator once.
+            returncode, simulation_output = run_simulation(
+                [
+                    args.vvp,
+                    "-i",
+                    str(args.simulator.resolve()),
+                    f"+TEST_IDX={RANDOM_TEST_INDEX}",
+                    f"+TEST_END={RANDOM_TEST_INDEX}",
+                ],
+                args.test_root,
+                log,
+            )
+            
+            # 4. Check results
+            if returncode != 0 or "[WARNING]" in simulation_output or "[ERROR]" in simulation_output or "[FAIL]" in simulation_output or "[SUCCESS]" not in simulation_output:
+                print_and_log(f"\n[!!!] ITERATION {i} FAILED! [!!!]", log)
+                print_and_log("==================================================================", log)
+                # Print the last 30 lines of the simulation output to show the exact mismatch
+                for line in simulation_output.splitlines()[-30:]:
+                    print_and_log(line, log)
+                print_and_log("==================================================================", log)
+                print_and_log(f"Simulation stopped. The failing test has been preserved in '{random_test_dir}/'", log)
+                print_and_log("Check 'program.asm' and the generated memories to debug.", log)
+                return 1
+            else:
+                print_and_log(f"    [PASS] Iteration {i} successful.", log)
+                # 5. Cleanup to prevent clogging
+                clean_random_test_files(random_test_dir)
+                
+        print_and_log("\n==================================================================", log)
+        print_and_log(f"SUCCESS! All {args.iterations} random tests passed flawlessly.", log)
+        print_and_log("==================================================================", log)
+    return 0
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

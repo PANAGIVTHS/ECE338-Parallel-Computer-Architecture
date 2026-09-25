@@ -191,6 +191,9 @@ def test_run_help_explains_task_names_and_common_workflows(tmp_path: Path) -> No
     assert "tests:rtl:smx:build" in result.stdout
     assert "tests:rtl:smx:run" in result.stdout
     assert "tests:rtl:smx:all" in result.stdout
+    assert "tests:rtl:random" in result.stdout
+    assert "tests.rtl.random.iterations" in result.stdout
+    assert "tests.rtl.random.seed" in result.stdout
     assert "tests:rtl:build" in result.stdout
     assert "tests:rtl:run" in result.stdout
     assert "tests:rtl:all" in result.stdout

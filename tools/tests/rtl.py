@@ -8,6 +8,8 @@ import subprocess
 import sys
 from typing import TYPE_CHECKING, Any, TextIO
 
+from doit.tools import config_changed
+
 if TYPE_CHECKING:
     from config import ResolvedConfig
 
@@ -72,6 +74,13 @@ def _configured_command(config: ResolvedConfig, key: str) -> str:
     return value
 
 
+def _configured_positive_int(config: ResolvedConfig, key: str) -> int:
+    value = config.get(key)
+    if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+        raise TypeError(f"{key} must be a positive integer")
+    return value
+
+
 def _test_cases(cases_root: Path) -> list[Path]:
     return sorted(
         (
@@ -101,6 +110,7 @@ def create_tasks(config: ResolvedConfig) -> list[dict[str, Any]]:
 
     assembler = repo_root / "tools/tests/assembler.py"
     expected_generator = repo_root / "tools/tests/expected_generator.py"
+    random_tester = repo_root / "tools/tests/random_tester.py"
     testbenches = {
         "e2e": test_root / "tb_GPGPU_e2e.v",
         "smx": test_root / "tb_GPGPU.v",
@@ -180,6 +190,7 @@ def create_tasks(config: ResolvedConfig) -> list[dict[str, Any]]:
                     ],
                     "file_dep": [str(testbench), *(str(source) for source in rtl_sources)],
                     "targets": [str(executable)],
+                    "uptodate": [config_changed({"command": compile_command})],
                     "clean": True,
                 },
                 {
@@ -202,6 +213,53 @@ def create_tasks(config: ResolvedConfig) -> list[dict[str, Any]]:
                 },
             ]
         )
+
+    random_iterations = _configured_positive_int(
+        config, "tests.rtl.random.iterations"
+    )
+    random_seed = config.get("tests.rtl.random.seed")
+    if random_seed is not None and (
+        not isinstance(random_seed, int) or isinstance(random_seed, bool)
+    ):
+        raise TypeError("tests.rtl.random.seed must be an integer or null")
+
+    random_build_root = build_root / "random"
+    random_log = random_build_root / "random.log"
+    random_command = [
+        python,
+        str(random_tester),
+        "--iterations",
+        str(random_iterations),
+    ]
+    if random_seed != 0:
+        random_command.extend(["--seed", str(random_seed)])
+    random_command.extend(
+        [
+            "--python",
+            python,
+            "--vvp",
+            vvp,
+            "--simulator",
+            str(build_root / "smx/main"),
+            "--test-root",
+            str(test_root),
+            "--log",
+            str(random_log),
+        ]
+    )
+    tasks.append(
+        {
+            "name": "tests:rtl:random",
+            "actions": [
+                (run_command, [random_command, repo_root, random_build_root])
+            ],
+            "file_dep": [str(random_tester), str(assembler), str(expected_generator)],
+            "task_dep": ["tests:rtl:smx:build"],
+            "targets": [str(random_log)],
+            "uptodate": [False],
+            "clean": True,
+        }
+    )
 
     tasks.extend(
         [

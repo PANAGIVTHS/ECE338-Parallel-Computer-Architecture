@@ -32,6 +32,13 @@ serial:
   port: /dev/ttyACM0
   baud: 115200
 
+tests:
+  rtl:
+    random:
+      iterations: 100
+      # Set a non-zero integer for reproducibility; 0 chooses and prints a seed.
+      seed: 0
+
 paths:
   config: config
   build:

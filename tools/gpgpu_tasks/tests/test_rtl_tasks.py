@@ -5,6 +5,7 @@ import sys
 from io import StringIO
 
 import pytest
+from doit.tools import config_changed
 
 from tools.tests import rtl
 
@@ -12,12 +13,15 @@ from tools.tests import rtl
 class StubResolvedConfig:
     def __init__(self, repo_root: Path) -> None:
         self.repo_root = repo_root
+        self.random_seed = 12345
 
     def get(self, key: str):
         values = {
             "tools.python.command": sys.executable,
             "tools.iverilog.command": "iverilog-configured",
             "tools.vvp.command": "vvp-configured",
+            "tests.rtl.random.iterations": 100,
+            "tests.rtl.random.seed": self.random_seed,
         }
         return values[key]
 
@@ -48,6 +52,7 @@ def make_repo(tmp_path: Path) -> StubResolvedConfig:
     tools_root.mkdir(parents=True)
     (tools_root / "assembler.py").write_text("# assembler\n", encoding="utf-8")
     (tools_root / "expected_generator.py").write_text("# expected\n", encoding="utf-8")
+    (tools_root / "random_tester.py").write_text("# random tester\n", encoding="utf-8")
     return StubResolvedConfig(tmp_path)
 
 
@@ -66,6 +71,7 @@ def test_create_tasks_defines_distinct_e2e_and_smx_pipelines(tmp_path: Path) -> 
         "tests:rtl:smx:build",
         "tests:rtl:smx:run",
         "tests:rtl:smx:all",
+        "tests:rtl:random",
         "tests:rtl:build",
         "tests:rtl:run",
         "tests:rtl:all",
@@ -88,6 +94,10 @@ def test_create_tasks_defines_distinct_e2e_and_smx_pipelines(tmp_path: Path) -> 
         assert build_command[0] == "iverilog-configured"
         assert "-DSIM" in build_command
         assert str(tmp_path / f"tests/hardware/rtl/{testbench}") in build_command
+        assert len(build_task["uptodate"]) == 1
+        tool_fingerprint = build_task["uptodate"][0]
+        assert isinstance(tool_fingerprint, config_changed)
+        assert tool_fingerprint.config == {"command": build_command}
 
         run_task = tasks[f"tests:rtl:{suite}:run"]
         assert run_task["task_dep"] == [
@@ -115,6 +125,43 @@ def test_create_tasks_defines_distinct_e2e_and_smx_pipelines(tmp_path: Path) -> 
     ]
     assert tasks["tests:rtl:all"]["task_dep"] == ["tests:rtl:run"]
 
+    random_task = tasks["tests:rtl:random"]
+    assert random_task["task_dep"] == ["tests:rtl:smx:build"]
+    assert random_task["uptodate"] == [False]
+    assert random_task["targets"] == [
+        str(tmp_path / "build/tests/rtl/random/random.log")
+    ]
+    random_command = random_task["actions"][0][1][0]
+    assert random_command == [
+        sys.executable,
+        str(tmp_path / "tools/tests/random_tester.py"),
+        "--iterations",
+        "100",
+        "--seed",
+        "12345",
+        "--python",
+        sys.executable,
+        "--vvp",
+        "vvp-configured",
+        "--simulator",
+        str(tmp_path / "build/tests/rtl/smx/main"),
+        "--test-root",
+        str(tmp_path / "tests/hardware/rtl"),
+        "--log",
+        str(tmp_path / "build/tests/rtl/random/random.log"),
+    ]
+
+
+
+def test_random_task_omits_seed_argument_when_configured_for_auto_seed(
+    tmp_path: Path,
+) -> None:
+    config = make_repo(tmp_path)
+    config.random_seed = 0
+
+    command = tasks_by_name(config)["tests:rtl:random"]["actions"][0][1][0]
+
+    assert "--seed" not in command
 
 def test_run_simulation_writes_log_for_success(tmp_path: Path) -> None:
     log = tmp_path / "simulation.log"

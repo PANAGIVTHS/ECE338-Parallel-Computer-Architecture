@@ -48,6 +48,8 @@ Example: `software:programs:simple:x86`
 
 • `tests:rtl:smx:all` — Generate, build, and run the SMX-only suite.
 
+• `tests:rtl:random` — Generate and run reproducible random programs on the SMX testbench. Configure the run with `tests.rtl.random.iterations` and `tests.rtl.random.seed`.
+
 • `tests:rtl:build` — Build both the end-to-end and SMX-only suites.
 
 • `tests:rtl:run` — Run both RTL suites.

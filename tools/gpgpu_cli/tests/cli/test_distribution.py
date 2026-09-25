@@ -28,6 +28,8 @@ def test_repository_has_default_profile_and_local_override_template() -> None:
     assert profile["paths"]["hardware"]["root"] == "hardware"
     assert profile["paths"]["hardware"]["rtl"] == "rtl"
     assert profile["tools"]["vivado"]["required"] is False
+    assert profile["tests"]["rtl"]["random"]["iterations"] == 100
+    assert profile["tests"]["rtl"]["random"]["seed"] == 0
     assert template_path.is_file()
 
 
