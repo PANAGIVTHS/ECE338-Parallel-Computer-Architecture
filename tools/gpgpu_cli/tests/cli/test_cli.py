@@ -173,6 +173,9 @@ def test_run_help_explains_task_names_and_common_workflows(tmp_path: Path) -> No
     assert arguments_index < possible_values_index
     assert "software:programs:" not in result.stdout[:arguments_index]
     assert "colon-separated" in result.stdout
+    programs_index = result.stdout.index("Programs")
+    tests_index = result.stdout.index("Tests")
+    assert arguments_index < programs_index < tests_index
     assert "software:programs:<program>:x86" in result.stdout
     assert "software:programs:<program>:x86:build" in result.stdout
     assert "software:programs:<program>:riscv:build" in result.stdout
@@ -181,6 +184,18 @@ def test_run_help_explains_task_names_and_common_workflows(tmp_path: Path) -> No
     assert "software:programs:<program>:all" in result.stdout
     assert "software:programs:simple:x86" in result.stdout
     assert "native x86 executable" in result.stdout
+    assert "tests:rtl:generate" in result.stdout
+    assert "tests:rtl:e2e:build" in result.stdout
+    assert "tests:rtl:e2e:run" in result.stdout
+    assert "tests:rtl:e2e:all" in result.stdout
+    assert "tests:rtl:smx:build" in result.stdout
+    assert "tests:rtl:smx:run" in result.stdout
+    assert "tests:rtl:smx:all" in result.stdout
+    assert "tests:rtl:build" in result.stdout
+    assert "tests:rtl:run" in result.stdout
+    assert "tests:rtl:all" in result.stdout
+    assert "end-to-end" in result.stdout
+    assert "SMX-only" in result.stdout
 
 
 def test_help_exposes_core_commands_and_completion_flags(tmp_path: Path) -> None:

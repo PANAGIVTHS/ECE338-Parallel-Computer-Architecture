@@ -16,7 +16,10 @@ if TYPE_CHECKING:
     from config import ResolvedConfig
 
 
-_TASK_MODULES = ("tools/software/programs.py",)
+_TASK_MODULES = (
+    "tools/software/programs.py",
+    "tools/tests/rtl.py",
+)
 
 
 def _load_module(path: Path) -> ModuleType:
