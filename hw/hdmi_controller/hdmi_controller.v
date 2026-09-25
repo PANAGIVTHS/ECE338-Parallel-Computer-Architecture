@@ -30,13 +30,13 @@ module hdmi_controller (
         {8{rgb[2]}}, 
         {8{rgb[0]}},
         {8{rgb[1]}}
-   };
+    };
 
     wire [13:0] write_address;
     wire [2:0] write_data;
 
     // Clock generation for pixel clock
-    clk_wiz_0 clk_inst(.clk_in1(clk), .clk_out1(clk_pixel), .clk_out2(clk_pixel_x5));
+    clk_wiz_0 clk_inst(.clk_in1(clk), .clk_out1(clk_pixel), .clk_out2(clk_pixel_x5), .locked(locked));
     ResetDebouncer reset_debouncer_inst(.clk(clk_pixel), .input_bounce(reset), .debounced(debounced_reset), .debounced_off(), .debounced_on());
     InputDebouncer enable_debouncer_inst(.clk(clk_pixel), .reset(debounced_reset), .input_bounce(enable), .debounced(debounced_enable), .posedge_pulse());
     InputDebouncer edit_debouncer_inst(.clk(clk_pixel), .reset(debounced_reset), .input_bounce(edit_mode), .debounced(debounced_edit), .posedge_pulse());
@@ -46,19 +46,51 @@ module hdmi_controller (
     InputDebouncer right_debouncer_inst(.clk(clk_pixel), .reset(debounced_reset), .input_bounce(right_ctrl), .debounced(right_debounced), .posedge_pulse());
 
     // TMDS encoding & serializer
-    rgb2dvi_0 rgb_inst(.aRst_n(1'b1), .SerialClk(clk_pixel_x5), .PixelClk(clk_pixel), .vid_pHSync(hsync), .vid_pVSync(vsync), .vid_pData(rbg24), .vid_pVDE(active_draw), 
-    .TMDS_Clk_p(hdmi_clk_p), .TMDS_Clk_n(hdmi_clk_n), .TMDS_Data_p(hdmi_tx_p), .TMDS_Data_n(hdmi_tx_n));
+    rgb2dvi_0 rgb_inst(
+        .aRst_n(locked), 
+        .SerialClk(clk_pixel_x5), 
+        .PixelClk(clk_pixel), 
+        .vid_pHSync(hsync), 
+        .vid_pVSync(vsync), 
+        .vid_pData(rbg24), 
+        .vid_pVDE(active_draw), 
+        .TMDS_Clk_p(hdmi_clk_p), 
+        .TMDS_Clk_n(hdmi_clk_n), 
+        .TMDS_Data_p(hdmi_tx_p), 
+        .TMDS_Data_n(hdmi_tx_n)
+    );
     
-    renderer renderer_inst(.clk(clk_pixel), .reset(debounced_reset), .edit_mode(debounced_edit),  .up_ctrl(up_debounced), .down_ctrl(down_debounced), 
-    .left_ctrl(left_debounced), .right_ctrl(right_debounced), .frame_end(frame_end), .write_enable(write_enable), .write_address(write_address), 
-    .write_data(write_data));
+    renderer renderer_inst(
+        .clk(clk_pixel), 
+        .reset(debounced_reset), 
+        .edit_mode(debounced_edit),  
+        .up_ctrl(up_debounced), 
+        .down_ctrl(down_debounced), 
+        .left_ctrl(left_debounced), 
+        .right_ctrl(right_debounced), 
+        .frame_end(frame_end), 
+        .write_enable(write_enable), 
+        .write_address(write_address), 
+        .write_data(write_data)
+    );
 
     pixel_controller #(
         .UPSCALE_WIDTH(3),
         .UPSCALE_CYCLES(4)
     )
-    pixel_controller_inst(.clk(clk_pixel), .reset(debounced_reset), .write_enable(write_enable), .write_address(write_address), .write_data(write_data), .hrgb_enabled(hrgb_enabled), .vrgb_enabled(vrgb_enabled), 
-    .hpixel(hpixel), .hpixel_upscale_counter(hpixel_upscale_counter), .vpixel(vpixel), .rgb(rgb));
+    pixel_controller_inst(
+        .clk(clk_pixel), 
+        .reset(debounced_reset), 
+        .write_enable(write_enable), 
+        .write_address(write_address), 
+        .write_data(write_data), 
+        .hrgb_enabled(hrgb_enabled), 
+        .vrgb_enabled(vrgb_enabled), 
+        .hpixel(hpixel), 
+        .hpixel_upscale_counter(hpixel_upscale_counter), 
+        .vpixel(vpixel), 
+        .rgb(rgb)
+    );
 
     // Horizontal sync controller
     gsync_controller #(

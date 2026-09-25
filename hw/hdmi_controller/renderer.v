@@ -15,7 +15,7 @@ module renderer (
     parameter WAIT = 1'b0;
     parameter WRITE = 1'b1;
     parameter X_BOUNDARY = 7'd127;
-    parameter Y_BOUNDARY = 7'd96;
+    parameter Y_BOUNDARY = 7'd95;
 
     input clk, reset;
     input frame_end, edit_mode;
@@ -79,7 +79,7 @@ module renderer (
     always @(current_state or write_address or frame_end) begin
         case (current_state)
             WAIT: next_state = frame_end ? WRITE : WAIT;
-            WRITE: next_state = write_address == 14'd11_775 ? WAIT : WRITE; 
+            WRITE: next_state = write_address == 14'd12_287 ? WAIT : WRITE; 
             default: next_state = WAIT; 
         endcase
     end
