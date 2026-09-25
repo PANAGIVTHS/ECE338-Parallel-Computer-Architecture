@@ -62,7 +62,7 @@ module tb_GPGPU_e2e ();
 
     GPGPU #(
         .SP_PER_SM(NUM_CORES),
-        .MEMORY_INIT("../src/memory/empty.mem")
+        .MEMORY_INIT("../hw/gpgpu/memory/empty.mem")
     ) UUT (
         .clk_in(clk_in),
         .rst(rst),

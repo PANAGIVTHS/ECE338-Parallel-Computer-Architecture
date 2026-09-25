@@ -12,13 +12,13 @@ TB ?= tb_GPGPU.v
 OUT ?= main
 
 # Include/source directories
-SRC_DIR := ../src
+SRC_DIR := ../hw
 
 VERILOG_SOURCES := \
 	$(SRC_DIR)/*.vh \
-	$(SRC_DIR)/*.v \
-	$(SRC_DIR)/memory/*.v \
-	$(SRC_DIR)/sp/*.v
+	$(SRC_DIR)/gpgpu/*.v \
+	$(SRC_DIR)/gpgpu/memory/*.v \
+	$(SRC_DIR)/gpgpu/sp/*.v
 
 IVERILOG_FLAGS := -Wall -Wno-timescale -Winfloop -I $(SRC_DIR)
 

@@ -220,13 +220,13 @@ case "$MODE" in
             done
 
             if [ "$TESTSUITE_FAILED" = false ]; then
-                make compile TB="$TB_FILE" IVERILOG_FLAGS="-Wall -Wno-timescale -Winfloop -I ../src -DSIM" && \
+                make compile TB="$TB_FILE" IVERILOG_FLAGS="-Wall -Wno-timescale -Winfloop -I ../hw -DSIM" && \
                     vvp ./main +TEST_IDX="$RANGE_START" +TEST_END="$RANGE_END" | tee simulation.log
                 if [[ ${PIPESTATUS[0]} -ne 0 ]] || grep -qE "\[FAIL\]|\[Error\]" simulation.log; then
                     TESTSUITE_FAILED=true
                 fi
             fi
-        elif ! make testsuite TB="$TB_FILE" IVERILOG_FLAGS="-Wall -Wno-timescale -Winfloop -I ../src -DSIM"; then
+        elif ! make testsuite TB="$TB_FILE" IVERILOG_FLAGS="-Wall -Wno-timescale -Winfloop -I ../hw -DSIM"; then
             echo -e "\n[WARNING] Standard testsuite failed!"
             TESTSUITE_FAILED=true
         fi
