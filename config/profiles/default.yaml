@@ -47,7 +47,7 @@ paths:
       root: hardware
       vivado: vivado
       reports: reports
-      bitstream: bistream
+      bitstream: bitstream
     software:
       root: software
       programs:
