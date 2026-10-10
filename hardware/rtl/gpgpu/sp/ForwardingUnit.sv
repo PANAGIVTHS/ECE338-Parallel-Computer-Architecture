@@ -1,4 +1,4 @@
-`include "constants.vh"
+`include "constants.svh"
 
 module ForwardingUnit (
     input [4:0] i_idex_rs1,

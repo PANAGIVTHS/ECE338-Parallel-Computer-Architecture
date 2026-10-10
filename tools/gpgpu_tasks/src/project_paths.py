@@ -41,6 +41,10 @@ class ProjectPaths:
     @property
     def hardware_rtl(self) -> Path:
         return self.hardware / "rtl"
+    
+    @property
+    def hardware_rtl_gpgpu(self) -> Path:
+        return self.hardware / "rtl/gpgpu"
 
     @property
     def hardware_constraints(self) -> Path:

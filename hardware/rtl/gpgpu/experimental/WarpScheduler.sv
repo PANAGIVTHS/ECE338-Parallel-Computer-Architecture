@@ -1,6 +1,6 @@
 `timescale 1ns / 1ps
 
-`include "../constants.vh"
+`include "../constants.svh"
 
 module WarpScheduler #(
     parameter WARP_NUM = 32,

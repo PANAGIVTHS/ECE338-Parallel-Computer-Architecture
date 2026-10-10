@@ -94,7 +94,7 @@ def checkout(tmp_path: Path) -> Path:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("def create_tasks(config):\n    return []\n")
     (repo / "hardware/rtl/GPGPU.v").write_text("module GPGPU; endmodule\n")
-    (repo / "hardware/constraints/zedboard.xdc").write_text("# constraints\n")
+    (repo / "hardware/constraints/smart_zynq.xdc").write_text("# constraints\n")
     vendor = repo / "fake-vivado"
     vendor.write_text(f"#!{sys.executable}\n" + FAKE_VENDOR)
     vendor.chmod(0o755)

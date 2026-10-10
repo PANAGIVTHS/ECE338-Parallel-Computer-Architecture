@@ -1,8 +1,8 @@
 `timescale 1ns/1ps
-`include "constants.vh"
+`include "constants.svh"
 
 `define CLOCK_PERIOD 10
-`define TEST_TIMEOUT_CYCLES 1500
+`define TEST_TIMEOUT_CYCLES 10000
 `define HOST_TIMEOUT_CYCLES 10000
 
 module tb_GPGPU_e2e ();
@@ -24,14 +24,12 @@ module tb_GPGPU_e2e ();
     wire o_idle;
     wire o_running;
 
-    reg [2:0]  host_command;
-    reg        host_command_valid;
-    reg [31:0] host_address;
-    reg [31:0] host_wdata;
-
+    reg req_valid, req_write, rsp_ready;
+    reg [31:0] req_address, req_wdata;
+    wire req_ready, rsp_valid;
+    wire [2:0] rsp_status;
     wire [31:0] host_rdata;
-    wire host_busy;
-    wire host_done;
+    wire irq;
 
     reg [31:0] expected_imem [0:`IMEM_ENTRIES-1];
     reg [31:0] expected_dmem [0:`DMEM_ENTRIES-1];
@@ -59,24 +57,18 @@ module tb_GPGPU_e2e ();
     // ============================================================
 
     GPGPU #(
-        .SP_PER_SM(NUM_CORES),
-        .MEMORY_INIT("../../hardware/rtl/memory/empty.mem")
+        .SP_PER_SM(NUM_CORES), 
+        .MEMORY_INIT("")
     ) UUT (
-        .clk_in(clk_in),
-        .rst(rst),
-
-        .o_idle(o_idle),
-        .o_running(o_running),
-
-        .i_host_command(host_command),
-        .i_host_command_valid(host_command_valid),
-        .i_host_address(host_address),
-        .i_host_wdata(host_wdata),
-
-        .o_host_rdata(host_rdata),
-        .o_host_busy(host_busy),
-        .o_host_done(host_done)
+        .clk(clk_in), .rst_n(rst),
+        .i_req_valid(req_valid), .o_req_ready(req_ready),
+        .i_req_write(req_write), .i_req_addr(req_address),
+        .i_req_wdata(req_wdata), .i_req_wstrb(4'b1111),
+        .o_rsp_valid(rsp_valid), .i_rsp_ready(rsp_ready),
+        .o_rsp_rdata(host_rdata), .o_rsp_status(rsp_status), .o_irq(irq)
     );
+    assign o_idle = rst && UUT.core_state == `CORE_IDLE;
+    assign o_running = rst && UUT.core_state == `CORE_RUNNING;
 
     always #(`CLOCK_PERIOD / 2) clk_in = ~clk_in;
 
@@ -84,96 +76,42 @@ module tb_GPGPU_e2e ();
     // Host command helpers
     // ============================================================
 
-    task wait_not_busy;
+    task begin_command(input [2:0] cmd, input [31:0] addr, input [31:0] wdata);
         begin
+            @(negedge clk_in);
+            req_write = cmd == CMD_IMEM_WRITE || cmd == CMD_DMEM_WRITE || cmd == CMD_RUN;
+            case (cmd)
+                CMD_IMEM_WRITE, CMD_IMEM_READ: req_address = 32'h2000 + addr * 4;
+                CMD_DMEM_WRITE, CMD_DMEM_READ: req_address = 32'h4000 + addr * 4;
+                CMD_RUN: req_address = 4;
+                default: $fatal(1, "Unsupported test operation %d", cmd);
+            endcase
+            req_wdata = cmd == CMD_RUN ? 32'd1 : wdata;
+            req_valid = 1;
             timeout_count = 0;
-
-            while (host_busy && timeout_count < `HOST_TIMEOUT_CYCLES) begin
-                @(posedge clk_in);
-                timeout_count = timeout_count + 1;
+            while (!req_ready && timeout_count < `HOST_TIMEOUT_CYCLES) begin
+                @(negedge clk_in); timeout_count = timeout_count + 1;
             end
-
-            if (timeout_count >= `HOST_TIMEOUT_CYCLES) begin
-                $fatal(1, "[HOST ERROR] Timeout waiting for host_busy=0");
-            end
-        end
-    endtask
-
-    task wait_done_high;
-        begin
+            if (!req_ready) $fatal(1, "Request timeout");
+            @(posedge clk_in); @(negedge clk_in); req_valid = 0;
             timeout_count = 0;
-
-            while (!host_done && timeout_count < `HOST_TIMEOUT_CYCLES) begin
-                @(posedge clk_in);
-                timeout_count = timeout_count + 1;
+            while (!rsp_valid && timeout_count < `HOST_TIMEOUT_CYCLES) begin
+                @(negedge clk_in); timeout_count = timeout_count + 1;
             end
-
-            if (timeout_count >= `HOST_TIMEOUT_CYCLES) begin
-                $fatal(1,
-                    "[HOST ERROR] Timeout waiting for host_done=1. cmd=%0d addr=%0d",
-                    host_command,
-                    host_address
-                );
-            end
+            if (!rsp_valid || rsp_status != 0)
+                $fatal(1, "Access failed cmd=%d addr=%h status=%d", cmd, addr, rsp_status);
         end
     endtask
 
-    task wait_done_low;
+    task end_command(input [2:0] cmd);
         begin
-            timeout_count = 0;
-
-            while (host_done && timeout_count < `HOST_TIMEOUT_CYCLES) begin
-                @(posedge clk_in);
-                timeout_count = timeout_count + 1;
-            end
-
-            if (timeout_count >= `HOST_TIMEOUT_CYCLES) begin
-                $fatal(1, "[HOST ERROR] Timeout waiting for host_done=0");
-            end
+            @(negedge clk_in); rsp_ready = 1;
+            @(negedge clk_in); rsp_ready = 0;
         end
     endtask
 
-    task begin_command(
-        input [2:0]  cmd,
-        input [31:0] addr,
-        input [31:0] wdata
-    );
-        begin
-            wait_not_busy();
-
-            @(posedge clk_in);
-            host_command       <= cmd;
-            host_address       <= addr;
-            host_wdata         <= wdata;
-            host_command_valid <= 1'b1;
-
-            wait_done_high();
-        end
-    endtask
-
-    task end_command(
-        input [2:0] cmd
-    );
-        begin
-            @(posedge clk_in);
-            host_command       <= cmd;
-            host_command_valid <= 1'b0;
-
-            wait_done_low();
-
-            @(posedge clk_in);
-        end
-    endtask
-
-    task send_command(
-        input [2:0]  cmd,
-        input [31:0] addr,
-        input [31:0] wdata
-    );
-        begin
-            begin_command(cmd, addr, wdata);
-            end_command(cmd);
-        end
+    task send_command(input [2:0] cmd, input [31:0] addr, input [31:0] wdata);
+        begin begin_command(cmd, addr, wdata); end_command(cmd); end
     endtask
 
     task write_imem(
@@ -230,10 +168,8 @@ module tb_GPGPU_e2e ();
         clk_in = 1'b0;
         rst = 1'b0;
 
-        host_command       = 3'b0;
-        host_command_valid = 1'b0;
-        host_address       = 32'b0;
-        host_wdata         = 32'b0;
+        req_valid = 0; req_write = 0; rsp_ready = 0;
+        req_address = 0; req_wdata = 0;
 
         if (!$value$plusargs("TEST_ROOT=%s", test_root)) begin
             test_root = "cases";
@@ -268,7 +204,7 @@ module tb_GPGPU_e2e ();
             fd = $fopen(prog_file, "r");
             if (fd == 0) begin
                 if (test_idx == 1) begin
-                    $display("[ERROR] No tests were found");
+                    $fatal(1, "[ERROR] No tests were found");
                 end else begin
                     $display("\n[INFO] Simulation finished successfully!");
                 end
@@ -319,7 +255,7 @@ module tb_GPGPU_e2e ();
             repeat (20) @(posedge clk_in);
 
             if (o_idle !== 1'b1) begin
-                $display("  [WARNING] GPGPU did not enter idle state after reset.");
+                $fatal(1, "GPGPUDevice did not enter idle after reset");
             end
 
             // ----------------------------------------------------
@@ -386,7 +322,7 @@ module tb_GPGPU_e2e ();
             end
 
             if (cycle_count >= `TEST_TIMEOUT_CYCLES) begin
-                $display("  [WARNING] Test %0d reached timeout of %0d cycles!",
+                $fatal(1, "Test %0d reached timeout of %0d cycles!",
                          test_idx, `TEST_TIMEOUT_CYCLES);
             end else begin
                 $display("[INFO]  Core reached idle state in %0d cycles.", cycle_count);
@@ -429,8 +365,10 @@ module tb_GPGPU_e2e ();
     end
 
     initial begin
-        $dumpfile("dumpfile.vcd");
-        $dumpvars(0, tb_GPGPU_e2e);
+        if ($test$plusargs("DUMP")) begin
+            $dumpfile("dumpfile.vcd");
+            $dumpvars(0, tb_GPGPU_e2e);
+        end
     end
 
 endmodule

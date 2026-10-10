@@ -1,3 +1,6 @@
+`ifndef CONSTANTS_VH
+`define CONSTANTS_VH
+
 `define OP_R_TYPE 7'b0110011
 `define OP_LW     7'b0000011
 `define OP_SW     7'b0100011
@@ -63,9 +66,31 @@
 `define TXD_REGISTER 5'h1F
 `define STACK_P_INIT 0
 
+// GPGPU control definitions
 `define CORE_IDLE 2'b00
 `define CORE_RESET 2'b01
 `define CORE_RUNNING 2'b10
+
+`define REG_INFO       32'h0000
+`define REG_CONTROL    32'h0004
+`define REG_STATUS     32'h0008
+`define REG_IRQ_ENABLE 32'h000c
+`define REG_IRQ_STATUS 32'h0010
+`define IMEM_BASE      32'h2000
+`define DMEM_BASE      32'h4000
+
+`define CONTROL_START  32'h00000001
+`define CONTROL_STOP   32'h00000002
+`define STATUS_IDLE    32'h00000001
+`define STATUS_RUNNING 32'h00000002
+`define STATUS_STOPPED 32'h00000004
+
+`define RSP_OK              3'b000
+`define RSP_INVALID_ADDRESS 3'b001
+`define RSP_ACCESS_DENIED   3'b010
+`define RSP_INVALID_STATE   3'b011
+`define RSP_INVALID_REQUEST 3'b100
+// End GPGPU control definitions
 
 `define FIFO_ENQ_DEQ 2'b11
 `define FIFO_ENQ 2'b10
@@ -75,3 +100,5 @@
 `define WARP_READY_STATE 2'b01
 
 `define DEBUG "false"
+
+`endif

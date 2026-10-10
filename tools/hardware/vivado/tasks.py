@@ -326,7 +326,7 @@ def create_tasks(config: ResolvedConfig) -> list[dict[str, Any]]:
     repo_root = config.repo_root
     paths = ProjectPaths.from_config(config)
     scripts = repo_root / "tools/hardware/vivado"
-    rtl_root = paths.hardware_rtl
+    rtl_root = paths.hardware_rtl_gpgpu
     constraints_root = paths.hardware_constraints
     vivado_build_root = paths.vivado
     bitstream_root = paths.bitstream
@@ -355,7 +355,7 @@ def create_tasks(config: ResolvedConfig) -> list[dict[str, Any]]:
         raise ValueError("hardware.vivado.host_interface addresses must be unique")
 
     project_dir = vivado_build_root / project_name
-    xdc_file = constraints_root / "zedboard.xdc"
+    xdc_file = constraints_root / "smart_zynq.xdc"
     project_file = project_dir / f"{project_name}.xpr"
     bd_file = project_dir / f"{project_name}.srcs/sources_1/bd/{bd_name}/{bd_name}.bd"
     wrapper_file = (

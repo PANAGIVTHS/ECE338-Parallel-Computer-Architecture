@@ -1,6 +1,6 @@
 
 ################################################################
-# This is a generated script based on design: gpgpu_block_design
+# This is a generated script based on design: design_1
 #
 # Though there are limitations about the generated script,
 # the main purpose of this utility is to make learning
@@ -20,7 +20,7 @@ set script_folder [_tcl::get_script_folder]
 ################################################################
 # Check if script is running in correct Vivado version.
 ################################################################
-set scripts_vivado_version 2026.1
+set scripts_vivado_version 2025.2
 set current_vivado_version [version -short]
 
 if { [string first $scripts_vivado_version $current_vivado_version] == -1 } {
@@ -41,14 +41,7 @@ if { [string first $scripts_vivado_version $current_vivado_version] == -1 } {
 ################################################################
 
 # To test this script, run the following commands from Vivado Tcl console:
-# source gpgpu_block_design_script.tcl
-
-
-# The design that will be created by this Tcl script contains the following
-# module references:
-# GPGPU
-
-# Please add the sources of those modules before sourcing this Tcl script.
+# source design_1_script.tcl
 
 # If there is no project opened, this script will create a
 # project, but make sure you do not have an existing project
@@ -60,13 +53,9 @@ if { $list_projs eq "" } {
 }
 
 
-# The enclosing flow supplies the committed block-design name.
+# CHANGE DESIGN NAME HERE
 variable design_name
-if {[info exists ::BD_NAME]} {
-   set design_name $::BD_NAME
-} else {
-   set design_name gpgpu_block_design
-}
+set design_name design_1
 
 # If you do not already have an existing IP Integrator design open,
 # you can create a design using the following command:
@@ -105,7 +94,7 @@ if { ${design_name} eq "" } {
    set errMsg "Design <$design_name> already exists in your project, please set the variable <design_name> to another value."
    set nRet 1
 } elseif { [get_files -quiet ${design_name}.bd] ne "" } {
-   # USE CASES:
+   # USE CASES: 
    #    6) Current opened design, has components, but diff names, design_name exists in project.
    #    7) No opened design, design_name exists in project.
 
@@ -139,12 +128,10 @@ set bCheckIPsPassed 1
 ##################################################################
 set bCheckIPs 1
 if { $bCheckIPs == 1 } {
-   set list_check_ips "\
+   set list_check_ips "\ 
 xilinx.com:ip:processing_system7:5.5\
 xilinx.com:ip:proc_sys_reset:5.0\
-xilinx.com:ip:axi_gpio:2.0\
-xilinx.com:inline_hdl:ilslice:1.0\
-xilinx.com:inline_hdl:ilconcat:1.0\
+user.org:user:gpgpu_axi:1.0\
 xilinx.com:ip:smartconnect:1.0\
 "
 
@@ -163,31 +150,6 @@ xilinx.com:ip:smartconnect:1.0\
       set bCheckIPsPassed 0
    }
 
-}
-
-##################################################################
-# CHECK Modules
-##################################################################
-set bCheckModules 1
-if { $bCheckModules == 1 } {
-   set list_check_mods "\
-GPGPU\
-"
-
-   set list_mods_missing ""
-   common::send_gid_msg -ssname BD::TCL -id 2020 -severity "INFO" "Checking if the following modules exist in the project's sources: $list_check_mods ."
-
-   foreach mod_vlnv $list_check_mods {
-      if { [can_resolve_reference $mod_vlnv] == 0 } {
-         lappend list_mods_missing $mod_vlnv
-      }
-   }
-
-   if { $list_mods_missing ne "" } {
-      catch {common::send_gid_msg -ssname BD::TCL -id 2021 -severity "ERROR" "The following module(s) are not found in the project: $list_mods_missing" }
-      common::send_gid_msg -ssname BD::TCL -id 2022 -severity "INFO" "Please add source files for the missing module(s) above."
-      set bCheckIPsPassed 0
-   }
 }
 
 if { $bCheckIPsPassed != 1 } {
@@ -242,21 +204,8 @@ proc create_root_design { parentCell } {
 
 
   # Create ports
-  set o_idle_0 [ create_bd_port -dir O o_idle_0 ]
-  set o_running_0 [ create_bd_port -dir O o_running_0 ]
-
-  # Create instance: GPGPU_0, and set properties
-  set block_name GPGPU
-  set block_cell_name GPGPU_0
-  if { [catch {set GPGPU_0 [create_bd_cell -type module -reference $block_name $block_cell_name] } errmsg] } {
-     catch {common::send_gid_msg -ssname BD::TCL -id 2095 -severity "ERROR" "Unable to add referenced block <$block_name>. Please add the files for ${block_name}'s definition into the project."}
-     return 1
-   } elseif { $GPGPU_0 eq "" } {
-     catch {common::send_gid_msg -ssname BD::TCL -id 2096 -severity "ERROR" "Unable to referenced block <$block_name>. Please add the files for ${block_name}'s definition into the project."}
-     return 1
-   }
-    set_property CONFIG.SP_PER_SM $::NUM_CORES $GPGPU_0
-
+  set o_core_idle_0 [ create_bd_port -dir O o_core_idle_0 ]
+  set o_core_running_0 [ create_bd_port -dir O o_core_running_0 ]
 
   # Create instance: processing_system7_0, and set properties
   set processing_system7_0 [ create_bd_cell -type ip -vlnv xilinx.com:ip:processing_system7:5.5 processing_system7_0 ]
@@ -266,7 +215,7 @@ proc create_root_design { parentCell } {
     CONFIG.PCW_ACT_DCI_PERIPHERAL_FREQMHZ {10.158730} \
     CONFIG.PCW_ACT_ENET0_PERIPHERAL_FREQMHZ {10.000000} \
     CONFIG.PCW_ACT_ENET1_PERIPHERAL_FREQMHZ {10.000000} \
-    CONFIG.PCW_ACT_FPGA0_PERIPHERAL_FREQMHZ {38.095242} \
+    CONFIG.PCW_ACT_FPGA0_PERIPHERAL_FREQMHZ {50.000000} \
     CONFIG.PCW_ACT_FPGA1_PERIPHERAL_FREQMHZ {10.000000} \
     CONFIG.PCW_ACT_FPGA2_PERIPHERAL_FREQMHZ {10.000000} \
     CONFIG.PCW_ACT_FPGA3_PERIPHERAL_FREQMHZ {10.000000} \
@@ -284,15 +233,16 @@ proc create_root_design { parentCell } {
     CONFIG.PCW_ACT_TTC1_CLK2_PERIPHERAL_FREQMHZ {111.111115} \
     CONFIG.PCW_ACT_UART_PERIPHERAL_FREQMHZ {100.000000} \
     CONFIG.PCW_ACT_WDT_PERIPHERAL_FREQMHZ {111.111115} \
-    CONFIG.PCW_CLK0_FREQ {38095242} \
+    CONFIG.PCW_CLK0_FREQ {50000000} \
     CONFIG.PCW_CLK1_FREQ {10000000} \
     CONFIG.PCW_CLK2_FREQ {10000000} \
     CONFIG.PCW_CLK3_FREQ {10000000} \
     CONFIG.PCW_DDR_RAM_HIGHADDR {0x1FFFFFFF} \
     CONFIG.PCW_EN_EMIO_UART0 {1} \
     CONFIG.PCW_EN_UART0 {1} \
-    CONFIG.PCW_FPGA0_PERIPHERAL_FREQMHZ {38} \
     CONFIG.PCW_FPGA_FCLK0_ENABLE {1} \
+    CONFIG.PCW_IRQ_F2P_INTR {1} \
+    CONFIG.PCW_PERIPHERAL_BOARD_PRESET {part0} \
     CONFIG.PCW_UART0_GRP_FULL_ENABLE {0} \
     CONFIG.PCW_UART0_PERIPHERAL_ENABLE {1} \
     CONFIG.PCW_UART0_UART0_IO {EMIO} \
@@ -302,143 +252,55 @@ proc create_root_design { parentCell } {
     CONFIG.PCW_UIPARAM_DDR_BUS_WIDTH {16 Bit} \
     CONFIG.PCW_UIPARAM_DDR_ECC {Disabled} \
     CONFIG.PCW_UIPARAM_DDR_PARTNO {MT41K256M16 RE-125} \
+    CONFIG.PCW_USE_FABRIC_INTERRUPT {1} \
   ] $processing_system7_0
 
 
   # Create instance: proc_sys_reset_0, and set properties
   set proc_sys_reset_0 [ create_bd_cell -type ip -vlnv xilinx.com:ip:proc_sys_reset:5.0 proc_sys_reset_0 ]
 
-  # Create instance: axi_gpio_cmd, and set properties
-  set axi_gpio_cmd [ create_bd_cell -type ip -vlnv xilinx.com:ip:axi_gpio:2.0 axi_gpio_cmd ]
-  set_property -dict [list \
-    CONFIG.C_ALL_OUTPUTS {1} \
-    CONFIG.C_GPIO_WIDTH {4} \
-  ] $axi_gpio_cmd
-
-
-  # Create instance: axi_gpio_address, and set properties
-  set axi_gpio_address [ create_bd_cell -type ip -vlnv xilinx.com:ip:axi_gpio:2.0 axi_gpio_address ]
-  set_property CONFIG.C_ALL_OUTPUTS {1} $axi_gpio_address
-
-
-  # Create instance: axi_gpio_wdata, and set properties
-  set axi_gpio_wdata [ create_bd_cell -type ip -vlnv xilinx.com:ip:axi_gpio:2.0 axi_gpio_wdata ]
-  set_property CONFIG.C_ALL_OUTPUTS {1} $axi_gpio_wdata
-
-
-  # Create instance: axi_gpio_rdata, and set properties
-  set axi_gpio_rdata [ create_bd_cell -type ip -vlnv xilinx.com:ip:axi_gpio:2.0 axi_gpio_rdata ]
-  set_property CONFIG.C_ALL_INPUTS {1} $axi_gpio_rdata
-
-
-  # Create instance: axi_gpio_status, and set properties
-  set axi_gpio_status [ create_bd_cell -type ip -vlnv xilinx.com:ip:axi_gpio:2.0 axi_gpio_status ]
-  set_property -dict [list \
-    CONFIG.C_ALL_INPUTS {1} \
-    CONFIG.C_GPIO_WIDTH {4} \
-  ] $axi_gpio_status
-
-
-  # Create instance: ilslice_0, and set properties
-  set ilslice_0 [ create_bd_cell -type inline_hdl -vlnv xilinx.com:inline_hdl:ilslice:1.0 ilslice_0 ]
-  set_property -dict [list \
-    CONFIG.DIN_FROM {2} \
-    CONFIG.DIN_WIDTH {4} \
-  ] $ilslice_0
-
-
-  # Create instance: ilslice_1, and set properties
-  set ilslice_1 [ create_bd_cell -type inline_hdl -vlnv xilinx.com:inline_hdl:ilslice:1.0 ilslice_1 ]
-  set_property -dict [list \
-    CONFIG.DIN_FROM {3} \
-    CONFIG.DIN_TO {3} \
-    CONFIG.DIN_WIDTH {4} \
-  ] $ilslice_1
-
-
-  # Create instance: ilconcat_0, and set properties
-  set ilconcat_0 [ create_bd_cell -type inline_hdl -vlnv xilinx.com:inline_hdl:ilconcat:1.0 ilconcat_0 ]
-  set_property CONFIG.NUM_PORTS {4} $ilconcat_0
+  # Create instance: GPGPU_0, and set properties
+  set GPGPU_0 [ create_bd_cell -type ip -vlnv user.org:user:gpgpu_axi:1.0 GPGPU_0 ]
+  set_property CONFIG.SP_PER_SM {16} $GPGPU_0
 
 
   # Create instance: axi_smc, and set properties
   set axi_smc [ create_bd_cell -type ip -vlnv xilinx.com:ip:smartconnect:1.0 axi_smc ]
-  set_property -dict [list \
-    CONFIG.NUM_MI {5} \
-    CONFIG.NUM_SI {1} \
-  ] $axi_smc
+  set_property CONFIG.NUM_SI {1} $axi_smc
 
 
   # Create interface connections
-  connect_bd_intf_net -intf_net axi_smc_M00_AXI [get_bd_intf_pins axi_smc/M00_AXI] [get_bd_intf_pins axi_gpio_address/S_AXI]
-  connect_bd_intf_net -intf_net axi_smc_M01_AXI [get_bd_intf_pins axi_smc/M01_AXI] [get_bd_intf_pins axi_gpio_cmd/S_AXI]
-  connect_bd_intf_net -intf_net axi_smc_M02_AXI [get_bd_intf_pins axi_smc/M02_AXI] [get_bd_intf_pins axi_gpio_rdata/S_AXI]
-  connect_bd_intf_net -intf_net axi_smc_M03_AXI [get_bd_intf_pins axi_smc/M03_AXI] [get_bd_intf_pins axi_gpio_status/S_AXI]
-  connect_bd_intf_net -intf_net axi_smc_M04_AXI [get_bd_intf_pins axi_smc/M04_AXI] [get_bd_intf_pins axi_gpio_wdata/S_AXI]
+  connect_bd_intf_net -intf_net axi_smc_M00_AXI [get_bd_intf_pins axi_smc/M00_AXI] [get_bd_intf_pins GPGPU_0/S00_AXI]
   connect_bd_intf_net -intf_net processing_system7_0_DDR [get_bd_intf_ports DDR] [get_bd_intf_pins processing_system7_0/DDR]
   connect_bd_intf_net -intf_net processing_system7_0_FIXED_IO [get_bd_intf_ports FIXED_IO] [get_bd_intf_pins processing_system7_0/FIXED_IO]
   connect_bd_intf_net -intf_net processing_system7_0_M_AXI_GP0 [get_bd_intf_pins processing_system7_0/M_AXI_GP0] [get_bd_intf_pins axi_smc/S00_AXI]
   connect_bd_intf_net -intf_net processing_system7_0_UART_0 [get_bd_intf_ports UART_0_0] [get_bd_intf_pins processing_system7_0/UART_0]
 
   # Create port connections
-  connect_bd_net -net GPGPU_0_o_host_busy  [get_bd_pins GPGPU_0/o_host_busy] \
-  [get_bd_pins ilconcat_0/In2]
-  connect_bd_net -net GPGPU_0_o_host_done  [get_bd_pins GPGPU_0/o_host_done] \
-  [get_bd_pins ilconcat_0/In3]
-  connect_bd_net -net GPGPU_0_o_host_rdata  [get_bd_pins GPGPU_0/o_host_rdata] \
-  [get_bd_pins axi_gpio_rdata/gpio_io_i]
-  connect_bd_net -net GPGPU_0_o_idle  [get_bd_pins GPGPU_0/o_idle] \
-  [get_bd_ports o_idle_0] \
-  [get_bd_pins ilconcat_0/In0]
-  connect_bd_net -net GPGPU_0_o_running  [get_bd_pins GPGPU_0/o_running] \
-  [get_bd_ports o_running_0] \
-  [get_bd_pins ilconcat_0/In1]
-  connect_bd_net -net axi_gpio_address_gpio_io_o  [get_bd_pins axi_gpio_address/gpio_io_o] \
-  [get_bd_pins GPGPU_0/i_host_address]
-  connect_bd_net -net axi_gpio_cmd_gpio_io_o  [get_bd_pins axi_gpio_cmd/gpio_io_o] \
-  [get_bd_pins ilslice_1/Din] \
-  [get_bd_pins ilslice_0/Din]
-  connect_bd_net -net axi_gpio_wdata_gpio_io_o  [get_bd_pins axi_gpio_wdata/gpio_io_o] \
-  [get_bd_pins GPGPU_0/i_host_wdata]
-  connect_bd_net -net ilconcat_0_dout  [get_bd_pins ilconcat_0/dout] \
-  [get_bd_pins axi_gpio_status/gpio_io_i]
-  connect_bd_net -net ilslice_0_Dout  [get_bd_pins ilslice_0/Dout] \
-  [get_bd_pins GPGPU_0/i_host_command]
-  connect_bd_net -net ilslice_1_Dout  [get_bd_pins ilslice_1/Dout] \
-  [get_bd_pins GPGPU_0/i_host_command_valid]
+  connect_bd_net -net gpgpu_axi_0_irq  [get_bd_pins GPGPU_0/irq] \
+  [get_bd_pins processing_system7_0/IRQ_F2P]
+  connect_bd_net -net gpgpu_axi_0_o_core_idle  [get_bd_pins GPGPU_0/o_core_idle] \
+  [get_bd_ports o_core_idle_0]
+  connect_bd_net -net gpgpu_axi_0_o_core_running  [get_bd_pins GPGPU_0/o_core_running] \
+  [get_bd_ports o_core_running_0]
   connect_bd_net -net proc_sys_reset_0_peripheral_aresetn  [get_bd_pins proc_sys_reset_0/peripheral_aresetn] \
-  [get_bd_pins axi_gpio_address/s_axi_aresetn] \
   [get_bd_pins axi_smc/aresetn] \
-  [get_bd_pins axi_gpio_cmd/s_axi_aresetn] \
-  [get_bd_pins axi_gpio_rdata/s_axi_aresetn] \
-  [get_bd_pins axi_gpio_status/s_axi_aresetn] \
-  [get_bd_pins axi_gpio_wdata/s_axi_aresetn] \
-  [get_bd_pins GPGPU_0/rst]
+  [get_bd_pins GPGPU_0/s00_axi_aresetn]
   connect_bd_net -net processing_system7_0_FCLK_CLK0  [get_bd_pins processing_system7_0/FCLK_CLK0] \
-  [get_bd_pins proc_sys_reset_0/slowest_sync_clk] \
-  [get_bd_pins processing_system7_0/M_AXI_GP0_ACLK] \
   [get_bd_pins axi_smc/aclk] \
-  [get_bd_pins axi_gpio_address/s_axi_aclk] \
-  [get_bd_pins axi_gpio_cmd/s_axi_aclk] \
-  [get_bd_pins axi_gpio_rdata/s_axi_aclk] \
-  [get_bd_pins axi_gpio_status/s_axi_aclk] \
-  [get_bd_pins axi_gpio_wdata/s_axi_aclk] \
-  [get_bd_pins GPGPU_0/clk_in]
+  [get_bd_pins GPGPU_0/s00_axi_aclk] \
+  [get_bd_pins proc_sys_reset_0/slowest_sync_clk] \
+  [get_bd_pins processing_system7_0/M_AXI_GP0_ACLK]
   connect_bd_net -net processing_system7_0_FCLK_RESET0_N  [get_bd_pins processing_system7_0/FCLK_RESET0_N] \
   [get_bd_pins proc_sys_reset_0/ext_reset_in]
 
   # Create address segments
-  assign_bd_address -offset $::HOST_ADDRESS_GPIO -range 0x00010000 -target_address_space [get_bd_addr_spaces processing_system7_0/Data] [get_bd_addr_segs axi_gpio_address/S_AXI/Reg] -force
-  assign_bd_address -offset $::HOST_CMD_GPIO -range 0x00010000 -target_address_space [get_bd_addr_spaces processing_system7_0/Data] [get_bd_addr_segs axi_gpio_cmd/S_AXI/Reg] -force
-  assign_bd_address -offset $::HOST_RDATA_GPIO -range 0x00010000 -target_address_space [get_bd_addr_spaces processing_system7_0/Data] [get_bd_addr_segs axi_gpio_rdata/S_AXI/Reg] -force
-  assign_bd_address -offset $::HOST_STATUS_GPIO -range 0x00010000 -target_address_space [get_bd_addr_spaces processing_system7_0/Data] [get_bd_addr_segs axi_gpio_status/S_AXI/Reg] -force
-  assign_bd_address -offset $::HOST_WDATA_GPIO -range 0x00010000 -target_address_space [get_bd_addr_spaces processing_system7_0/Data] [get_bd_addr_segs axi_gpio_wdata/S_AXI/Reg] -force
+  assign_bd_address -offset 0x43C00000 -range 0x00010000 -with_name SEG_gpgpu_axi_0_S00_AXI_reg -target_address_space [get_bd_addr_spaces processing_system7_0/Data] [get_bd_addr_segs GPGPU_0/S00_AXI/S00_AXI_reg] -force
 
 
   # Restore current instance
   current_bd_instance $oldCurInst
 
-  validate_bd_design
   save_bd_design
 }
 # End of create_root_design()
@@ -449,3 +311,7 @@ proc create_root_design { parentCell } {
 ##################################################################
 
 create_root_design ""
+
+
+common::send_gid_msg -ssname BD::TCL -id 2053 -severity "WARNING" "This Tcl script was generated from a block design that has not been validated. It is possible that design <$design_name> may result in errors during validation."
+

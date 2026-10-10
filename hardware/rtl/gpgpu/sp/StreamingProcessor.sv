@@ -1,4 +1,4 @@
-`include "constants.vh"
+`include "constants.svh"
 
 module StreamingProcessor #(
     parameter CORE_ID = 0

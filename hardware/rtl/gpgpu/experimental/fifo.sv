@@ -1,4 +1,4 @@
-`include "../constants.vh"
+`include "../constants.svh"
 
 module fifo #(
     parameter WIDTH = 32,

@@ -1,5 +1,5 @@
 `timescale 1ns/1ps
-`include "constants.vh"
+`include "constants.svh"
 
 `define CLOCK_PERIOD 10
 `define TEST_TIMEOUT_CYCLES 1500
@@ -12,16 +12,6 @@ module tb_GPGPU_smx_only ();
 
     wire o_idle;
     wire o_running;
-
-    wire [31:0] host_rdata;
-    wire host_busy;
-    wire host_done;
-
-    // Unused host interface
-    reg [2:0]  host_command;
-    reg        host_command_valid;
-    reg [31:0] host_address;
-    reg [31:0] host_wdata;
 
     reg [31:0] expected_data [0:`DMEM_ENTRIES-1];
     reg [31:0] expected_regfile [0:NUM_CORES-1][0:31];
@@ -41,28 +31,17 @@ module tb_GPGPU_smx_only ();
     reg [8*255:0] reg_file;
     reg [8*255:0] trace_file;
 
-    GPGPU #(
-        .SP_PER_SM(NUM_CORES)
-    ) UUT (
-        .clk_in(clk_in),
-        .rst(rst),
-
-        .o_idle(o_idle),
-        .o_running(o_running),
-
-        .i_host_command(host_command),
-        .i_host_command_valid(host_command_valid),
-        .i_host_address(host_address),
-        .i_host_wdata(host_wdata),
-
-        .o_host_rdata(host_rdata),
-        .o_host_busy(host_busy),
-        .o_host_done(host_done)
+    GPGPU #(.SP_PER_SM(NUM_CORES), .MEMORY_INIT("")) UUT (
+        .clk(clk_in), .rst_n(rst),
+        .i_req_valid(1'b0), .o_req_ready(), .i_req_write(1'b0),
+        .i_req_addr(32'b0), .i_req_wdata(32'b0), .i_req_wstrb(4'b0),
+        .o_rsp_valid(), .i_rsp_ready(1'b1), .o_rsp_rdata(),
+        .o_rsp_status(), .o_irq()
     );
+    assign o_idle = rst && UUT.core_state == `CORE_IDLE;
+    assign o_running = rst && UUT.core_state == `CORE_RUNNING;
 
-    // If clk_wiz_0 sim model works, use internal generated clock.
-    // If not, replace UUT clk_wiz in RTL with assign clk = clk_in for simulation.
-    wire uut_clk = UUT.clk;
+    wire uut_clk = clk_in;
 
     always #(`CLOCK_PERIOD / 2) clk_in = ~clk_in;
 
@@ -82,12 +61,6 @@ module tb_GPGPU_smx_only ();
     initial begin
         clk_in = 1'b0;
         rst = 1'b0;
-
-        host_command       = 3'b0;
-        host_command_valid = 1'b0;
-        host_address       = 32'b0;
-        host_wdata         = 32'b0;
-        force UUT.host_controller.o_host_address = 32'h10;
 
         if (!$value$plusargs("TEST_IDX=%d", test_idx)) begin
             test_idx = 1;
@@ -113,7 +86,7 @@ module tb_GPGPU_smx_only ();
             fd = $fopen(prog_file, "r");
             if (fd == 0) begin
                 if (test_idx == 1)
-                    $display("[ERROR] No tests were found");
+                    $fatal(1, "[ERROR] No tests were found");
                 else
                     $display("\n[INFO] Simulation finished successfully!");
 
@@ -164,13 +137,13 @@ module tb_GPGPU_smx_only ();
             repeat (10) @(posedge uut_clk);
 
             /*
-             * Bypass HostController for SMX-only testing.
+             * Bypass ExecutionController for SMX-only testing.
              *
              * This forces the GPGPU top-level muxes to give memory ownership
              * to the SMX and makes o_running reflect running state.
              */
             @(negedge UUT.clk);
-            force UUT.core_state = `CORE_RUNNING;
+            force UUT.state.current_state = UUT.state.RUNNING;
 
             cycle_count = 0;
 
@@ -191,10 +164,12 @@ module tb_GPGPU_smx_only ();
             end
 
             $fclose(fd_trace);
-            force UUT.core_state = `CORE_IDLE;
+            // Do not change the forced run state in the active writeback edge.
+            @(negedge uut_clk);
+            force UUT.state.current_state = UUT.state.IDLE;
 
             if (cycle_count >= `TEST_TIMEOUT_CYCLES) begin
-                $display("  [WARNING] Test %0d reached timeout of %0d cycles!",
+                $fatal(1, "Test %0d reached timeout of %0d cycles!",
                          test_idx, `TEST_TIMEOUT_CYCLES);
             end else begin
                 $display("  [INFO] Test %0d finished in %0d cycles!",
@@ -250,8 +225,10 @@ module tb_GPGPU_smx_only ();
     end
 
     initial begin
-        $dumpfile("dumpfile.vcd");
-        $dumpvars(0, tb_GPGPU_smx_only);
+        if ($test$plusargs("DUMP")) begin
+            $dumpfile("dumpfile.vcd");
+            $dumpvars(0, tb_GPGPU_smx_only);
+        end
     end
 
 endmodule

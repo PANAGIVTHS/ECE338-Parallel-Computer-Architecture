@@ -16,6 +16,10 @@ if {[llength $bd_file] == 0} {
 if {[llength $bd_file] != 1} {
     error "Expected exactly one block design named ${BD_NAME}.bd"
 }
+set ip_repo_path [file normalize "$RTL_DIR"]
+set_property ip_repo_paths [list $ip_repo_path] [current_project]
+update_ip_catalog -rebuild
+
 open_bd_design $bd_file
 set changed [configure_block_design]
 validate_bd_design

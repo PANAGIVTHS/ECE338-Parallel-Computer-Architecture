@@ -2,7 +2,7 @@
 
 The generated Vivado project is not tied to a checkout path. The CLI resolves
 the repository root at runtime, references RTL from `hardware/rtl/`, and uses
-`hardware/constraints/zedboard.xdc` from the same checkout.
+`hardware/constraints/smart_zynq.xdc` from the same checkout.
 
 ## Prerequisite
 

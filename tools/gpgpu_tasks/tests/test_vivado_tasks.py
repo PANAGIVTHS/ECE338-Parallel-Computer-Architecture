@@ -43,7 +43,7 @@ def make_repo(tmp_path: Path) -> StubResolvedConfig:
         "hardware/rtl/Top.sv",
         "hardware/rtl/memory/Memory.v",
         "hardware/rtl/sp/Processor.sv",
-        "hardware/constraints/zedboard.xdc",
+        "hardware/constraints/smart_zynq.xdc",
     ):
         path = tmp_path / relative
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -125,7 +125,7 @@ def test_vivado_commands_use_configured_tool_and_portable_repository_paths(
         assert "-rtl-dir" in command
         assert str(tmp_path / "hardware/rtl") in command
         assert "-xdc-file" in command
-        assert str(tmp_path / "hardware/constraints/zedboard.xdc") in command
+        assert str(tmp_path / "hardware/constraints/smart_zynq.xdc") in command
         assert "-jobs" in command
         assert "8" in command
         assert command[command.index("-num-cores") + 1] == "8"
@@ -138,7 +138,7 @@ def test_vivado_commands_use_configured_tool_and_portable_repository_paths(
     project_deps = set(tasks["vivado:project"]["file_dep"])
     assert str(tmp_path / "hardware/rtl/Top.sv") in project_deps
     assert str(tmp_path / "hardware/rtl/sp/Processor.sv") in project_deps
-    assert str(tmp_path / "hardware/constraints/zedboard.xdc") in project_deps
+    assert str(tmp_path / "hardware/constraints/smart_zynq.xdc") in project_deps
 
 
 def test_vivado_tasks_publish_expected_stage_artifacts(tmp_path: Path) -> None:
@@ -283,7 +283,7 @@ def test_saved_bd_edits_are_direct_synthesis_and_xsa_inputs(tmp_path):
         str(tmp_path / "hardware/rtl/GPGPU.v") in tasks["vivado:synthesis"]["file_dep"]
     )
     assert (
-        str(tmp_path / "hardware/constraints/zedboard.xdc")
+        str(tmp_path / "hardware/constraints/smart_zynq.xdc")
         in tasks["vivado:synthesis"]["file_dep"]
     )
 
@@ -357,7 +357,7 @@ def test_block_design_matches_documented_board_configuration() -> None:
     script_root = Path(__file__).resolve().parents[3] / "tools/hardware/vivado"
     repo_root = script_root.parents[2]
     block_design = (script_root / "create_block_design.tcl").read_text(encoding="utf-8")
-    constraints = (repo_root / "hardware/constraints/zedboard.xdc").read_text(
+    constraints = (repo_root / "hardware/constraints/smart_zynq.xdc").read_text(
         encoding="utf-8"
     )
 

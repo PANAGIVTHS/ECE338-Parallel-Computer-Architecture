@@ -1,4 +1,4 @@
-`include "constants.vh"
+`include "constants.svh"
 
 module Decoder (
     input [31:0] i_instr,

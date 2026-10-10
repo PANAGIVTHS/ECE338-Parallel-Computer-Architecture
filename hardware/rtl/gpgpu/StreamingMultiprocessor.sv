@@ -1,4 +1,4 @@
-`include "constants.vh"
+`include "constants.svh"
 
 module StreamingMultiprocessor #(
     parameter NUM_CORES = 32

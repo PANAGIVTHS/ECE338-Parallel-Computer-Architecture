@@ -6,10 +6,10 @@
 #set_property -dict {PACKAGE_PIN F22 IOSTANDARD LVCMOS33} [get_ports rst]
 
 # Connect to leds (Bank 33, 3.3V)
-set_property -dict {PACKAGE_PIN P20 IOSTANDARD LVCMOS33} [get_ports o_idle_0]
-set_property -dict {PACKAGE_PIN P21 IOSTANDARD LVCMOS33} [get_ports o_running_0]
-
-set_property IOSTANDARD LVCMOS33 [get_ports UART_0_0_rxd]
-set_property IOSTANDARD LVCMOS33 [get_ports UART_0_0_txd]
-set_property PACKAGE_PIN M17 [get_ports UART_0_0_rxd]
 set_property PACKAGE_PIN L17 [get_ports UART_0_0_txd]
+set_property PACKAGE_PIN M17 [get_ports UART_0_0_rxd]
+set_property IOSTANDARD LVCMOS33 [get_ports UART_0_0_txd]
+set_property IOSTANDARD LVCMOS33 [get_ports UART_0_0_rxd]
+
+set_property -dict {PACKAGE_PIN P20 IOSTANDARD LVCMOS33} [get_ports o_core_idle_0]
+set_property -dict {PACKAGE_PIN P21 IOSTANDARD LVCMOS33} [get_ports o_core_running_0]

@@ -10,7 +10,7 @@ ENTRY(_start)
 
 MEMORY
 {
-    /* 2048 instructions / 2048 data words in hardware/rtl/constants.vh. */
+    /* 2048 instructions / 2048 data words in src/constants.svh. */
     IMEM (rx)  : ORIGIN = 0x00000000, LENGTH = 8K
     DMEM (rw)  : ORIGIN = 0x00000000, LENGTH = 8K
 }

@@ -7,11 +7,16 @@ TEST_TOOLS_DIR="$REPO_ROOT/tests/tools"
 cd "$SCRIPT_DIR"
 
 
+# Resolve repository fixtures/tools independently of the caller's directory.
+CALLER_DIR="$PWD"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR" || exit 1
+
 ITERS=100
 MODE="standard"
 VISUALIZE=false
 TB_MODE="e2e"
-TB_FILE="tb_GPGPU_e2e.v"
+TB_FILE="tb_GPGPU_e2e.sv"
 RANGE_START=""
 RANGE_END=""
 
@@ -25,7 +30,7 @@ print_help() {
     echo "Usage: ./run.sh [OPTIONS]"
     echo ""
     echo "Modes:"
-    echo "  -s,  --standard          Run Verilog simulation testsuite"
+    echo "  -s,  --standard          Compile/run SystemVerilog tests with Verilator"
     echo "  -r,  --rand              Run simulation testsuite, then random fuzzer"
     echo "       --host              Run tests on real board through UART"
     echo "       --gen-only          Only run assembler and expected generator"
@@ -39,8 +44,8 @@ print_help() {
     echo "  -v,  --visualize         Open GTKWave after simulation"
     echo ""
     echo "Testbench selection:"
-    echo "       --tb smx            Use tb_GPGPU.v"
-    echo "       --tb e2e            Use tb_GPGPU_e2e.v"
+    echo "       --tb smx            Use tb_GPGPU.sv"
+    echo "       --tb e2e            Use tb_GPGPU_e2e.sv"
     echo "       --tb-file FILE      Use a custom testbench file"
     echo ""
     echo "UART options:"
@@ -124,10 +129,10 @@ while [[ "$#" -gt 0 ]]; do
             shift
             case "$TB_MODE" in
                 smx)
-                    TB_FILE="tb_GPGPU.v"
+                    TB_FILE="tb_GPGPU.sv"
                     ;;
                 e2e)
-                    TB_FILE="tb_GPGPU_e2e.v"
+                    TB_FILE="tb_GPGPU_e2e.sv"
                     ;;
                 *)
                     echo "Unknown --tb option: $TB_MODE"
@@ -139,6 +144,9 @@ while [[ "$#" -gt 0 ]]; do
 
         --tb-file)
             TB_FILE="$2"
+            if [[ "$TB_FILE" != /* && -f "$CALLER_DIR/$TB_FILE" ]]; then
+                TB_FILE="$CALLER_DIR/$TB_FILE"
+            fi
             shift
             ;;
 
@@ -160,6 +168,11 @@ while [[ "$#" -gt 0 ]]; do
     esac
     shift
 done
+
+SIM_PLUSARGS="${PLUSARGS:-}"
+if [[ "$VISUALIZE" == true ]]; then
+    SIM_PLUSARGS="${SIM_PLUSARGS:+$SIM_PLUSARGS }+DUMP"
+fi
 
 if [[ "$MODE" != "host" && "$MODE" != "gen-only" ]]; then
     if [ ! -f "$TB_FILE" ]; then
@@ -212,7 +225,7 @@ case "$MODE" in
     standard|rand)
         TESTSUITE_FAILED=false
 
-        echo -e "\n[Step 1/2] Running Verilog testsuite with $TB_FILE..."
+        echo -e "\n[Step 1/2] Running Verilator testsuite with $TB_FILE..."
 
         if [[ -n "$RANGE_START" ]]; then
             for ((test_num = RANGE_START; test_num <= RANGE_END; test_num++)); do
@@ -227,13 +240,12 @@ case "$MODE" in
             done
 
             if [ "$TESTSUITE_FAILED" = false ]; then
-                make compile TB="$TB_FILE" IVERILOG_FLAGS="-Wall -Wno-timescale -Winfloop -I $REPO_ROOT/hardware/rtl -DSIM" && \
-                    vvp ./main +TEST_IDX="$RANGE_START" +TEST_END="$RANGE_END" | tee simulation.log
-                if [[ ${PIPESTATUS[0]} -ne 0 ]] || grep -qE "\[FAIL\]|\[Error\]" simulation.log; then
+                if ! make simulate TB="$TB_FILE" EXTRA_FLAGS="-DSIM" \
+                    PLUSARGS="+TEST_IDX=$RANGE_START +TEST_END=$RANGE_END $SIM_PLUSARGS"; then
                     TESTSUITE_FAILED=true
                 fi
             fi
-        elif ! make testsuite TB="$TB_FILE" IVERILOG_FLAGS="-Wall -Wno-timescale -Winfloop -I $REPO_ROOT/hardware/rtl -DSIM"; then
+        elif ! make testsuite TB="$TB_FILE" EXTRA_FLAGS="-DSIM" PLUSARGS="$SIM_PLUSARGS"; then
             echo -e "\n[WARNING] Standard testsuite failed!"
             TESTSUITE_FAILED=true
         fi
@@ -242,7 +254,7 @@ case "$MODE" in
             echo -e "\n[Optional] Opening GTKWave..."
 
             if [ -f "./dumpfile.vcd" ]; then
-                (gtkwave ./dumpfile.vcd ./waveform.gtkw > /dev/shm/gtkwave.log 2>&1 &)
+                (gtkwave ./dumpfile.vcd ./waveform.gtkw > ./gtkwave.log 2>&1 &)
                 echo "  -> GTKWave launched in background."
             else
                 echo "  -> [Error] dumpfile.vcd not found. Cannot open GTKWave."
