@@ -1,509 +1,227 @@
-from __future__ import annotations
-
+"""Actual Vitis task graph and portable export tests, no vendor installation."""
 from pathlib import Path
+from types import SimpleNamespace
 import json
 import os
+import sys
 import zipfile
-
 import pytest
-
+from doit.control import TaskControl
+from doit.task import dict_to_task
 from tools.hardware.vitis import tasks as vitis
 
+ROOT = Path(__file__).resolve().parents[3]
 
-class StubResolvedConfig:
-    def __init__(self, repo_root: Path) -> None:
-        self.repo_root = repo_root
-        self.vitis_command = "vitis-configured"
-        self.cpu = "ps7_cortexa9_0"
-
-    def get(self, key: str):
-        values = {
-            "hardware.vitis.version": "2026.1",
-            "hardware.vitis.platform_name": "gpgpu_platform",
-            "hardware.vitis.host_name": "gpgpu_host",
-            "hardware.vitis.cpu": self.cpu,
-            "hardware.vitis.domain": "standalone_ps7_cortexa9_0",
-            "hardware.vitis.os": "standalone",
-            "hardware.vitis.template": "empty_application",
-            "hardware.vitis.default_archive": "tools/hardware/vitis/default-project.zip",
-            "hardware.vitis.host_sources": [
-                "software/host/xc7z020/gpgpu_host.c",
-                "software/host/xc7z020/main.c",
-            ],
-            "tools.vitis.command": self.vitis_command,
+class Config:
+    def __init__(self, root):
+        self.repo_root = root
+        self.build_root = root / 'build'
+        self.values = {
+            'hardware.vitis.version': '2025.2',
+            'hardware.vitis.platform_name': 'custom_platform',
+            'hardware.vitis.host_name': 'custom_host',
+            'hardware.vitis.cpu': 'ps7_cortexa9_0',
+            'hardware.vitis.domain': 'standalone_ps7_cortexa9_0',
+            'hardware.vitis.os': 'standalone',
+            'hardware.vitis.template': 'empty_application',
+            'hardware.vitis.default_archive': 'default.zip',
+            'hardware.vitis.host_sources': ['src/gpgpu_driver.c', 'src/main.c'],
+            'hardware.vivado.xsa_name': 'managed_hardware',
+            'hardware.vivado.peripheral.base_address': '0x43C00000',
+            'hardware.vivado.peripheral.range': '0x00010000',
+            'tools.vitis.command': 'vitis',
         }
-        return values[key]
-
-    @property
-    def build_root(self) -> Path:
-        return self.repo_root / "build"
+    def get(self, key): return self.values[key]
 
 
-def make_repo(tmp_path: Path) -> StubResolvedConfig:
-    for relative in (
-        "build/hardware/platform/gpgpu_platform.xsa",
-        "software/host/xc7z020/gpgpu_host.c",
-        "software/host/xc7z020/main.c",
-        "tools/hardware/vitis/vitis_flow.py",
-    ):
-        path = tmp_path / relative
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text("source\n", encoding="utf-8")
-
-    archive = tmp_path / "tools/hardware/vitis/default-project.zip"
-    with zipfile.ZipFile(archive, "w") as output:
-        output.writestr(
-            "gpgpu_platform/vitis-comp.json",
-            json.dumps(
-                {
-                    "name": "gpgpu_platform",
-                    "type": "PLATFORM",
-                    "configuration": {
-                        "xsa": "${GPGPU_XSA}",
-                        "xsaPathInPlatform": "gpgpu_platform/hw/gpgpu_platform.xsa",
-                        "domains": [
-                            {
-                                "name": "standalone_ps7_cortexa9_0",
-                                "processor": "ps7_cortexa9_0",
-                                "os": "standalone",
-                                "appTemplate": "empty_application",
-                            }
-                        ],
-                    },
-                }
-            ),
-        )
-        output.writestr(
-            "gpgpu_host/vitis-comp.json",
-            json.dumps(
-                {
-                    "name": "gpgpu_host",
-                    "type": "HOST",
-                    "platform": "gpgpu_platform",
-                    "domain": "standalone_ps7_cortexa9_0",
-                    "cpuInstance": "ps7_cortexa9_0",
-                    "os": "standalone",
-                }
-            ),
-        )
-        output.writestr(
-            "gpgpu_host/src/UserConfig.cmake",
-            'set(USER_COMPILE_SOURCES\n"${GPGPU_REPO_ROOT}/software/host/xc7z020/main.c"\n)\n',
-        )
-        output.writestr(
-            "gpgpu_host/src/app.yaml",
-            "template: empty_application\n",
-        )
-    return StubResolvedConfig(tmp_path)
+def make_repo(tmp_path):
+    config = Config(tmp_path)
+    (tmp_path / 'src').mkdir()
+    for name in ('gpgpu_driver.c', 'main.c', 'gpgpu_driver.h'):
+        (tmp_path / 'src' / name).write_text('/* input */')
+    with zipfile.ZipFile(tmp_path / 'default.zip', 'w') as archive:
+        archive.writestr('old_platform/obsolete-bsp.c', 'must not enter managed hardware')
+    return config
 
 
-def tasks_by_name(config: StubResolvedConfig) -> dict[str, dict]:
-    return {task["name"]: task for task in vitis.create_tasks(config)}  # type: ignore[arg-type]
-
-
-def test_vitis_tasks_form_requested_dependency_pipeline(tmp_path: Path) -> None:
-    tasks = tasks_by_name(make_repo(tmp_path))
-
-    assert list(tasks) == [
-        "vitis:project",
-        "vitis:build:platform",
-        "vitis:build:host",
-        "vitis:build:all",
-        "vitis:export",
-    ]
-    assert tasks["vitis:project"]["task_dep"] == []
-    assert tasks["vitis:build:platform"]["task_dep"] == ["vitis:project"]
-    assert tasks["vitis:build:host"]["task_dep"] == ["vitis:build:platform"]
-    assert tasks["vitis:build:all"]["task_dep"] == ["vitis:build:host"]
-    assert tasks["vitis:export"].get("task_dep", []) == []
-    assert tasks["vitis:export"]["uptodate"] == [False]
-
-
-def test_vitis_project_builds_xsa_only_when_it_is_missing(tmp_path: Path) -> None:
+def test_public_graph_always_rebuilds_hardware_dependency_even_if_xsa_exists(tmp_path):
     config = make_repo(tmp_path)
-    (tmp_path / "build/hardware/platform/gpgpu_platform.xsa").unlink()
-
-    tasks = tasks_by_name(config)
-
-    assert tasks["vitis:project"]["task_dep"] == ["vivado:xsa"]
-
-
-def test_vitis_tasks_keep_requested_workspace_and_artifact_targets(tmp_path: Path) -> None:
-    tasks = tasks_by_name(make_repo(tmp_path))
-    workspace = tmp_path / "build/software/vitis"
-
-    assert tasks["vitis:project"]["targets"] == [
-        str(workspace / "gpgpu_platform/vitis-comp.json"),
-        str(workspace / "gpgpu_host/vitis-comp.json"),
-    ]
-    assert tasks["vitis:build:platform"]["targets"] == [
-        str(workspace / "gpgpu_platform/export/gpgpu_platform/hw/gpgpu_platform.xsa"),
-        str(workspace / "gpgpu_platform/export/gpgpu_platform/hw/sdt/ps7_init.tcl"),
-        str(workspace / "gpgpu_platform/export/gpgpu_platform/gpgpu_platform.xpfm"),
-    ]
-    assert tasks["vitis:build:host"]["targets"] == [
-        str(workspace / "gpgpu_host/build/gpgpu_host.elf")
-    ]
+    xsa = config.build_root / 'hardware/platform/managed_hardware.xsa'
+    xsa.parent.mkdir(parents=True); xsa.write_text('old')
+    tasks = vitis.create_tasks(config)
+    assert [t['name'] for t in tasks] == ['vitis:project', 'vitis:build:platform', 'vitis:build:host', 'vitis:build:all', 'vitis:export']
+    assert tasks[0]['task_dep'] == ['vivado:system:build']
+    assert str(xsa) in tasks[0]['file_dep']
+    assert tasks[1]['task_dep'] == ['vitis:project']
+    assert tasks[2]['task_dep'] == ['vitis:build:platform']
+    assert tasks[3]['task_dep'] == ['vitis:build:host']
+    assert not tasks[4].get('task_dep')
+    assert str(tmp_path / 'src/gpgpu_driver.h') in tasks[2]['file_dep']
+    assert not any('old_platform' in p for t in tasks for p in t.get('file_dep', []))
+    effective = TaskControl([dict_to_task({'name': 'vivado:system:build', 'actions': [], 'targets': [str(xsa)]}), *(dict_to_task(t) for t in tasks)])
+    effective.process(['vitis:build:all'])  # actual pydoit graph, including inferred file edges
+    assert effective.tasks['vitis:project'].task_dep == ['vivado:system:build']
+    assert 'vitis:build:host' not in effective.tasks['vitis:project'].task_dep
 
 
-def test_vitis_build_commands_use_configured_launcher_and_python_script(tmp_path: Path) -> None:
-    tasks = tasks_by_name(make_repo(tmp_path))
-    script = tmp_path / "tools/hardware/vitis/vitis_flow.py"
-    workspace = tmp_path / "build/software/vitis"
-
-    platform_command = tasks["vitis:build:platform"]["actions"][0][1][0]
-    host_command = tasks["vitis:build:host"]["actions"][0][1][0]
-
-    assert platform_command == [
-        "vitis-configured",
-        "-s",
-        str(script),
-        "--",
-        "build",
-        "--workspace",
-        str(workspace),
-        "--component",
-        "gpgpu_platform",
-    ]
-    assert host_command == [
-        "vitis-configured",
-        "-s",
-        str(script),
-        "--",
-        "build",
-        "--workspace",
-        str(workspace),
-        "--component",
-        "gpgpu_host",
-    ]
-
-
-def test_materialize_default_project_rewrites_only_generated_workspace_paths(
-    tmp_path: Path,
-) -> None:
+def test_project_and_host_use_sdk_launcher_and_real_configuration(tmp_path):
     config = make_repo(tmp_path)
-    archive = tmp_path / "tools/hardware/vitis/default-project.zip"
-    workspace = tmp_path / "build/software/vitis"
-    xsa = tmp_path / "build/hardware/platform/gpgpu_platform.xsa"
-
-    vitis.materialize_default_project(
-        archive,
-        workspace,
-        tmp_path,
-        xsa,
-        "gpgpu_platform",
-        "gpgpu_host",
-        "ps7_cortexa9_0",
-        "standalone_ps7_cortexa9_0",
-        "standalone",
-        "empty_application",
-        (
-            tmp_path / "software/host/xc7z020/gpgpu_host.c",
-            tmp_path / "software/host/xc7z020/main.c",
-        ),
-    )
-
-    platform_metadata = json.loads(
-        (workspace / "gpgpu_platform/vitis-comp.json").read_text(encoding="utf-8")
-    )
-    user_config = (workspace / "gpgpu_host/src/UserConfig.cmake").read_text(
-        encoding="utf-8"
-    )
-    assert platform_metadata["configuration"]["xsa"] == str(xsa.resolve())
-    assert str(tmp_path.resolve()) in user_config
-    assert (workspace / "gpgpu_platform/hw/gpgpu_platform.xsa").read_text() == "source\n"
-    assert user_config.count(str(tmp_path / "software/host/xc7z020")) == 2
+    tasks = vitis.create_tasks(config)
+    project = tasks[0]['actions'][0][1][0]
+    host = tasks[2]['actions'][0][1][0]
+    assert project[4] == 'project' and '--xsa' in project
+    assert host[4] == 'host'
+    assert host[host.index('--base-address') + 1] == '0x43C00000'
+    assert host.count('--source') == 2
+    assert tasks[0]['targets'] == [str(config.build_root / 'software/vitis/custom_platform/vitis-comp.json')]
+    assert str(config.build_root / 'software/vitis/custom_host/vitis-comp.json') in tasks[2]['targets']
+    assert vitis.run_vitis is tasks[0]['actions'][0][0]
 
 
-def test_project_refresh_preserves_existing_workspace_edits(tmp_path: Path) -> None:
+def test_shipped_config_sources_headers_and_hardware_name_exist():
+    from config import resolve_config
+    config = resolve_config(ROOT, profile='default')
+    tasks = vitis.create_tasks(config)
+    assert config.get('hardware.vitis.version') == '2025.2'
+    for relative in config.get('hardware.vitis.host_sources'):
+        assert (ROOT / relative).is_file(), relative
+    assert {Path(s).name for s in config.get('hardware.vitis.host_sources')} == {'gpgpu_driver.c', 'main.c'}
+    assert tasks[0]['task_dep'] == ['vivado:system:build']
+    assert str(config.build_root / 'hardware/platform/gpgpu_platform.xsa') in tasks[0]['file_dep']
+    assert any(Path(s).name == 'gpgpu_driver.h' for s in tasks[2]['file_dep'])
+
+
+def test_export_is_portable_atomic_deterministic_and_retains_rsa_input(tmp_path):
+    workspace = tmp_path / 'workspace'
+    platform = workspace / 'platform'; host = workspace / 'host'
+    platform.mkdir(parents=True); (host / 'src').mkdir(parents=True)
+    (platform / 'vitis-comp.json').write_text(json.dumps({'name': 'platform', 'configuration': {'xsa': str(tmp_path / 'fresh.xsa')}}))
+    (host / 'vitis-comp.json').write_text(json.dumps({'name': 'host'}))
+    (host / 'UserConfig.cmake').write_text(f'set(USER_COMPILE_SOURCES "{tmp_path}/src/main.c")')
+    (host / 'src/app.yaml').write_text('app_src_dir: /opt/Xilinx/2025.2/Vitis/data/embeddedsw/lib/sw_apps/empty_application\n')
+    rsa = platform / 'zynq_fsbl/zynq_fsbl_bsp/libsrc/xilrsa/src/librsa.a'
+    rsa.parent.mkdir(parents=True); rsa.write_bytes(b'fixture vendor input')
+    generated = platform / 'zynq_fsbl/zynq_fsbl_bsp/lib/libxilrsa.a'
+    generated.parent.mkdir(); generated.write_bytes(b'output')
+    elf = host / 'build/host.elf'; elf.parent.mkdir(); elf.write_bytes(b'output')
+    archive = tmp_path / 'default.zip'
+    vitis.export_workspace(workspace, archive, tmp_path, 'platform', 'host')
+    with zipfile.ZipFile(archive) as result:
+        names = result.namelist()
+        assert 'platform/zynq_fsbl/zynq_fsbl_bsp/libsrc/xilrsa/src/librsa.a' in names
+        assert not any(name.endswith('libxilrsa.a') or name.endswith('.elf') for name in names)
+        assert '${GPGPU_REPO_ROOT}' in result.read('host/UserConfig.cmake').decode()
+        assert '${XILINX_VITIS}' in result.read('host/src/app.yaml').decode()
+        assert '${GPGPU_XSA}' in result.read('platform/vitis-comp.json').decode()
+    before = archive.read_bytes(); mtime = archive.stat().st_mtime_ns
+    vitis.export_workspace(workspace, archive, tmp_path, 'platform', 'host')
+    assert archive.read_bytes() == before and archive.stat().st_mtime_ns == mtime
+    secret = host / 'secret.txt'; secret.write_text('/home/unrelated/private')
+    with pytest.raises(ValueError, match='machine-specific'):
+        vitis.export_workspace(workspace, archive, tmp_path, 'platform', 'host')
+    assert archive.read_bytes() == before
+    secret.unlink(); secret.symlink_to(tmp_path / 'external')
+    with pytest.raises(ValueError, match='symbolic link'):
+        vitis.export_workspace(workspace, archive, tmp_path, 'platform', 'host')
+
+
+def test_effective_graph_runs_real_entrypoint_twice_and_invalidates_inputs(tmp_path, monkeypatch):
+    from doit.cmd_base import TaskLoader2
+    from doit.doit_cmd import DoitMain
     config = make_repo(tmp_path)
-    project_task = tasks_by_name(config)["vitis:project"]
-    action, arguments = project_task["actions"][0]
-    action(*arguments)
+    script = tmp_path / 'tools/hardware/vitis/vitis_flow.py'
+    script.parent.mkdir(parents=True)
+    script.write_bytes((ROOT / 'tools/hardware/vitis/vitis_flow.py').read_bytes())
+    isolated_sdk = tmp_path / 'sdk'
+    isolated_sdk.mkdir()
+    (isolated_sdk / 'vitis.py').write_text('''
+from pathlib import Path
+import json
+workspace = None
 
-    workspace = tmp_path / "build/software/vitis"
-    custom_edit = workspace / "gpgpu_host/src/custom.c"
-    custom_edit.write_text("/* GUI edit */\n", encoding="utf-8")
-    xsa = tmp_path / "build/hardware/platform/gpgpu_platform.xsa"
-    xsa.write_text("new source\n", encoding="utf-8")
+def log(event):
+    with (workspace.parent / 'sdk-order.log').open('a') as out:
+        out.write(event + '\\n')
 
-    action(*arguments)
+class Component:
+    def __init__(self, name, kind): self.name, self.kind = name, kind
+    def build(self):
+        log('build:' + self.name)
+        root = workspace / self.name
+        if self.kind == 'platform':
+            out = root / 'export' / self.name
+            (out / 'hw/sdt').mkdir(parents=True)
+            (out / 'hw' / (self.name + '.xsa')).write_bytes((root / 'fresh-xsa').read_bytes())
+            (out / 'hw/sdt/ps7_init.tcl').write_text('# fixture')
+            (out / (self.name + '.xpfm')).write_text('fixture platform')
+        else:
+            assert 'GPGPU_BASEADDR=' in (root / 'UserConfig.cmake').read_text()
+            (root / 'build').mkdir()
+            (root / 'build' / (self.name + '.elf')).write_text('fixture ELF, not ARM code')
+        return True
 
-    assert custom_edit.read_text(encoding="utf-8") == "/* GUI edit */\n"
-    assert (
-        workspace / "gpgpu_platform/hw/gpgpu_platform.xsa"
-    ).read_text(encoding="utf-8") == "new source\n"
+class Client:
+    def set_workspace(self, path):
+        global workspace
+        workspace = Path(path)
+    def create_platform_component(self, *, name, hw_design, os, cpu, domain_name):
+        log('create:' + name)
+        root = workspace / name
+        root.mkdir()
+        (root / 'vitis-comp.json').write_text(json.dumps({'name': name, 'kind': 'platform', 'configuration': {'xsa': hw_design}}))
+        (root / 'fresh-xsa').write_bytes(Path(hw_design).read_bytes())
+        return Component(name, 'platform')
+    def get_component(self, *, name):
+        meta = json.loads((workspace / name / 'vitis-comp.json').read_text())
+        return Component(name, meta['kind'])
+    def create_app_component(self, *, name, platform, domain, template):
+        assert Path(platform).is_file()
+        log('create:' + name)
+        root = workspace / name
+        (root / 'src').mkdir(parents=True)
+        (root / 'vitis-comp.json').write_text(json.dumps({'name': name, 'kind': 'app'}))
+        (root / 'UserConfig.cmake').write_text('set(USER_COMPILE_SOURCES)\\nset(USER_INCLUDE_DIRECTORIES)\\nset(USER_COMPILE_DEFINITIONS)\\n')
+        return Component(name, 'app')
 
-
-def test_project_rejects_structural_config_that_disagrees_with_default(tmp_path: Path) -> None:
-    config = make_repo(tmp_path)
-    config.cpu = "different_cpu"
-    project_task = tasks_by_name(config)["vitis:project"]
-    action, arguments = project_task["actions"][0]
-
-    with pytest.raises(ValueError, match="does not match hardware.vitis configuration"):
-        action(*arguments)
-
-    workspace = tmp_path / "build/software/vitis"
-    assert not (workspace / "gpgpu_platform").exists()
-    assert not (workspace / "gpgpu_host").exists()
-
-
-def test_project_materialization_rejects_unsafe_zip_member(tmp_path: Path) -> None:
-    make_repo(tmp_path)
-    archive = tmp_path / "tools/hardware/vitis/default-project.zip"
-    with zipfile.ZipFile(archive, "w") as project:
-        project.writestr("../escape.txt", "bad")
-
-    with pytest.raises(ValueError, match="Unsafe path"):
-        vitis.materialize_default_project(
-            archive,
-            tmp_path / "build/software/vitis",
-            tmp_path,
-            tmp_path / "build/hardware/platform/gpgpu_platform.xsa",
-            "gpgpu_platform",
-            "gpgpu_host",
-            "ps7_cortexa9_0",
-            "standalone_ps7_cortexa9_0",
-            "standalone",
-            "empty_application",
-            (),
-        )
-    assert not (tmp_path / "escape.txt").exists()
-
-
-def test_project_materialization_is_atomic_on_invalid_component(tmp_path: Path) -> None:
-    make_repo(tmp_path)
-    archive = tmp_path / "tools/hardware/vitis/default-project.zip"
-    with zipfile.ZipFile(archive, "w") as project:
-        project.writestr(
-            "gpgpu_platform/vitis-comp.json",
-            json.dumps({"name": "gpgpu_platform", "configuration": {}}),
-        )
-        project.writestr("gpgpu_host/vitis-comp.json", "not-json")
-
-    workspace = tmp_path / "build/software/vitis"
-    with pytest.raises(ValueError, match="Invalid Vitis component metadata"):
-        vitis.materialize_default_project(
-            archive,
-            workspace,
-            tmp_path,
-            tmp_path / "build/hardware/platform/gpgpu_platform.xsa",
-            "gpgpu_platform",
-            "gpgpu_host",
-            "ps7_cortexa9_0",
-            "standalone_ps7_cortexa9_0",
-            "standalone",
-            "empty_application",
-            (),
-        )
-    assert not (workspace / "gpgpu_platform").exists()
-    assert not (workspace / "gpgpu_host").exists()
-
-
-def test_export_workspace_creates_portable_archive_and_excludes_products(
-    tmp_path: Path,
-) -> None:
-    workspace = tmp_path / "build/software/vitis"
-    platform = workspace / "gpgpu_platform"
-    host = workspace / "gpgpu_host"
-    (platform / "hw").mkdir(parents=True)
-    (host / "src").mkdir(parents=True)
-    (host / "build").mkdir(parents=True)
-    (platform / "export").mkdir(parents=True)
-    (platform / "bsp/libsrc/build_configs/gen_bsp").mkdir(parents=True)
-    (platform / "vitis-comp.json").write_text(
-        json.dumps(
-            {
-                "name": "gpgpu_platform",
-                "configuration": {
-                    "xsa": str(tmp_path / "build/hardware/platform/gpgpu_platform.xsa")
-                },
-            }
-        ),
-        encoding="utf-8",
-    )
-    (host / "vitis-comp.json").write_text(
-        json.dumps({"name": "gpgpu_host", "platform": "gpgpu_platform"}),
-        encoding="utf-8",
-    )
-    (host / "src/UserConfig.cmake").write_text(
-        f'set(USER_COMPILE_SOURCES "{tmp_path}/software/host/xc7z020/main.c")\n',
-        encoding="utf-8",
-    )
-    (host / "src/app.yaml").write_text(
-        "app_src_dir: /opt/Xilinx/2026.1/Vitis/data/embeddedsw/lib/sw_apps/empty_application\n",
-        encoding="utf-8",
-    )
-    (platform / "hw/gpgpu_platform.xsa").write_bytes(b"xsa")
-    (host / "build/gpgpu_host.elf").write_bytes(b"elf")
-    (platform / "export/generated.bit").write_bytes(b"bit")
-    (platform / "bsp/libsrc/build_configs/gen_bsp/build.ninja").write_text(
-        f"source = {tmp_path}/private.c\n", encoding="utf-8"
-    )
-
-    archive = tmp_path / "tools/hardware/vitis/default-project.zip"
-    vitis.export_workspace(
-        workspace,
-        archive,
-        tmp_path,
-        "gpgpu_platform",
-        "gpgpu_host",
-    )
-
-    with zipfile.ZipFile(archive) as exported:
-        names = set(exported.namelist())
-        assert "gpgpu_platform/vitis-comp.json" in names
-        assert "gpgpu_host/vitis-comp.json" in names
-        assert "gpgpu_host/src/UserConfig.cmake" in names
-        assert not any("/build/" in f"/{name}" for name in names)
-        assert not any("/build_configs/" in f"/{name}" for name in names)
-        assert not any("/export/" in f"/{name}" for name in names)
-        all_text = "\n".join(
-            exported.read(name).decode("utf-8")
-            for name in names
-            if name.endswith((".json", ".cmake", ".yaml", ".yml", ".txt", ".tcl"))
-        )
-    assert str(tmp_path) not in all_text
-    assert "${GPGPU_XSA}" in all_text
-    assert "${GPGPU_REPO_ROOT}" in all_text
-    assert "${XILINX_VITIS}" in all_text
-    assert "/opt/Xilinx" not in all_text
-    assert (platform / "vitis-comp.json").stat().st_mtime_ns >= archive.stat().st_mtime_ns
-    assert (host / "vitis-comp.json").stat().st_mtime_ns >= archive.stat().st_mtime_ns
-
-    os.utime(archive, (1, 1))
-    original_bytes = archive.read_bytes()
-    vitis.export_workspace(
-        workspace,
-        archive,
-        tmp_path,
-        "gpgpu_platform",
-        "gpgpu_host",
-    )
-    assert archive.read_bytes() == original_bytes
-    assert archive.stat().st_mtime_ns == 1_000_000_000
+def create_client(): return Client()
+''')
+    launcher = tmp_path / 'fake-vitis'
+    launcher.write_text(f'#!{sys.executable}\nimport subprocess, sys\nraise SystemExit(subprocess.call([sys.executable, sys.argv[2], *sys.argv[3:]]))\n')
+    launcher.chmod(0o755)
+    config.values['tools.vitis.command'] = str(launcher)
+    monkeypatch.setenv('PYTHONPATH', str(isolated_sdk))
+    hardware_input = tmp_path / 'hardware-source'; hardware_input.write_text('initial hardware')
+    xsa = config.build_root / 'hardware/platform/managed_hardware.xsa'
+    def hardware_build():
+        xsa.parent.mkdir(parents=True, exist_ok=True)
+        xsa.write_text(hardware_input.read_text())
+        log = config.build_root / 'hardware-order.log'
+        with log.open('a') as out: out.write('hardware\n')
+    class Loader(TaskLoader2):
+        def load_doit_config(self): return {'dep_file': str(tmp_path / 'doit.db'), 'verbosity': 2}
+        def load_tasks(self, cmd, pos_args):
+            upstream = {'name': 'vivado:system:build', 'actions': [hardware_build], 'file_dep': [str(hardware_input)], 'targets': [str(xsa)]}
+            return [dict_to_task(upstream), *(dict_to_task(task) for task in vitis.create_tasks(config))]
+    def run():
+        assert DoitMain(Loader()).run(['run', 'vitis:build:all']) == 0
+    run()
+    order_log = config.build_root / 'software/sdk-order.log'
+    first = order_log.read_text().splitlines()
+    assert first == ['create:custom_platform', 'build:custom_platform', 'create:custom_host', 'build:custom_host']
+    run()
+    assert order_log.read_text().splitlines() == first
+    assert (config.build_root / 'hardware-order.log').read_text().splitlines() == ['hardware']
+    (tmp_path / 'src/gpgpu_driver.h').write_text('changed header')
+    run()
+    assert order_log.read_text().splitlines()[len(first):] == ['create:custom_host', 'build:custom_host']
+    hardware_input.write_text('updated AXI hardware')
+    run()
+    assert order_log.read_text().splitlines()[-4:] == first
+    exported = config.build_root / 'software/vitis/custom_platform/export/custom_platform/hw/custom_platform.xsa'
+    assert exported.read_text() == 'updated AXI hardware'
+    assert (config.build_root / 'hardware-order.log').read_text().splitlines() == ['hardware', 'hardware']
 
 
-def test_export_refuses_workspace_with_missing_components(tmp_path: Path) -> None:
-    workspace = tmp_path / "build/software/vitis"
-    workspace.mkdir(parents=True)
-
-    with pytest.raises(FileNotFoundError, match="gpgpu_platform"):
-        vitis.export_workspace(
-            workspace,
-            tmp_path / "default-project.zip",
-            tmp_path,
-            "gpgpu_platform",
-            "gpgpu_host",
-        )
-
-
-def test_export_refuses_symbolic_links(tmp_path: Path) -> None:
-    workspace = tmp_path / "build/software/vitis"
-    for component in ("gpgpu_platform", "gpgpu_host"):
-        root = workspace / component
-        root.mkdir(parents=True)
-        (root / "vitis-comp.json").write_text(
-            json.dumps({"name": component, "configuration": {}}),
-            encoding="utf-8",
-        )
-    outside = tmp_path / "outside.txt"
-    outside.write_text("private", encoding="utf-8")
-    (workspace / "gpgpu_host/linked.txt").symlink_to(outside)
-
-    with pytest.raises(ValueError, match="symbolic link"):
-        vitis.export_workspace(
-            workspace,
-            tmp_path / "default-project.zip",
-            tmp_path,
-            "gpgpu_platform",
-            "gpgpu_host",
-        )
-
-
-def test_committed_default_project_is_portable_and_matches_default_config() -> None:
-    repo_root = Path(__file__).resolve().parents[3]
-    archive = repo_root / "tools/hardware/vitis/default-project.zip"
-
-    with zipfile.ZipFile(archive) as project:
-        names = set(project.namelist())
-        assert "gpgpu_platform/vitis-comp.json" in names
-        assert "gpgpu_host/vitis-comp.json" in names
-        assert not any("/build/" in f"/{name}" for name in names)
-        assert not any("/build_configs/" in f"/{name}" for name in names)
-        assert not any("/export/" in f"/{name}" for name in names)
-
-        platform = json.loads(project.read("gpgpu_platform/vitis-comp.json"))
-        host = json.loads(project.read("gpgpu_host/vitis-comp.json"))
-        user_config = project.read("gpgpu_host/src/UserConfig.cmake").decode()
-        app_yaml = project.read("gpgpu_host/src/app.yaml").decode()
-        assert platform["name"] == "gpgpu_platform"
-        assert platform["configuration"]["xsa"] == "${GPGPU_XSA}"
-        assert host["name"] == "gpgpu_host"
-        assert host["domain"] == "standalone_ps7_cortexa9_0"
-        assert user_config.count("${GPGPU_REPO_ROOT}/software/host/xc7z020/") == 2
-        assert "${XILINX_VITIS}/data/embeddedsw" in app_yaml
-
-        for name in names:
-            assert "tsiantosd" not in name.lower(), name
-            assert ".xil" not in name.lower(), name
-            raw = project.read(name)
-            lowered = raw.lower()
-            assert b"/home/" not in lowered, name
-            assert b"/workspace/" not in lowered, name
-            assert b"/opt/xilinx" not in lowered, name
-            assert b"tsiantosd" not in lowered, name
-            try:
-                text = raw.decode("utf-8")
-            except UnicodeDecodeError:
-                continue
-            assert "/home/" not in text, name
-            assert "/workspace/" not in text, name
-            assert "tsiantosd" not in text.lower(), name
-
-
-def test_fake_vitis_launcher_builds_platform_before_host(tmp_path: Path) -> None:
-    config = make_repo(tmp_path)
-    fake = tmp_path / "fake-vitis"
-    fake.write_text(
-        "#!/usr/bin/env python3\n"
-        "from pathlib import Path\n"
-        "import sys\n"
-        "workspace = Path(sys.argv[sys.argv.index('--workspace') + 1])\n"
-        "component = sys.argv[sys.argv.index('--component') + 1]\n"
-        "with (workspace / 'fake-build-order.log').open('a') as log:\n"
-        "    log.write(component + '\\n')\n"
-        "if component == 'gpgpu_platform':\n"
-        "    out = workspace / component / 'export/gpgpu_platform/hw/sdt'\n"
-        "    out.mkdir(parents=True, exist_ok=True)\n"
-        "    (out.parent / 'gpgpu_platform.xsa').write_bytes(b'xsa')\n"
-        "    (out / 'ps7_init.tcl').write_text('# init\\n')\n"
-        "    (workspace / component / 'export/gpgpu_platform/gpgpu_platform.xpfm').write_text('xpfm\\n')\n"
-        "else:\n"
-        "    out = workspace / component / 'build'\n"
-        "    out.mkdir(parents=True, exist_ok=True)\n"
-        "    (out / 'gpgpu_host.elf').write_bytes(b'elf')\n",
-        encoding="utf-8",
-    )
-    fake.chmod(0o755)
-    config.vitis_command = str(fake)
-    tasks = tasks_by_name(config)
-
-    for task_name in (
-        "vitis:project",
-        "vitis:build:platform",
-        "vitis:build:host",
-    ):
-        action, arguments = tasks[task_name]["actions"][0]
-        action(*arguments)
-
-    workspace = tmp_path / "build/software/vitis"
-    assert (workspace / "gpgpu_platform/export/gpgpu_platform/hw/gpgpu_platform.xsa").is_file()
-    assert (workspace / "gpgpu_platform/export/gpgpu_platform/hw/sdt/ps7_init.tcl").is_file()
-    assert (workspace / "gpgpu_platform/export/gpgpu_platform/gpgpu_platform.xpfm").is_file()
-    assert (workspace / "gpgpu_host/build/gpgpu_host.elf").is_file()
-    assert (workspace / "fake-build-order.log").read_text().splitlines() == [
-        "gpgpu_platform",
-        "gpgpu_host",
-    ]
+def test_missing_vendor_outputs_are_errors(tmp_path):
+    with pytest.raises(FileNotFoundError, match='required artifacts'):
+        vitis.run_vitis([sys.executable, '-c', 'print("vendor success")'], tmp_path, [tmp_path / 'missing.xpfm'])

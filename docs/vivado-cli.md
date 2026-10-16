@@ -1,196 +1,142 @@
-# Vivado CLI flow
+# Vivado 2025.2 packaged-IP and Zynq CLI flow
 
-The generated Vivado project is not tied to a checkout path. The CLI resolves
-the repository root at runtime, references RTL from `hardware/rtl/`, and uses
-`hardware/constraints/smart_zynq.xdc` from the same checkout.
+This flow references production RTL under `hardware/rtl/gpgpu/` and board
+constraints under `hardware/constraints/smart_zynq.xdc`. No ZIP, saved project,
+reference IP repository or prebuilt XSA is a clean-build prerequisite.
 
-## Prerequisite
-
-Vivado 2026.1 must be available as `vivado`, or configured locally without
-changing the shared profile:
-
-```yaml
-# config/local.yaml
-tools:
-  vivado:
-    command: /opt/Xilinx/Vivado/2026.1/bin/vivado
-```
-
-`config/local.yaml` is ignored by Git.
-
-## Stages
-
-Each command depends on the stage above it, so invoking a later stage runs any
-missing or out-of-date prerequisites automatically:
+## Public stages
 
 ```text
-vivado:project
-  └─ vivado:block-design:build  (reuse/export saved BD, or bootstrap default)
-       └─ vivado:block-design:run  (generate products and HDL wrapper)
-            └─ vivado:synthesis
-                 └─ vivado:implementation
-                      └─ vivado:bitstream
-                           └─ vivado:xsa
+vivado:ip:create
+  -> vivado:ip:build
+  -> vivado:system:create
+  -> vivado:system:build
+  -> vitis:project -> vitis:build:platform -> vitis:build:host -> vitis:build:all
 ```
 
-`architecture.num_cores` is the shared core-count setting. The RTL test flow
-passes it to both testbench top-level parameters and expected-memory generation;
-software-program builds receive it as the `GPGPU_NUM_CORES` C preprocessor
-macro; and the Vivado block-design stage applies it to `GPGPU.SP_PER_SM` before
-generating the HDL wrapper. Changing it invalidates the relevant task commands
-and causes the software, RTL simulator, and Vivado synthesis artifacts to be
-rebuilt.
+- **ip:create** recreates the managed `gpgpu_ip_dev` project with top
+  `gpgpu_axi`. It does not package or synthesize a system. Portable registration
+  was reconstructed from the exported IP-development project: production-only
+  manifest, SystemVerilog headers, interface ordering and explicit initialization.
+- **ip:build** packages and validates `user.org:user:gpgpu_axi:1.0` into a
+  self-contained repository. It never builds a standalone bitstream. Publication
+  occurs only after Tcl integrity checks and Python file/interface validation.
+- **system:create** registers that repository before catalog/BD creation,
+  creates or reuses `gpgpu_system/design_1`, applies config-owned parameters,
+  validates, generates products and registers `design_1_wrapper`.
+- **system:build** executes separately cached synthesis, implementation,
+  bitstream and fixed, bitstream-inclusive XSA export. Internal staged tasks
+  retain checkpoints, jobs and stage diagnostics; a failed bitstream retry does
+  not delete routed state. Required OOC IP synthesis belongs here.
 
-The five AXI GPIO base addresses are also Vivado-owned configuration:
+The former GPIO/module-reference tasks are not part of this pipeline.
+
+## Prerequisites and configuration
+
+Install licensed Vivado/Vitis **2025.2**, then source their environment or set
+`tools.vivado.command` / `tools.vitis.command` in ignored `config/local.yaml`.
+The runtime version checks reject a different SDK; discovery does not invoke it.
+The generic `./gpgpu doctor` checks configured executable prerequisites.
+
+Defaults in `config/profiles/default.yaml`:
 
 ```yaml
+architecture:
+  num_cores: 24
 hardware:
+  fpga:
+    part: xc7z020clg484-1
   vivado:
-    host_interface:
-      address_gpio: "0x41200000"
-      cmd_gpio: "0x41210000"
-      rdata_gpio: "0x41220000"
-      status_gpio: "0x41230000"
-      wdata_gpio: "0x41240000"
+    ip_project_name: gpgpu_ip_dev
+    project_name: gpgpu_system
+    bd_name: design_1
+    top: design_1_wrapper
+    xsa_name: gpgpu_platform
+    version: "2025.2"
+    jobs: 6
+    peripheral:
+      base_address: "0x43C00000"
+      range: "0x00010000"
 ```
 
-Each value must be a unique, 64-KiB-aligned 32-bit hexadecimal string. The
-task layer passes them to every Vivado stage and the block-design flow applies
-them to the matching `processing_system7_0/Data` address segments before BD
-validation and wrapper generation. Changing one address invalidates the Vivado
-command fingerprint and rebuilds downstream artifacts.
+The current RTL decodes a 64-KiB window while retaining 32-bit AXI address
+signals. Packaging therefore declares `s00_axi/reg0` range **65536**, not the
+reference package's dependent 4-GiB range. No RTL widths/register semantics
+were changed. The range is fixed to this ABI; the base must be a valid aligned
+32-bit hexadecimal string. The same base is passed to the host build as
+`GPGPU_BASEADDR` (see [Vitis flow](vitis-cli.md)). Core count maps to
+`CONFIG.SP_PER_SM` and the IP user-to-HDL/XGUI parameter, never a second setting.
 
-For a one-off command-line override, quote the YAML string value explicitly:
+The tracked `production_sources.tcl` lists only production root/control/memory/
+sp/interfaces files, with `constants.svh` and `MemoryInterface.sv` first.
+`tools/hardware/vivado/ip/empty.mem` provides explicit 2048-word zero
+initialization for IMEM/DMEM. Project and package copy it beside the flattened
+production files; their stage cwd is owned, never a random repository cwd.
+Board XDC is excluded from the reusable IP.
+
+## System contract
+
+The saved system BD, not its inconsistent neighboring Tcl export, supplied:
+FCLK0 **35 MHz**, DDR **16-bit MT41K256M16 RE-125**, UART0 **EMIO**.
+The system connects PS GP0 -> SmartConnect -> `gpgpu_axi_0/s00_axi`, with
+clock/reset distribution, DDR/FIXED_IO external ports and UART/LED ports.
+`irq` connects through width handling to `IRQ_F2P[0]` (GIC ID 61), matching
+the IRQ-enabled driver; polling is not silently enabled.
+
+`smart_zynq.xdc` owns UART TX/RX L17/M17 and idle/running P20/P21, all
+LVCMOS33. DRC severity is not relaxed. The system consumes the packaged IP,
+not an additional raw copy of GPGPU RTL.
+
+## Protected references and GUI state
+
+The pre-existing `GPU`, `gpgpu_axi_v1_0_project`, `gpgpu_ip_dev`,
+`gpgpu_system` and `ip_repo` reference directories are **not automatically
+adopted**. A nonempty output directory without the matching managed marker is
+rejected before mutation. Use a new, disposable build root:
 
 ```bash
-./gpgpu \
-  --set 'hardware.vivado.host_interface.address_gpio="0x50000000"' \
-  run vivado:all
+./gpgpu --set paths.build.root=build-axi-2025-2 run vivado:ip:create
+./gpgpu --set paths.build.root=build-axi-2025-2 run vivado:ip:build
+./gpgpu --set paths.build.root=build-axi-2025-2 run vivado:system:create
+./gpgpu --set paths.build.root=build-axi-2025-2 run vivado:system:build
+./gpgpu --set paths.build.root=build-axi-2025-2 run vitis:build:all
 ```
 
-Without the inner quotes, YAML interprets `0x50000000` as an integer and the
-address-schema validation rejects it.
+Each later command resolves its prerequisites. No board upload/programming is
+performed. Close the GUI before running automation.
 
-Run one stage with:
+Managed IP recreation retains the previous complete project in a sibling
+`.snapshots/` directory; previous published repositories are also retained.
+A valid saved managed system BD is snapshot before refresh and is opened, not
+recreated. Incompatible/renamed/GPIO BDs are rejected. Core/address settings
+remain config-owned. Builds never automatically export references or overwrite
+tracked BD templates; the explicit raw export helper is guarded and is not a
+build dependency or automatic GUI-to-source synchronization feature.
 
-```bash
-./gpgpu run vivado:project
-./gpgpu run vivado:block-design:build
-./gpgpu run vivado:block-design:run
-./gpgpu run vivado:synthesis
-./gpgpu run vivado:implementation
-./gpgpu run vivado:bitstream
-./gpgpu run vivado:xsa
-```
+Freshness includes production sources/headers/init files, Tcl/metadata, tools
+and version checks, part/core/address command fingerprints, package contents,
+saved BD, XDC and downstream targets. Repackaging refreshes the instantiated IP
+catalog/revision even though its VLNV remains unchanged. Unchanged invocations
+skip completed stages. IP package failure blocks system and Vitis execution.
 
-`vivado:xsa` exports a fixed hardware platform with the bitstream included,
-matching **File → Export → Export Hardware → Include bitstream** from the GUI.
-It does not generate a separate configuration-memory binary and does not run
-Vitis.
-
-The aggregate command runs the complete chain through both output artifacts:
-
-```bash
-./gpgpu run vivado:all
-```
-
-## Default template and editable block design
-
-After opening `build/hardware/vivado/GPU/GPU.xpr` in Vivado, editing
-`gpgpu_block_design`, and saving the block design, close the GUI project before
-running `vivado:all`.
-
-`tools/hardware/vivado/create_block_design.tcl` is now the portable default /
-exported **design template**, not the orchestration driver. Separate Tcl drivers
-handle project setup, design preparation, export, and wrapper generation. The
-old design-specific template filename is no longer used.
-
-`vivado:block-design:build` has two branches:
-
-- If the configured project already contains `gpgpu_block_design.bd`, reuse the
-  saved design rather than deleting/recreating it. Export its normalized Tcl
-  back to `create_block_design.tcl`, updating the template only when its content
-  differs.
-- If no saved block design exists, create the default design by sourcing the
-  template in the managed project. A differently named existing design is an
-  error rather than permission to silently replace it.
-
-`vivado:block-design:run` depends on `:build` and generates the output products
-and HDL wrapper, adds the wrapper to the project, and sets the top module. Here
-`:run` means wrapper/output-product generation, **not** simulation, synthesis,
-FPGA programming, or launching the GUI.
-
-```bash
-./gpgpu run vivado:block-design:build  # preserve/export or bootstrap the BD
-./gpgpu run vivado:block-design:run    # also generate products and wrapper
-```
-
-The project stage preserves a valid saved BD as a normalized template before
-any destructive project recreation caused by RTL/configuration changes. If
-preservation/export fails, recreation stops before deleting the project.
-
-**Precedence:** an existing saved BD in the configured build root wins over
-manual edits to the template. A build can therefore modify a tracked source
-file. Review the template diff before committing; close Vivado first so that
-saved state and project locks are unambiguous. To use a manually changed default
-without overriding an editable project, use a fresh build root. Unsaved GUI
-changes cannot be exported by the CLI.
-
-The flow checks for machine-specific absolute paths and compares normalized
-content rather than timestamps. `architecture.num_cores` remains config-owned
-and is normalized to `$::NUM_CORES` instead of being captured as a
-machine/project-specific value.
-Likewise, exported concrete AXI GPIO offsets are normalized to the corresponding
-`$::HOST_*_GPIO` variables so a GUI export cannot replace configured addresses
-with one project's snapshot values.
-
-If the committed Tcl differs from the block design, the command prints a
-warning and updates it atomically. If there is no difference, it reports that
-the Tcl is up to date. The comparison is content-based rather than timestamp-
-based.
-
-The flow exports the project managed by this CLI. It does not guess or discover
-unrelated Vivado projects elsewhere on the machine. `paths.build.root` is the
-only configurable filesystem path. All generated paths are derived from it, so
-a one-off external build root is selected with:
-
-```bash
-./gpgpu --set paths.build.root=/workspace/gpgpu-build run vivado:all
-```
-
-This places the managed project at
-`/workspace/gpgpu-build/hardware/vivado/GPU/GPU.xpr`, software program outputs
-under `/workspace/gpgpu-build/software/programs/<program>/`, RTL test outputs
-under `/workspace/gpgpu-build/tests/rtl/`, and the doit database at
-`/workspace/gpgpu-build/.doit.db`. Source paths such as `hardware/rtl`,
-`hardware/constraints`, `software/programs`, and `tests/` are fixed parts of the
-repository layout and are not independently configurable. Scripts can obtain
-the normalized absolute root without parsing YAML:
-
-```bash
-./gpgpu config get paths.build.root --resolved-path
-```
-
-For safety, the resolved build root cannot be the repository root, one of its
-ancestors, or overlap `config/`, `demo/`, `docs/`, `hardware/`, `software/`,
-`tests/`, `tools/`, or `.git/`. This prevents clean operations and generated
-files from modifying source or repository metadata.
-
-Generated project state is written to `build/hardware/vivado/GPU/`. The final
-outputs are:
+## Outputs and logging
 
 ```text
-build/hardware/bitstream/gpgpu_block_design_wrapper.bit
-build/hardware/platform/gpgpu_platform.xsa
+<build-root>/hardware/vivado/gpgpu_ip_dev/gpgpu_ip_dev.xpr
+<build-root>/hardware/vivado/ip_repo/component.xml
+<build-root>/hardware/vivado/ip_repo/.gpgpu-package.json
+<build-root>/hardware/vivado/gpgpu_system/gpgpu_system.xpr
+<build-root>/hardware/bitstream/design_1_wrapper.bit
+<build-root>/hardware/platform/gpgpu_platform.xsa
 ```
 
-Use `hardware.vivado.jobs` in a profile/local override, or a one-off CLI
-override, to control Vivado parallelism:
+The XSA must include `.bit`, `.hwh`, `ps7_init.tcl` and `ps7_init.c` before the
+stage succeeds. Vivado logs/journals/streamed console logs stay in the managed
+project's `.gpgpu/logs/`; the existing JSON-backed CLI monitor also records each
+stage. Use `--plain` for plain live output. The FPGA artifact contract is unchanged:
+published bitstream, Vitis `ps7_init.tcl`, and host ELF. No reference artifact is
+accepted as evidence of a newly completed vendor build.
 
-```bash
-./gpgpu --set hardware.vivado.jobs=8 run vivado:bitstream
-```
-
-All project, block-design, run, and output-product files under `build/` are
-generated and may be deleted and recreated from the committed Tcl, RTL, and
-XDC sources.
+Tests using Tcl recorders/fake vendor processes validate contracts and
+orchestration, **not synthesis, implementation, SDK compatibility or hardware
+operation**. A real 2025.2 run remains necessary before claiming those results.

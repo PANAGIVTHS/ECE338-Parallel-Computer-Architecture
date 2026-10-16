@@ -74,3 +74,31 @@ def test_empty_task_project_can_be_executed_programmatically(tmp_path: Path) -> 
     config = make_config(tmp_path)
 
     assert run(config, ["list"]) == 0  # type: ignore[arg-type]
+
+
+def test_real_task_graph_loads_without_repository_on_python_path(tmp_path: Path) -> None:
+    """Console scripts must not depend on pytest/cwd exposing the tools namespace."""
+    import subprocess
+    import sys
+
+    repo = Path(__file__).resolve().parents[3]
+    script = """
+import importlib.util
+import sys
+from pathlib import Path
+from config import resolve_config
+from src import create_task_loader
+
+assert importlib.util.find_spec('tools') is None
+config = resolve_config(Path(sys.argv[1]))
+tasks = create_task_loader(config).load_tasks(cmd=None, pos_args=[])
+names = {task.name for task in tasks}
+assert {'vivado:ip:create', 'vivado:system:build', 'vitis:build:all'} <= names
+print('Task graph loaded without repository on sys.path')
+"""
+    result = subprocess.run(
+        [sys.executable, '-I', '-c', script, str(repo)],
+        cwd=tmp_path, capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert 'Task graph loaded without repository on sys.path' in result.stdout

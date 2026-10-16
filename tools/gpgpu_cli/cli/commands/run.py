@@ -65,23 +65,15 @@ Example: `software:programs:simple:x86`
 
 [bold cyan]Vivado[/bold cyan]
 
-The dependency chain is: project → block-design build → block-design run (wrapper) → synthesis → implementation → bitstream → XSA hardware platform.
+The public dependency chain is: IP project → IP package → Zynq system/BD/wrapper → synthesis/implementation/bitstream/XSA → Vitis.
 
-• `vivado:project` — Create or refresh the generated Vivado project from repository RTL and XDC sources, preserving the saved block design before destructive recreation.
+• `vivado:ip:create` — Recreate the managed `gpgpu_ip_dev` development project from production RTL. No packaging or system synthesis.
 
-• `vivado:block-design:build` — Reuse the saved block design in the configured build project and export it to `tools/hardware/vivado/create_block_design.tcl`; otherwise create the default design from that template. Existing saved GUI changes take priority over template edits.
+• `vivado:ip:build` — Package and validate `user.org:user:gpgpu_axi:1.0`, then safely publish the self-contained IP repository. No standalone bitstream.
 
-• `vivado:block-design:run` — Generate block-design output products and the HDL wrapper after `vivado:block-design:build`, then register the wrapper as the project top. The configured core count and `hardware.vivado.host_interface.*` addresses remain config-owned.
+• `vivado:system:create` — Register the packaged IP catalog, create or preserve the managed `gpgpu_system` BD, apply configured cores/AXI address, and generate products/wrapper. Existing reference projects are protected; use a fresh build root.
 
-• `vivado:synthesis` — Run synthesis after creating the project and block design.
-
-• `vivado:implementation` — Run implementation through routing after synthesis.
-
-• `vivado:bitstream` — Generate and copy the bitstream after implementation.
-
-• `vivado:xsa` — Export `gpgpu_platform.xsa` with the generated bitstream included, ready for a later Vitis platform flow.
-
-• `vivado:all` — Run the complete dependency chain, preserving/exporting the saved block design or bootstrapping the default, through `.bit` and `.xsa` generation.
+• `vivado:system:build` — Run cached synthesis, implementation, bitstream and XSA stages. Publish `hardware/bitstream/<top>.bit` and `hardware/platform/<xsa_name>.xsa` under the build root.
 
 [bold cyan]Vitis[/bold cyan]
 
