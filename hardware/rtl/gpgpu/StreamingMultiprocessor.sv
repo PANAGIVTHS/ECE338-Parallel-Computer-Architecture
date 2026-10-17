@@ -11,79 +11,15 @@ module StreamingMultiprocessor #(
     output [`IMEM_AW-1:0] o_imem_addr,
     output o_imem_ren,
 
-    input [31:0] i_dmem_rdata_a, i_dmem_rdata_b,
-    output [`DMEM_AW-1:0] o_dmem_addr_a, o_dmem_addr_b,
-    output [31:0] o_dmem_wdata_a, o_dmem_wdata_b,
-    output o_dmem_ren_a, o_dmem_ren_b,
-    output o_dmem_wen_a, o_dmem_wen_b,
-    
+    MemoryInterface.master memory [NUM_CORES],
+    input i_stall,
+
     output o_kernel_complete
 );
     wire ex_branch_taken;
     wire [$clog2(`IMEM_ENTRIES)-1:0] ex_beq_target_idx;
     wire data_hazard, flush;
     reg [4:0] idex_rd;
-
-    //& ===============
-    //& CROSSBAR & STALL LOGIC
-    //& ===============
-    wire [`DMEM_AW-1:0] sp_mem_addr [0:NUM_CORES-1];
-    wire [31:0] sp_mem_wdata [0:NUM_CORES-1];
-    wire [NUM_CORES-1:0] sp_mem_ren;
-    wire [NUM_CORES-1:0] sp_mem_wen;
-    wire [31:0] sp_mem_rdata [0:NUM_CORES-1];
-    wire [NUM_CORES-1:0] sp_mem_grant;
-    wire [NUM_CORES-1:0] sp_mem_rvalid;
-    reg [NUM_CORES-1:0] mem_satisfied;
-
-    //! Only request memory if the core hasn't already been served during this stall
-    wire [NUM_CORES-1:0] active_mem_ren = sp_mem_ren & ~mem_satisfied;
-    wire [NUM_CORES-1:0] active_mem_wen = sp_mem_wen & ~mem_satisfied;
-
-    //! If even a single core asks for memory but is denied, stall (Handles Reads and Writes)
-    wire global_stall = (|(active_mem_ren & ~sp_mem_grant) | |(active_mem_wen & ~sp_mem_grant)) || !i_enable;
-    
-    always @(posedge clk) begin
-        if (!rst) begin
-            mem_satisfied <= {NUM_CORES{1'b0}};
-        end else if (!global_stall) begin
-            //! Reset when pipeline moves
-            mem_satisfied <= {NUM_CORES{1'b0}};
-        end else begin
-            //! Accumulate grants
-            mem_satisfied <= mem_satisfied | sp_mem_grant;
-        end
-    end
-
-    //& ===============
-    //& READ DATA LATCHING
-    //& ===============
-    reg [31:0] latched_rdata [0:NUM_CORES-1];
-    reg [NUM_CORES-1:0] mem_grant_delayed;
-    wire [NUM_CORES*32-1:0] flat_mem_rdata;
-    integer k;
-
-    //! BRAM data arrives exactly 1 cycle after a grant. We delay the grant signal
-    //! to know exactly when to latch the valid data from the crossbar.
-    always @(posedge clk) begin
-        if (!rst) mem_grant_delayed <= {NUM_CORES{1'b0}};
-        //! Only delay the grant signal if it belongs to a valid READ request
-        else mem_grant_delayed <= sp_mem_grant & (sp_mem_ren & ~sp_mem_wen);
-    end
-
-    always @(posedge clk) begin
-        if (!rst) begin
-            for (k = 0; k < NUM_CORES; k = k + 1) begin 
-                latched_rdata[k] <= 32'b0;
-            end
-        end else begin
-            for (k = 0; k < NUM_CORES; k = k + 1) begin
-                if (mem_grant_delayed[k]) begin
-                    latched_rdata[k] <= flat_mem_rdata[k*32 +: 32];
-                end
-            end
-        end
-    end
 
     //! =========================================================================
     //! STAGE 1: INSTRUCTION FETCH
@@ -93,10 +29,10 @@ module StreamingMultiprocessor #(
 
     (* dont_touch = `DEBUG *)
     GUCounter #(.BITS($clog2(`IMEM_ENTRIES))) 
-        programCounter (.clk(clk), .i_set_reset({rst, ex_branch_taken}), .i_count_enable(!data_hazard && !global_stall), .i_count_set(ex_beq_target_idx + 1'b1), .o_count_cur(instr_idx));
+        programCounter (.clk(clk), .i_set_reset({rst, ex_branch_taken}), .i_count_enable(!data_hazard && !stall), .i_count_set(ex_beq_target_idx + 1'b1), .o_count_cur(instr_idx));
 
     assign program_counter = {instr_idx, 2'b00};
-    assign o_imem_ren = (!data_hazard && !global_stall) | flush;
+    assign o_imem_ren = (!data_hazard && !stall) | flush;
     assign o_imem_addr = flush ? ex_beq_target_idx : instr_idx;
 
     //* =========================================================================
@@ -106,7 +42,7 @@ module StreamingMultiprocessor #(
     always @(posedge clk) begin
         if (!rst) begin
             ifid_program_counter <= `INITIAL_PC;
-        end else if (global_stall) begin
+        end else if (stall) begin
             // Retain state during memory stall
         end else if (flush) begin 
             ifid_program_counter <= {ex_beq_target_idx, 2'b00};
@@ -185,7 +121,7 @@ module StreamingMultiprocessor #(
             idex_imm_31_25 <= 7'b0;
             idex_program_counter <= `INITIAL_PC;
             idex_wen <= 1'b0;
-        end else if (global_stall) begin
+        end else if (stall) begin
             // Retain state during memory stall
         end else if (!decode_enabled || data_hazard) begin
             idex_rs1 <= 5'b0;
@@ -245,56 +181,6 @@ module StreamingMultiprocessor #(
     );
 
     //& ===============
-    //& GLOBAL DATA MEMORY CROSSBAR
-    //& ===============
-
-    wire [NUM_CORES*`DMEM_AW-1:0] flat_mem_addr;
-    wire [NUM_CORES*32-1:0] flat_mem_wdata;
-
-    genvar i;
-    generate
-        for (i = 0; i < NUM_CORES; i = i + 1) begin : gen_flat
-            assign flat_mem_addr[i*`DMEM_AW +: `DMEM_AW] = sp_mem_addr[i];
-            assign flat_mem_wdata[i*32 +: 32] = sp_mem_wdata[i];
-            
-            //! If granted exactly 1 cycle ago, read live directly from crossbar
-            //! Otherwise (stalled for >1 cycle), read from the safety latch.
-            assign sp_mem_rdata[i] = mem_grant_delayed[i] ? flat_mem_rdata[i*32 +: 32] : latched_rdata[i];
-        end
-    endgenerate
-
-    MemoryCrossbarNx2 #(
-        .N(NUM_CORES),
-        .DEPTH(`DMEM_ENTRIES),
-        .ADDR_W(`DMEM_AW)
-    ) memCrossbar (
-        .clk(clk),
-        .rst(rst),
-        // Cores Interface
-        .i_req   ( active_mem_ren ), 
-        .i_wen   ( active_mem_wen ), 
-        .i_addr  ( flat_mem_addr ),
-        .i_wdata ( flat_mem_wdata ),
-        .o_grant ( sp_mem_grant ),
-        .o_rvalid( sp_mem_rvalid ),
-        .o_rdata ( flat_mem_rdata ),
-        
-        // Memory Port A Interface
-        .o_addr_a(o_dmem_addr_a),
-        .o_ren_a(o_dmem_ren_a),
-        .o_wen_a(o_dmem_wen_a),
-        .o_data_a(o_dmem_wdata_a),
-        .i_out_a(i_dmem_rdata_a),
-        
-        // Memory Port B Interface
-        .o_addr_b(o_dmem_addr_b),
-        .o_ren_b(o_dmem_ren_b),
-        .o_wen_b(o_dmem_wen_b),
-        .o_data_b(o_dmem_wdata_b),
-        .i_out_b(i_dmem_rdata_b)
-    );
-
-    //& ===============
     //& STREAMING PROCESSOR CORES
     //& ===============
     wire [NUM_CORES-1:0] core_ex_branch_taken, core_complete;
@@ -350,17 +236,11 @@ module StreamingMultiprocessor #(
                 .o_mul3_valid(core_mul3_valid[i]),
                 .o_mul3_rd(core_mul3_rd[i]),
 
-                //! Memory connections to Crossbar
-                .o_mem_addr(sp_mem_addr[i]),
-                .o_mem_wdata(sp_mem_wdata[i]),
-                .o_mem_ren(sp_mem_ren[i]),
-                .o_mem_wen(sp_mem_wen[i]),
-                .i_mem_rdata(sp_mem_rdata[i]),
-                
-                //! New Crossbar Control Pins
-                .i_mem_grant(sp_mem_grant[i]),
-                .i_mem_rvalid(sp_mem_rvalid[i]),
-                .i_global_stall(global_stall),
+                //! Memory
+                .memory(memory[i]),
+
+                //! Control Pins
+                .i_stall(stall),
                 .o_core_complete(core_complete[i])
             );
         end

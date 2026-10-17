@@ -51,22 +51,25 @@ module GPGPU #(
     wire [31:0] core_dmem_wdata_a, core_dmem_wdata_b;
     wire core_imem_ren, core_dmem_ren_a, core_dmem_ren_b, core_dmem_wen_a, core_dmem_wen_b;
 
-    assign dmem_if_a.addr = o_core_running ? core_dmem_addr_a : host_dmem.addr;
-    assign dmem_if_a.wdata = o_core_running ? core_dmem_wdata_a : host_dmem.wdata;
-    assign dmem_if_a.ren = o_core_running ? core_dmem_ren_a : host_dmem.ren;
-    assign dmem_if_a.wen = o_core_running ? core_dmem_wen_a : host_dmem.wen;
-    assign host_dmem.rdata = dmem_if_a.rdata;
+    assign mem_if.addr = o_core_running ? core_dmem_addr_a : host_dmem.addr;
+    assign mem_if.wdata = o_core_running ? core_dmem_wdata_a : host_dmem.wdata;
+    assign mem_if.ren = o_core_running ? core_dmem_ren_a : host_dmem.ren;
+    assign mem_if.wen = o_core_running ? core_dmem_wen_a : host_dmem.wen;
+    assign host_dmem.rdata = mem_if.rdata;
 
-    assign dmem_if_b.addr = core_dmem_addr_b;
-    assign dmem_if_b.wdata = core_dmem_wdata_b;
-    assign dmem_if_b.ren = o_core_running ? core_dmem_ren_b : 1'b0;
-    assign dmem_if_b.wen = o_core_running ? core_dmem_wen_b : 1'b0;
+    assign mem_if.addr = core_dmem_addr_b;
+    assign mem_if.wdata = core_dmem_wdata_b;
+    assign mem_if.ren = o_core_running ? core_dmem_ren_b : 1'b0;
+    assign mem_if.wen = o_core_running ? core_dmem_wen_b : 1'b0;
 
     assign imem_if.addr = o_core_running ? core_imem_addr : host_imem.addr;
     assign imem_if.wdata = host_imem.wdata;
     assign imem_if.ren = o_core_running ? core_imem_ren : host_imem.ren;
     assign imem_if.wen = o_core_running ? 1'b0 : host_imem.wen;
     assign host_imem.rdata = imem_if.rdata;
+
+    // Memory stall signal
+    logic stall;
 
     MMIOController mmio (
         .clk(clk), .rst_n(rst_n),
@@ -108,17 +111,8 @@ module GPGPU #(
         .o_imem_addr(core_imem_addr),
         .o_imem_ren(core_imem_ren),
 
-        .i_dmem_rdata_a(dmem_if_a.rdata),
-        .o_dmem_addr_a(core_dmem_addr_a),
-        .o_dmem_ren_a(core_dmem_ren_a),
-        .o_dmem_wen_a(core_dmem_wen_a),
-        .o_dmem_wdata_a(core_dmem_wdata_a),
-
-        .i_dmem_rdata_b(dmem_if_b.rdata),
-        .o_dmem_addr_b(core_dmem_addr_b),
-        .o_dmem_ren_b(core_dmem_ren_b),
-        .o_dmem_wen_b(core_dmem_wen_b),
-        .o_dmem_wdata_b(core_dmem_wdata_b),
+        .memory(mem_if.master),
+        .i_stall(stall),
 
         .o_kernel_complete(core_complete)
     );
@@ -136,22 +130,16 @@ module GPGPU #(
         .memory(imem_if.slave)
     );
 
-    MemoryInterface #(
-        .ADDR_WIDTH($clog2(`DMEM_ENTRIES))
-    ) dmem_if_a ();
-
-    MemoryInterface #(
-        .ADDR_WIDTH($clog2(`DMEM_ENTRIES))
-    ) dmem_if_b ();
-
-    (* dont_touch = `DEBUG *)
-    MemoryDualPort #(
-        .DEPTH(`DMEM_ENTRIES),
-        .INIT_FILE(MEMORY_INIT)
-    ) dataMemory (
-        .clk(clk),
-        .memory_a(dmem_if_a.slave),
-        .memory_b(dmem_if_b.slave)
+    MemoryController #(
+        .SP_PER_SM(SP_PER_SM)
+    ) memory_controller (
+        .memory(mem_if.slave),
+        .o_stall(stall)
     );
+
+    MemoryInterface #(
+        .ADDR_WIDTH(32),
+        .DATA_WIDTH(32)
+    ) mem_if [SP_PER_SM] ();
 
 endmodule

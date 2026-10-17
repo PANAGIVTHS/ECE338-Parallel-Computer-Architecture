@@ -34,17 +34,11 @@ module StreamingProcessor #(
     output o_mul3_valid,
     output [4:0] o_mul3_rd,
 
-    //! External Memory Interface
-    output [$clog2(`DMEM_ENTRIES)-1:0] o_mem_addr,
-    output [31:0] o_mem_wdata,
-    output o_mem_ren,
-    output o_mem_wen,
-    input  [31:0] i_mem_rdata,
+    //! Memory
+    MemoryInterface.master memory,
 
-    //! New Memory Queue / Arbiter Interface
-    input i_mem_grant,
-    input i_mem_rvalid,
-    input i_global_stall,
+    //! Control
+    input i_stall,
     output o_core_complete
 );
 
@@ -81,7 +75,7 @@ module StreamingProcessor #(
     ) regfile (
         .clk(clk), .rst(rst), .i_wen(memwb_wen), .i_wdata(wb_wdata), 
         .i_addr_a(i_id_mux_rs1), .i_addr_b(i_id_mux_rs2), .i_waddr(memwb_rd), 
-        .o_reg_a(ex_reg_a), .o_reg_b(ex_reg_b), .i_global_stall(i_global_stall)
+        .o_reg_a(ex_reg_a), .o_reg_b(ex_reg_b), .i_stall(i_stall)
     );
 
     //? --- Forwarding Multiplexer B ---
@@ -116,7 +110,7 @@ module StreamingProcessor #(
         .rst(rst),
         .i_operand_a(ex_actual_alu_in_a), 
         .i_operand_b(ex_actual_alu_in_b),
-        .i_global_stall(i_global_stall),
+        .i_stall(i_stall),
         .i_alu_op(i_idex_aluop), 
         .i_mul_valid(mul3_valid),
         .o_alu_out(ex_alu_out),
@@ -137,7 +131,7 @@ module StreamingProcessor #(
             mul1_valid <= 0; mul2_valid <= 0; mul3_valid <= 0;
             mul1_program_counter <= 0;
             mul2_program_counter <= 0; mul3_program_counter <= 0;
-        end else if (i_global_stall) begin
+        end else if (i_stall) begin
             // Retain state during memory stall
         end else begin
             mul1_rd <= (ex_is_mul) ? i_idex_rd : 5'b0;
@@ -205,7 +199,7 @@ module StreamingProcessor #(
             exmem_mul3_valid <= 1'b0;
             exmem_core_complete <= 1'b0;
             exmem_program_counter <= `INITIAL_PC;
-        end else if (i_global_stall) begin
+        end else if (i_stall) begin
             // Retain state during memory stall
         end else if (mul_not_ready) begin
             exmem_alu_out <= 32'b0;
@@ -238,10 +232,10 @@ module StreamingProcessor #(
     assign mem_is_load = (exmem_opcode == `OP_LW);
     assign mem_is_store = (exmem_opcode == `OP_SW);
 
-    assign o_mem_addr = exmem_alu_out[$clog2(`DMEM_ENTRIES)+1 : 2];
-    assign o_mem_ren = mem_is_load | mem_is_store;
-    assign o_mem_wen = mem_is_store;
-    assign o_mem_wdata = exmem_reg_b;
+    assign memory.addr = exmem_alu_out[$clog2(`DMEM_ENTRIES)+1 : 2];
+    assign memory.ren = mem_is_load | mem_is_store;
+    assign memory.wen = mem_is_store;
+    assign memory.wdata = exmem_reg_b;
     assign o_core_complete = exmem_core_complete;
 
     //! =========================================================================
@@ -259,7 +253,7 @@ module StreamingProcessor #(
             memwb_alu_out <= 32'b0;
             memwb_wen <= 1'b0;
             memwb_program_counter <= `INITIAL_PC;
-        end else if (i_global_stall) begin
+        end else if (i_stall) begin
             // Retain state during memory stall
         end else begin
             memwb_rd <= exmem_rd;
@@ -281,18 +275,18 @@ module StreamingProcessor #(
         if (!rst) begin
             safe_wb_rdata <= 32'b0;
             safe_wb_valid <= 1'b0;
-        end else if (!i_global_stall) begin
+        end else if (!i_stall) begin
             //! Pipeline is moving normally. Clear the vault for the next instruction.
             safe_wb_valid <= 1'b0;
         end else if (memwb_is_load && !safe_wb_valid) begin
             //! FIX: We are stalled, and we are a load. Latch the memory data immediately 
             //! before a subsequent load wins the crossbar and overwrites the shared bus.
-            safe_wb_rdata <= i_mem_rdata;
+            safe_wb_rdata <= memory.rdata;
             safe_wb_valid <= 1'b1;
         end
     end
 
-    assign wb_wdata = memwb_is_load ? (safe_wb_valid ? safe_wb_rdata : i_mem_rdata) : memwb_alu_out;
+    assign wb_wdata = memwb_is_load ? (safe_wb_valid ? safe_wb_rdata : memory.rdata) : memwb_alu_out;
 
     //& ===============
     //& FORWARDING

@@ -5,7 +5,7 @@
 // logic and does not imply a variable-latency/DDR transaction handshake.
 interface MemoryInterface #(
     parameter int unsigned ADDR_WIDTH = 32,
-    parameter int unsigned DATA_WIDTH = 32
+    parameter int unsigned DATA_WIDTH = 32,
 );
     logic [ADDR_WIDTH-1:0] addr;
     logic ren;
