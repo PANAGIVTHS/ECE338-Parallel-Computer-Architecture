@@ -1,578 +1,345 @@
-"""pydoit tasks for the staged Vivado project and bitstream flow."""
-
+"""Managed packaged-IP -> Zynq system pipeline; discovery is read-only."""
 from __future__ import annotations
 
+import hashlib
+import json
+import os
+from pathlib import Path
 import re
 import shutil
 import subprocess
 import sys
-from pathlib import Path
-from typing import TYPE_CHECKING, Any, TextIO
+import uuid
+import zipfile
 
 from doit.tools import config_changed
 from src.project_paths import ProjectPaths
-
-if TYPE_CHECKING:
-    from config import ResolvedConfig
+from src.hardware_contract import axi_address, identifier, xsa_path
 
 
-def _string(config: ResolvedConfig, key: str) -> str:
-    value = config.get(key)
-    if not isinstance(value, str) or not value:
-        raise TypeError(f"{key} must be a non-empty string")
-    return value
+def _source_files(root):
+    # Same explicit production manifest as Tcl packaging; no experimental discovery.
+    manifest = Path(__file__).with_name('production_sources.tcl').read_text()
+    match = re.search(r'set PRODUCTION_RTL_SOURCES\s*\{([^}]+)\}', manifest)
+    if match is None:
+        raise ValueError('Invalid production source manifest')
+    relative = [Path(name) for name in match.group(1).split()]
+    if any(p.is_absolute() or '..' in p.parts for p in relative):
+        raise ValueError('Nonportable production manifest')
+    return [root / path for path in relative]
 
 
-def _positive_int(config: ResolvedConfig, key: str) -> int:
-    value = config.get(key)
-    if not isinstance(value, int) or isinstance(value, bool) or value < 1:
-        raise TypeError(f"{key} must be a positive integer")
-    return value
+def prepare_managed_project(directory, name, part, kind, recreate=False):
+    """Never adopt reference/foreign state; retain complete snapshots on recreation."""
+    directory = Path(directory)
+    marker = directory / '.gpgpu-managed.json'
+    expected = {'project': name, 'part': part, 'kind': kind, 'schema': 1}
+    if directory.is_symlink():
+        raise RuntimeError(f'Refusing symbolic-link project: {directory}')
+    if directory.exists() and any(directory.iterdir()):
+        if not marker.is_file():
+            raise RuntimeError(f'Protected/unmanaged project {directory}; use a fresh paths.build.root. No automatic adoption or deletion.')
+        if json.loads(marker.read_text()) != expected:
+            raise RuntimeError(f'Incompatible managed project identity: {directory}')
+        if recreate:
+            snapshots = directory.parent / '.snapshots'
+            snapshots.mkdir(exist_ok=True)
+            directory.rename(snapshots / f'{name}-{uuid.uuid4().hex}')
+    directory.mkdir(parents=True, exist_ok=True)
+    if not marker.exists():
+        marker.write_text(json.dumps(expected, sort_keys=True) + '\n')
 
 
-def _host_address(value: object, key: str) -> str:
-    """Validate and canonicalize one 64-KiB-aligned 32-bit AXI base address."""
-
-    if not isinstance(value, str) or re.fullmatch(r"0x[0-9A-Fa-f]{1,8}", value) is None:
-        raise TypeError(f"{key} must be a hexadecimal string such as 0x41200000")
-    numeric = int(value, 16)
-    if numeric > 0xFFFFFFFF:
-        raise ValueError(f"{key} must fit in a 32-bit address")
-    if numeric % 0x10000 != 0:
-        raise ValueError(f"{key} must be aligned to the 64-KiB AXI GPIO range")
-    return f"0x{numeric:08X}"
-
-
-def run_vivado(
-    command: list[str],
-    cwd: Path,
-    project_dir: Path,
-    recreate_project: bool = False,
-) -> None:
-    """Run one Vivado batch stage, recreating the generated project when requested."""
-
-    if recreate_project:
-        shutil.rmtree(project_dir, ignore_errors=True)
-    project_dir.parent.mkdir(parents=True, exist_ok=True)
-    subprocess.run(command, cwd=cwd, check=True)
-
-
-_DESIGN_NAME_BLOCK = re.compile(
-    r"# CHANGE DESIGN NAME HERE\s*\n"
-    r"variable design_name\s*\n"
-    r"set design_name\s+\S+"
-)
-_NUM_CORES_PROPERTY = re.compile(r"(CONFIG\.SP_PER_SM\s+)\{[^{}\r\n]+\}")
-_HOST_ADDRESS_SEGMENTS = {
-    "axi_gpio_address/S_AXI/Reg": "HOST_ADDRESS_GPIO",
-    "axi_gpio_cmd/S_AXI/Reg": "HOST_CMD_GPIO",
-    "axi_gpio_rdata/S_AXI/Reg": "HOST_RDATA_GPIO",
-    "axi_gpio_status/S_AXI/Reg": "HOST_STATUS_GPIO",
-    "axi_gpio_wdata/S_AXI/Reg": "HOST_WDATA_GPIO",
-}
-
-
-def normalize_exported_tcl(text: str, repo_root: Path, bd_name: str) -> str:
-    """Make Vivado's generated block-design Tcl reusable in any checkout."""
-
-    replacement = f"""# The enclosing flow supplies the committed block-design name.
-variable design_name
-if {{[info exists ::BD_NAME]}} {{
-   set design_name $::BD_NAME
-}} else {{
-   set design_name {bd_name}
-}}"""
-    normalized, replacements = _DESIGN_NAME_BLOCK.subn(replacement, text, count=1)
-    if replacements != 1:
-        raise RuntimeError(
-            "Vivado export did not contain the expected design-name block; "
-            "refusing to overwrite the committed Tcl"
-        )
-
-    # architecture.num_cores owns this value; do not snapshot a local build's
-    # concrete core count into the portable committed block-design source.
-    normalized = _NUM_CORES_PROPERTY.sub(r"\g<1>$::NUM_CORES", normalized)
-
-    # hardware.vivado.host_interface owns these AXI offsets. Keep Vivado's
-    # exported segment structure, but replace snapshot values with Tcl globals.
-    for segment, variable in _HOST_ADDRESS_SEGMENTS.items():
-        address = re.compile(
-            rf"(assign_bd_address\s+-offset\s+)\S+"
-            rf"(?=[^\r\n]*\[get_bd_addr_segs\s+{re.escape(segment)}\])"
-        )
-        normalized = address.sub(rf"\g<1>$::{variable}", normalized)
-
-    # Vivado's generated Tcl contains trailing spaces and variable blank lines.
-    # Canonicalize them so repeated exports are stable and pass diff checks.
-    normalized = "\n".join(line.rstrip() for line in normalized.splitlines())
-    normalized = normalized.rstrip() + "\n"
-
-    forbidden_paths = (str(repo_root.resolve()), "/workspace/", "/home/")
-    found = next((path for path in forbidden_paths if path in normalized), None)
-    if found is not None:
-        raise RuntimeError(
-            f"Vivado export contains a machine-specific absolute path ({found}); "
-            "refusing to overwrite the committed Tcl"
-        )
-    return normalized
-
-
-def export_block_design(
-    command: list[str],
-    cwd: Path,
-    raw_export: Path,
-    committed_export: Path,
-    repo_root: Path,
-    bd_name: str,
-    terminal: TextIO | None = None,
-) -> None:
-    """Export, normalize, compare, and update the committed block-design Tcl."""
-
-    output: TextIO = terminal or sys.__stderr__ or sys.stderr
-    raw_export.parent.mkdir(parents=True, exist_ok=True)
-    raw_export.unlink(missing_ok=True)
+def validate_saved_bd(path, bd_name, part):
     try:
-        subprocess.run(command, cwd=cwd, check=True)
-        if not raw_export.is_file():
-            raise RuntimeError(
-                f"Vivado did not create the expected export: {raw_export}"
-            )
-
-        normalized = normalize_exported_tcl(
-            raw_export.read_text(encoding="utf-8"), repo_root, bd_name
-        )
-        if (
-            re.search(
-                r"set\s+GPGPU_0\s+\[\s*create_bd_cell\s+"
-                r"-type\s+module\s+-reference\s+"
-                r"(?:GPGPU\s+GPGPU_0|\$block_name\s+\$block_cell_name)\s*\]",
-                normalized,
-            )
-            is None
-        ):
-            raise RuntimeError(
-                "Vivado export is missing the GPGPU module-reference cell GPGPU_0; "
-                "refusing to overwrite the committed Tcl with an incomplete design."
-            )
-        current = (
-            committed_export.read_text(encoding="utf-8")
-            if committed_export.is_file()
-            else None
-        )
-        if current == normalized:
-            output.write(
-                f"INFO: {committed_export} is up to date with block design {bd_name}.\n"
-            )
-            output.flush()
-            return
-
-        output.write(
-            "WARNING: committed block-design Tcl was out of date; "
-            f"updating {committed_export}.\n"
-        )
-        output.flush()
-        committed_export.parent.mkdir(parents=True, exist_ok=True)
-        temporary = committed_export.with_suffix(f"{committed_export.suffix}.tmp")
-        temporary.write_text(normalized, encoding="utf-8")
-        temporary.replace(committed_export)
-    finally:
-        raw_export.unlink(missing_ok=True)
+        design = json.loads(Path(path).read_text())['design']
+        info = design['design_info']
+        cells = design['components']
+    except (KeyError, ValueError) as exc:
+        raise RuntimeError(f'Invalid saved BD: {path}') from exc
+    if info.get('name') != bd_name or info.get('device') != part:
+        raise RuntimeError(f'Incompatible saved BD identity: {path}')
+    if cells.get('gpgpu_axi_0', {}).get('vlnv') != 'user.org:user:gpgpu_axi:1.0':
+        raise RuntimeError(f'Saved BD is not the packaged AXI system: {path}')
+    if not {'processing_system7_0', 'axi_smc'} <= cells.keys() or any('axi_gpio' in name for name in cells):
+        raise RuntimeError(f'Legacy/incomplete saved BD: {path}')
 
 
-def _preserve_block_design_if_present(
-    command: list[str],
-    cwd: Path,
-    project_file: Path,
-    bd_file: Path,
-    raw_export: Path,
-    committed_export: Path,
-    repo_root: Path,
-    bd_name: str,
-    terminal: TextIO | None = None,
-) -> None:
-    """Refresh committed Tcl from an existing project, or bootstrap from Git."""
-
-    output: TextIO = terminal or sys.__stderr__ or sys.stderr
-    if not project_file.is_file():
-        orphan_designs = sorted(project_file.parent.rglob("*.bd"))
-        if orphan_designs:
-            raise RuntimeError(
-                "Vivado project is missing but saved block designs remain; "
-                "refusing to delete orphan designs: "
-                + ", ".join(str(path) for path in orphan_designs)
-            )
-        if not committed_export.is_file():
-            raise RuntimeError(
-                f"Neither the Vivado project nor committed block-design Tcl exists: "
-                f"{committed_export}"
-            )
-        output.write(
-            "INFO: no existing Vivado project; using the committed block-design "
-            "Tcl as the first-clone bootstrap.\n"
-        )
-        output.flush()
-        return
-
-    if not bd_file.is_file():
-        existing_designs = sorted(project_file.parent.rglob("*.bd"))
-        if existing_designs:
-            found = ", ".join(path.name for path in existing_designs)
-            raise RuntimeError(
-                f"Vivado project exists but does not contain {bd_name}.bd; found: "
-                f"{found}. Rename the project block design or set "
-                "hardware.vivado.bd_name before continuing."
-            )
-        if not committed_export.is_file():
-            raise RuntimeError(
-                f"Vivado project has no {bd_name}.bd and the committed bootstrap "
-                f"does not exist: {committed_export}"
-            )
-        output.write(
-            f"INFO: Vivado project has no saved {bd_name}.bd; using the committed "
-            "Tcl as the bootstrap.\n"
-        )
-        output.flush()
-        return
-
-    export_block_design(
-        command,
-        cwd,
-        raw_export,
-        committed_export,
-        repo_root,
-        bd_name,
-        terminal=output,
-    )
+def _check_tool(command, required):
+    result = subprocess.run([command, '-version'], capture_output=True, text=True, check=True)
+    if re.search(rf'(?<!\d){re.escape(required)}(?!\d)', result.stdout + result.stderr) is None:
+        raise RuntimeError(f'Vivado {required} required: {result.stdout}{result.stderr}')
 
 
-def recreate_project_preserving_bd(
-    command: list[str],
-    cwd: Path,
-    project_dir: Path,
-    project_file: Path,
-    bd_file: Path,
-    export_command: list[str],
-    raw_export: Path,
-    template: Path,
-    repo_root: Path,
-    bd_name: str,
-) -> None:
-    """Fail closed before deleting generated state; preserve saved GUI edits."""
-    _preserve_block_design_if_present(
-        export_command,
-        cwd,
-        project_file,
-        bd_file,
-        raw_export,
-        template,
-        repo_root,
-        bd_name,
-    )
-    run_vivado(command, cwd, project_dir, recreate_project=True)
-    if not project_file.is_file():
-        raise RuntimeError(
-            f"Vivado did not create the expected project: {project_file}"
-        )
+def tool_current(command, required):
+    """Evaluated during execution, never during discovery/help."""
+    _check_tool(command, required)
+    return True
 
 
-def build_block_design(
-    command: list[str],
-    cwd: Path,
-    project_dir: Path,
-    bd_file: Path,
-    export_command: list[str],
-    raw_export: Path,
-    template: Path,
-    repo_root: Path,
-    bd_name: str,
-) -> None:
-    """Configure the saved BD (or bootstrap), then publish a validated template."""
-    run_vivado(command, cwd, project_dir)
-    if not bd_file.is_file():
-        raise RuntimeError(
-            f"Vivado did not create the expected block design: {bd_file}"
-        )
-    export_block_design(export_command, cwd, raw_export, template, repo_root, bd_name)
+def run_vivado(command, cwd, project_dir, recreate_project=False):
+    # Compatibility argument intentionally does not permit recursive deletion.
+    if recreate_project:
+        raise RuntimeError('Use managed snapshot recreation, not recursive deletion')
+    project_dir = Path(project_dir)
+    logs = project_dir / '.gpgpu/logs'
+    logs.mkdir(parents=True, exist_ok=True)
+    stage = Path(command[command.index('-source') + 1]).stem
+    argv = [*command[:1], '-log', str(logs / f'{stage}.log'), '-journal', str(logs / f'{stage}.jou'), *command[1:]]
+    process = subprocess.Popen(argv, cwd=project_dir, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+    with (logs / f'{stage}.console.log').open('w') as log:
+        for line in process.stdout:
+            print(line, end='', flush=True)
+            log.write(line)
+            log.flush()
+    status = process.wait()
+    if status:
+        raise RuntimeError(f'Vivado stage {stage} failed with exit {status}; see {logs}')
 
 
-def generate_block_design_wrapper(
-    command: list[str],
-    cwd: Path,
-    project_dir: Path,
-    wrapper_file: Path,
-) -> None:
-    """Generate products and require the configured wrapper output."""
-    run_vivado(command, cwd, project_dir)
-    if not wrapper_file.is_file():
-        raise RuntimeError(
-            f"Vivado did not create the expected wrapper: {wrapper_file}"
-        )
+def create_ip(command, repo, directory, name, part, version):
+    _check_tool(command[0], version)
+    prepare_managed_project(directory, name, part, 'ip', recreate=True)
+    run_vivado(command, repo, directory)
+    if not (directory / f'{name}.xpr').is_file():
+        raise RuntimeError('IP creation did not produce the development project')
 
 
-def _source_files(rtl_root: Path) -> list[Path]:
-    source_roots = (rtl_root, rtl_root / "memory", rtl_root / "sp")
-    return sorted(
-        path
-        for source_root in source_roots
-        for pattern in ("*.vh", "*.v", "*.sv")
-        for path in source_root.glob(pattern)
-        if path.is_file()
-    )
+def _tree_hash(directory):
+    result = {}
+    for path in sorted(directory.rglob('*')):
+        if path.is_symlink():
+            raise RuntimeError(f'Package contains symbolic link: {path}')
+        if path.is_file() and path.name != '.gpgpu-package.json':
+            result[path.relative_to(directory).as_posix()] = hashlib.sha256(path.read_bytes()).hexdigest()
+    return result
 
 
-def create_tasks(config: ResolvedConfig) -> list[dict[str, Any]]:
-    """Create the staged Vivado project, bitstream, and hardware-platform tasks."""
+def _validate_package(directory, repo):
+    # Task factories may be loaded from another checkout in the same CLI process;
+    # don't reuse the first checkout's cached namespace helper/RTL manifest.
+    import importlib.util
+    path = Path(repo) / 'tools/hardware/vivado/package.py'
+    spec = importlib.util.spec_from_file_location('_gpgpu_ip_package_validator', path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f'Cannot load package validator: {path}')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    module.validate_package(directory)
 
-    repo_root = config.repo_root
+
+def package_current(directory, repo=None):
+    """A completion stamp is valid only for the complete, independently valid tree."""
+    repo = repo or Path(__file__).resolve().parents[3]
+    directory = Path(directory)
+    try:
+        metadata = json.loads((directory / '.gpgpu-package.json').read_text())
+        if metadata.get('revision', 0) < 1 or metadata.get('files') != _tree_hash(directory):
+            return False
+        _validate_package(directory, repo)
+    except (OSError, ValueError, RuntimeError):
+        return False
+    return True
+
+
+class GeneratedIPChanged:
+    """Snapshot after task completion, including IP created during first bootstrap.
+
+    Dynamic file_dep enumeration would force a spurious second rebuild because
+    generated XCI files don't exist at first discovery. A value saver observes
+    their final content and also detects later same-wrapper GUI/IP edits.
+    """
+    def __init__(self, project):
+        self.project = Path(project)
+
+    def state(self):
+        return {p.relative_to(self.project).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
+                for p in sorted(self.project.rglob('*.xci')) if '.gpgpu' not in p.parts}
+
+    def configure_task(self, task):
+        task.value_savers.append(lambda: {'generated_ip': self.state()})
+
+    def __call__(self, task, values):
+        return values.get('generated_ip') == self.state()
+
+
+def package_ip(command, repo, project, ip_repo):
+    project = Path(project)
+    ip_repo = Path(ip_repo)
+    complete = ip_repo / '.gpgpu-package.json'
+    if ip_repo.exists() and any(ip_repo.iterdir()) and not complete.is_file():
+        raise RuntimeError(f'Protected/unmanaged IP repository: {ip_repo}; use a fresh build root')
+    staging = ip_repo.parent / f'.ip-package-{uuid.uuid4().hex}'
+    staging.mkdir(parents=True)
+    command = list(command)
+    command[command.index('-ip-repo-dir') + 1] = str(staging)
+    previous_metadata = json.loads(complete.read_text()) if complete.exists() else {}
+    revision = int(previous_metadata.get('revision', 0)) + 1
+    if not 1 <= revision <= 0x7FFFFFFF:
+        raise ValueError('IP core revision exhausted; cannot refresh same VLNV safely')
+    command.extend(['-ip-revision', str(revision)])
+    # Existing valid repository remains untouched until a fully validated package exists.
+    run_vivado(command, repo, project)
+    _validate_package(staging, repo)
+    (staging / '.gpgpu-package.json').write_text(json.dumps(
+        {'revision': revision, 'files': _tree_hash(staging)}, sort_keys=True, indent=2) + '\n')
+    previous = None
+    if ip_repo.exists():
+        previous = ip_repo.parent / f'.ip-repo-snapshot-{uuid.uuid4().hex}'
+        ip_repo.rename(previous)
+    try:
+        staging.rename(ip_repo)
+    except BaseException:
+        if previous is not None:
+            previous.rename(ip_repo)
+        raise
+
+
+def saved_current(directory, name, part, bd):
+    """Validate saved state even when creation outputs otherwise look up to date."""
+    directory = Path(directory)
+    if directory.is_symlink():
+        raise RuntimeError(f'Refusing symlinked project: {directory}')
+    if directory.exists():
+        marker = directory / '.gpgpu-managed.json'
+        if not marker.exists():
+            if any(directory.iterdir()):
+                raise RuntimeError(f'Refusing to adopt unmanaged/reference project: {directory}')
+        elif marker.is_symlink() or json.loads(marker.read_text()) != {'kind': 'system', 'name': name, 'part': part}:
+            raise RuntimeError(f'Existing managed project identity conflicts with config: {directory}')
+    if Path(bd).exists():
+        validate_saved_bd(bd, Path(bd).stem, part)
+    return True
+
+
+def create_system(command, repo, directory, name, part, bd, wrapper, ip_repo, version):
+    _check_tool(command[0], version)
+    _validate_package(ip_repo, repo)
+    if not (ip_repo / '.gpgpu-package.json').is_file():
+        raise RuntimeError('IP repository has no completed managed publication')
+    prepare_managed_project(directory, name, part, 'system')
+    saved = sorted(directory.rglob('*.bd'))
+    if saved and not bd.is_file():
+        raise RuntimeError('Configured BD is missing; refusing to replace saved designs: ' + ', '.join(map(str, saved)))
+    if bd.is_file():
+        validate_saved_bd(bd, bd.stem, part)
+        snapshots = directory / '.gpgpu/bd-snapshots'
+        snapshots.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(bd, snapshots / f'{bd.stem}-{uuid.uuid4().hex}.bd')
+    run_vivado(command, repo, directory)
+    if not (directory / f'{name}.xpr').is_file() or not bd.is_file() or not wrapper.is_file():
+        raise RuntimeError('System creation did not produce project, BD and wrapper')
+    validate_saved_bd(bd, bd.stem, part)
+
+
+def run_stage(command, repo, directory, target, xsa=False):
+    run_vivado(command, repo, directory)
+    if not target.is_file() or target.stat().st_size == 0:
+        raise RuntimeError(f'Vivado did not produce {target}')
+    if xsa:
+        with zipfile.ZipFile(target) as archive:
+            files = archive.namelist()
+            required = (any(f.endswith('.bit') for f in files), any(f.endswith('.hwh') for f in files),
+                        any(Path(f).name == 'ps7_init.tcl' for f in files), any(Path(f).name == 'ps7_init.c' for f in files))
+            if not all(required):
+                raise RuntimeError(f'XSA lacks bitstream/handoff/PS init: {files}')
+
+
+def normalize_exported_tcl(text, repo_root, bd_name):
+    """Optional export normalizer, fail closed for obsolete module-reference/GPIO designs."""
+    if 'user.org:user:gpgpu_axi:1.0' not in text or 'axi_gpio' in text or '-type module' in text:
+        raise RuntimeError('Export is not the packaged GPGPU AXI system')
+    if re.search(r'/home/|/workspace/|[A-Za-z]:[/\\]|\\\\', text):
+        raise RuntimeError('Export contains machine-specific paths')
+    text, count = re.subn(r'set design_name\s+\S+', 'set design_name $::BD_NAME', text, count=1)
+    if count != 1:
+        raise RuntimeError('Export lacks recognizable design name')
+    text = re.sub(r'(CONFIG.SP_PER_SM\s+)\{[^{}]+\}', r'\1$::NUM_CORES', text)
+    text = re.sub(r'(assign_bd_address\s+-offset\s+)\S+(\s+-range\s+)\S+(?=[^\n]*gpgpu_axi_0/s00_axi/reg0)',
+                  r'\1$::AXI_BASE\2$::AXI_RANGE', text)
+    return '\n'.join(line.rstrip() for line in text.splitlines()).rstrip() + '\n'
+
+
+def create_tasks(config):
     paths = ProjectPaths.from_config(config)
-    scripts = repo_root / "tools/hardware/vivado"
-    rtl_root = paths.hardware_rtl_gpgpu
-    constraints_root = paths.hardware_constraints
-    vivado_build_root = paths.vivado
-    bitstream_root = paths.bitstream
-    platform_root = paths.platform
+    repo = config.repo_root
+    scripts = repo / 'tools/hardware/vivado'
+    sources = _source_files(paths.hardware_rtl_gpgpu)
+    base, size = axi_address(config)
+    name = identifier(config, 'hardware.vivado.project_name')
+    ip_name = identifier(config, 'hardware.vivado.ip_project_name')
+    bd_name = identifier(config, 'hardware.vivado.bd_name')
+    top = identifier(config, 'hardware.vivado.top')
+    if top != f'{bd_name}_wrapper':
+        raise ValueError('hardware.vivado.top must match <bd_name>_wrapper')
+    part = config.get('hardware.fpga.part')
+    version = config.get('hardware.vivado.version')
+    vendor = config.get('tools.vivado.command')
+    cores = config.get('architecture.num_cores')
+    jobs = config.get('hardware.vivado.jobs')
+    if any(not isinstance(v, int) or isinstance(v, bool) or v < 1 for v in (cores, jobs)):
+        raise ValueError('architecture.num_cores and hardware.vivado.jobs must be positive integers')
+    ip_dir = paths.vivado / ip_name
+    system = paths.vivado / name
+    ip_repo = paths.vivado / 'ip_repo'
+    if ip_name == name or ip_name in ('GPU', 'ip_repo') or name in ('GPU', 'ip_repo'):
+        raise ValueError('IP and system names must be distinct and cannot use protected legacy names')
+    ip_xpr = ip_dir / f'{ip_name}.xpr'
+    sys_xpr = system / f'{name}.xpr'
+    bd = system / f'{name}.srcs/sources_1/bd/{bd_name}/{bd_name}.bd'
+    wrapper = system / f'{name}.gen/sources_1/bd/{bd_name}/hdl/{top}.v'
+    synth = system / f'{name}.runs/synth_1/{top}.dcp'
+    route = system / f'{name}.runs/impl_1/{top}_routed.dcp'
+    bit = paths.bitstream / f'{top}.bit'
+    xsa = xsa_path(config)
+    stamp = ip_repo / '.gpgpu-package.json'
+    component = ip_repo / 'component.xml'
+    xdc = paths.hardware_constraints / 'smart_zynq.xdc'
 
-    vivado_command = _string(config, "tools.vivado.command")
-    project_name = _string(config, "hardware.vivado.project_name")
-    part = _string(config, "hardware.fpga.part")
-    bd_name = _string(config, "hardware.vivado.bd_name")
-    top_name = _string(config, "hardware.vivado.top")
-    xsa_name = _string(config, "hardware.vivado.xsa_name")
-    num_cores = _positive_int(config, "architecture.num_cores")
-    jobs = _positive_int(config, "hardware.vivado.jobs")
-    host_address_keys = {
-        "-host-address-gpio": "hardware.vivado.host_interface.address_gpio",
-        "-host-cmd-gpio": "hardware.vivado.host_interface.cmd_gpio",
-        "-host-rdata-gpio": "hardware.vivado.host_interface.rdata_gpio",
-        "-host-status-gpio": "hardware.vivado.host_interface.status_gpio",
-        "-host-wdata-gpio": "hardware.vivado.host_interface.wdata_gpio",
-    }
-    host_addresses = {
-        flag: _host_address(config.get(key), key)
-        for flag, key in host_address_keys.items()
-    }
-    if len(set(host_addresses.values())) != len(host_addresses):
-        raise ValueError("hardware.vivado.host_interface addresses must be unique")
+    def command(script, ip=False):
+        values = {'project-dir': ip_dir if ip else system, 'project-name': ip_name if ip else name,
+                  'part': part, 'bd-name': bd_name, 'top': 'gpgpu_axi' if ip else top,
+                  'rtl-dir': paths.hardware_rtl_gpgpu, 'xdc-file': xdc,
+                  'bitstream-dir': paths.bitstream, 'platform-dir': paths.platform,
+                  'xsa-name': xsa.stem, 'export-file': system / '.gpgpu/export.raw.tcl',
+                  'num-cores': cores, 'jobs': jobs, 'repo-root': repo, 'ip-repo-dir': ip_repo,
+                  'axi-base': base, 'axi-range': size, 'version': version}
+        return [vendor, '-mode', 'batch', '-source', str(scripts / script), '-tclargs',
+                *(item for key, value in values.items() for item in ('-' + key, str(value)))]
 
-    project_dir = vivado_build_root / project_name
-    xdc_file = constraints_root / "smart_zynq.xdc"
-    project_file = project_dir / f"{project_name}.xpr"
-    bd_file = project_dir / f"{project_name}.srcs/sources_1/bd/{bd_name}/{bd_name}.bd"
-    wrapper_file = (
-        project_dir / f"{project_name}.gen/sources_1/bd/{bd_name}/hdl/{top_name}.v"
-    )
-    synthesis_checkpoint = project_dir / f"{project_name}.runs/synth_1/{top_name}.dcp"
-    implementation_checkpoint = (
-        project_dir / f"{project_name}.runs/impl_1/{top_name}_routed.dcp"
-    )
-    bitstream = bitstream_root / f"{top_name}.bit"
-    xsa = platform_root / f"{xsa_name}.xsa"
+    shared = [str(scripts / 'common.tcl'), str(Path(__file__)), str(repo / 'tools/gpgpu_tasks/src/hardware_contract.py')]
+    executable = shutil.which(vendor)
+    if executable:
+        shared.append(str(Path(executable).resolve()))
+    source_deps = list(map(str, sources)) + [str(scripts / 'ip/empty.mem')]
+    result = []
 
-    common_args = [
-        "-project-dir",
-        str(project_dir),
-        "-project-name",
-        project_name,
-        "-part",
-        part,
-        "-bd-name",
-        bd_name,
-        "-top",
-        top_name,
-        "-rtl-dir",
-        str(rtl_root),
-        "-xdc-file",
-        str(xdc_file),
-        "-bitstream-dir",
-        str(bitstream_root),
-        "-platform-dir",
-        str(platform_root),
-        "-xsa-name",
-        xsa_name,
-        "-export-file",
-        str(project_dir / ".gpgpu" / f"{bd_name}.raw.tcl"),
-        "-num-cores",
-        str(num_cores),
-        "-jobs",
-        str(jobs),
-    ]
-    for flag, address in host_addresses.items():
-        common_args.extend([flag, address])
+    def stage(task, script, action, args, deps, targets, parent=(), ip=False):
+        cmd = command(script, ip)
+        result.append({'name': task, 'actions': [(action, [cmd, *args])], 'task_dep': list(parent),
+                       'file_dep': [*shared, str(scripts / script), *map(str, deps)],
+                       'targets': list(map(str, targets)),
+                       'uptodate': [config_changed({'command': cmd}), (tool_current, [vendor, version])],
+                       'clean': []})
 
-    def command(script_name: str) -> list[str]:
-        return [
-            vivado_command,
-            "-mode",
-            "batch",
-            "-source",
-            str(scripts / script_name),
-            "-tclargs",
-            *common_args,
-        ]
-
-    stage_commands = {
-        "project": command("create_project.tcl"),
-        "block-design": command("build_block_design.tcl"),
-        "wrapper": command("generate_block_design_wrapper.tcl"),
-        "synthesis": command("synthesis.tcl"),
-        "implementation": command("implementation.tcl"),
-        "bitstream": command("bitstream.tcl"),
-        "xsa": command("export_hardware.tcl"),
-        "export-block-design": command("export_block_design.tcl"),
-    }
-    source_files = _source_files(rtl_root)
-    common_script = scripts / "common.tcl"
-    exported_bd_script = scripts / "create_block_design.tcl"
-    raw_bd_export = project_dir / ".gpgpu" / f"{bd_name}.raw.tcl"
-
-    return [
-        {
-            "name": "vivado:project",
-            "actions": [
-                (
-                    recreate_project_preserving_bd,
-                    [
-                        stage_commands["project"],
-                        repo_root,
-                        project_dir,
-                        project_file,
-                        bd_file,
-                        stage_commands["export-block-design"],
-                        raw_bd_export,
-                        exported_bd_script,
-                        repo_root,
-                        bd_name,
-                    ],
-                )
-            ],
-            "file_dep": [
-                str(common_script),
-                str(scripts / "create_project.tcl"),
-                str(scripts / "export_block_design.tcl"),
-                *(str(path) for path in source_files),
-                str(xdc_file),
-            ],
-            "targets": [str(project_file)],
-            "uptodate": [config_changed({"command": stage_commands["project"]})],
-            "clean": True,
-        },
-        {
-            "name": "vivado:block-design:build",
-            "actions": [
-                (
-                    build_block_design,
-                    [
-                        stage_commands["block-design"],
-                        repo_root,
-                        project_dir,
-                        bd_file,
-                        stage_commands["export-block-design"],
-                        raw_bd_export,
-                        exported_bd_script,
-                        repo_root,
-                        bd_name,
-                    ],
-                )
-            ],
-            "task_dep": ["vivado:project"],
-            "file_dep": [
-                str(common_script),
-                str(scripts / "build_block_design.tcl"),
-                str(scripts / "configure_block_design.tcl"),
-                str(scripts / "export_block_design.tcl"),
-                str(exported_bd_script),
-            ],
-            "targets": [str(bd_file)],
-            "uptodate": [False],
-            "clean": True,
-        },
-        {
-            "name": "vivado:block-design:run",
-            "actions": [
-                (
-                    generate_block_design_wrapper,
-                    [stage_commands["wrapper"], repo_root, project_dir, wrapper_file],
-                )
-            ],
-            "task_dep": ["vivado:block-design:build"],
-            "file_dep": [
-                str(common_script),
-                str(scripts / "generate_block_design_wrapper.tcl"),
-                str(bd_file),
-                str(project_file),
-            ],
-            "targets": [str(wrapper_file)],
-            "uptodate": [config_changed({"command": stage_commands["wrapper"]})],
-            "clean": True,
-        },
-        {
-            "name": "vivado:synthesis",
-            "actions": [
-                (run_vivado, [stage_commands["synthesis"], repo_root, project_dir])
-            ],
-            "task_dep": ["vivado:block-design:run"],
-            "file_dep": [
-                str(common_script),
-                str(scripts / "synthesis.tcl"),
-                str(wrapper_file),
-                str(bd_file),
-                str(project_file),
-                str(xdc_file),
-                *(str(path) for path in source_files),
-            ],
-            "targets": [str(synthesis_checkpoint)],
-            "uptodate": [config_changed({"command": stage_commands["synthesis"]})],
-            "clean": True,
-        },
-        {
-            "name": "vivado:implementation",
-            "actions": [
-                (run_vivado, [stage_commands["implementation"], repo_root, project_dir])
-            ],
-            "task_dep": ["vivado:synthesis"],
-            "file_dep": [
-                str(common_script),
-                str(scripts / "implementation.tcl"),
-                str(synthesis_checkpoint),
-            ],
-            "targets": [str(implementation_checkpoint)],
-            "uptodate": [config_changed({"command": stage_commands["implementation"]})],
-            "clean": True,
-        },
-        {
-            "name": "vivado:bitstream",
-            "actions": [
-                (run_vivado, [stage_commands["bitstream"], repo_root, project_dir])
-            ],
-            "task_dep": ["vivado:implementation"],
-            "file_dep": [
-                str(common_script),
-                str(scripts / "bitstream.tcl"),
-                str(implementation_checkpoint),
-            ],
-            "targets": [str(bitstream)],
-            "uptodate": [config_changed({"command": stage_commands["bitstream"]})],
-            "clean": True,
-        },
-        {
-            "name": "vivado:xsa",
-            "actions": [(run_vivado, [stage_commands["xsa"], repo_root, project_dir])],
-            "task_dep": ["vivado:bitstream"],
-            "file_dep": [
-                str(common_script),
-                str(scripts / "export_hardware.tcl"),
-                str(bitstream),
-                str(bd_file),
-                str(project_file),
-                str(implementation_checkpoint),
-            ],
-            "targets": [str(xsa)],
-            "uptodate": [config_changed({"command": stage_commands["xsa"]})],
-            "clean": True,
-        },
-        {
-            "name": "vivado:all",
-            "actions": None,
-            "task_dep": ["vivado:xsa"],
-        },
-    ]
+    stage('vivado:ip:create', 'create_ip_project.tcl', create_ip,
+          [repo, ip_dir, ip_name, part, version], [*source_deps, scripts / 'production_sources.tcl'], [ip_xpr], ip=True)
+    stage('vivado:ip:build', 'package_ip.tcl', package_ip, [repo, ip_dir, ip_repo],
+          [ip_xpr, *source_deps, scripts / 'production_sources.tcl', scripts / 'package.py', scripts / 'ip/xgui/gpgpu_axi_v1_0.tcl'],
+          [component, stamp], ['vivado:ip:create'], ip=True)
+    result[-1]['uptodate'].append((package_current, [ip_repo, repo]))
+    stage('vivado:system:create', 'create_system.tcl', create_system,
+          [repo, system, name, part, bd, wrapper, ip_repo, version],
+          [component, stamp, scripts / 'create_block_design.tcl', scripts / 'configure_block_design.tcl', xdc],
+          [sys_xpr, bd, wrapper], ['vivado:ip:build'])
+    result[-1]['uptodate'].append((saved_current, [system, name, part, bd]))
+    stage('vivado:system:_synthesis', 'synthesis.tcl', run_stage, [repo, system, synth],
+          [sys_xpr, bd, wrapper, stamp, xdc, *source_deps], [synth], ['vivado:system:create'])
+    result[-1]['uptodate'].append(GeneratedIPChanged(system))
+    stage('vivado:system:_implementation', 'implementation.tcl', run_stage, [repo, system, route],
+          [synth, bd, xdc], [route], ['vivado:system:_synthesis'])
+    stage('vivado:system:_bitstream', 'bitstream.tcl', run_stage, [repo, system, bit],
+          [route, xdc], [bit], ['vivado:system:_implementation'])
+    stage('vivado:system:build', 'export_hardware.tcl', run_stage, [repo, system, xsa, True],
+          [bit, route, bd, stamp], [xsa], ['vivado:system:_bitstream'])
+    return result

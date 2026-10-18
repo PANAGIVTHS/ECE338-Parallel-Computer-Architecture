@@ -1,90 +1,39 @@
-# Shared argument parsing for the staged Vivado batch scripts.
-
+# Runtime inputs shared by IP packaging and Zynq system stages. No workstation paths.
 set SCRIPT_DIR [file normalize [file dirname [info script]]]
-
 array set options {
-    -project-dir ""
-    -project-name ""
-    -part ""
-    -bd-name ""
-    -top ""
-    -rtl-dir ""
-    -xdc-file ""
-    -bitstream-dir ""
-    -platform-dir ""
-    -xsa-name ""
-    -export-file ""
-    -num-cores ""
-    -jobs ""
-    -host-address-gpio ""
-    -host-cmd-gpio ""
-    -host-rdata-gpio ""
-    -host-status-gpio ""
-    -host-wdata-gpio ""
+    -project-dir "" -project-name "" -part "" -bd-name "" -top ""
+    -rtl-dir "" -xdc-file "" -bitstream-dir "" -platform-dir ""
+    -xsa-name "" -export-file "" -num-cores "" -jobs ""
+    -repo-root "" -ip-repo-dir "" -axi-base "" -axi-range "" -version "" -ip-revision 1
 }
-
-for {set i 0} {$i < [llength $argv]} {incr i} {
-    set option [lindex $argv $i]
-    if {![info exists options($option)]} {
-        error "Unknown Vivado flow argument: $option"
-    }
-    incr i
-    if {$i >= [llength $argv]} {
-        error "Missing value for Vivado flow argument: $option"
-    }
-    set options($option) [lindex $argv $i]
+foreach {key value} $argv {
+    if {![info exists options($key)] || $value eq ""} {error "Invalid/missing Vivado argument: $key"}
+    set options($key) $value
 }
-
-foreach option [array names options] {
-    if {$options($option) eq ""} {
-        error "Required Vivado flow argument was not supplied: $option"
-    }
+foreach key [array names options] {
+    if {$options($key) eq ""} {error "Required Vivado argument missing: $key"}
 }
-
-set PROJECT_DIR  [file normalize $options(-project-dir)]
-set PROJECT_NAME $options(-project-name)
-set FPGA_PART    $options(-part)
-set BD_NAME      $options(-bd-name)
-set TOP_NAME     $options(-top)
-set RTL_DIR      [file normalize $options(-rtl-dir)]
-set XDC_FILE     [file normalize $options(-xdc-file)]
-set BITSTREAM_DIR [file normalize $options(-bitstream-dir)]
-set PLATFORM_DIR  [file normalize $options(-platform-dir)]
-set XSA_NAME      $options(-xsa-name)
-set EXPORT_FILE   [file normalize $options(-export-file)]
-set NUM_CORES     $options(-num-cores)
-set JOBS         $options(-jobs)
-set HOST_ADDRESS_GPIO $options(-host-address-gpio)
-set HOST_CMD_GPIO     $options(-host-cmd-gpio)
-set HOST_RDATA_GPIO   $options(-host-rdata-gpio)
-set HOST_STATUS_GPIO  $options(-host-status-gpio)
-set HOST_WDATA_GPIO   $options(-host-wdata-gpio)
-if {![string is integer -strict $NUM_CORES] || $NUM_CORES < 1} {
-    error "-num-cores must be a positive integer, got: $NUM_CORES"
+foreach {key name} {
+    -project-dir PROJECT_DIR -project-name PROJECT_NAME -part FPGA_PART
+    -bd-name BD_NAME -top TOP_NAME -rtl-dir RTL_DIR -xdc-file XDC_FILE
+    -bitstream-dir BITSTREAM_DIR -platform-dir PLATFORM_DIR -xsa-name XSA_NAME
+    -export-file EXPORT_FILE -num-cores NUM_CORES -jobs JOBS -repo-root REPO_ROOT
+    -ip-repo-dir IP_REPO_DIR -axi-base AXI_BASE -axi-range AXI_RANGE -version FLOW_VERSION
+    -ip-revision IP_REVISION
+} {set $name $options($key)}
+foreach name {PROJECT_DIR RTL_DIR XDC_FILE BITSTREAM_DIR PLATFORM_DIR EXPORT_FILE REPO_ROOT IP_REPO_DIR} {
+    set $name [file normalize [set $name]]
 }
-if {![string is integer -strict $JOBS] || $JOBS < 1} {
-    error "-jobs must be a positive integer, got: $JOBS"
-}
-
-set host_addresses [list \
-    $HOST_ADDRESS_GPIO \
-    $HOST_CMD_GPIO \
-    $HOST_RDATA_GPIO \
-    $HOST_STATUS_GPIO \
-    $HOST_WDATA_GPIO]
-foreach address $host_addresses {
-    if {![regexp {^0[xX][0-9A-Fa-f]{1,8}$} $address]} {
-        error "Host-interface addresses must be 32-bit hexadecimal strings, got: $address"
-    }
-    scan $address %x numeric_address
-    if {$numeric_address > 0xFFFFFFFF || $numeric_address % 0x10000 != 0} {
-        error "Host-interface address must fit in 32 bits and be 64-KiB aligned: $address"
-    }
-}
-if {[llength [lsort -unique $host_addresses]] != [llength $host_addresses]} {
-    error "Host-interface addresses must be unique"
-}
-
 set PROJECT_FILE [file join $PROJECT_DIR "$PROJECT_NAME.xpr"]
-file mkdir [file dirname $PROJECT_DIR]
-file mkdir $BITSTREAM_DIR
+foreach name {NUM_CORES JOBS IP_REVISION} {
+    if {![string is integer -strict [set $name]] || [set $name] < 1} {error "$name must be positive"}
+}
+foreach name {AXI_BASE AXI_RANGE} {
+    if {![regexp {^0[xX][0-9a-fA-F]{1,8}$} [set $name]]} {error "Invalid $name"}
+}
+if {$AXI_RANGE != 0x10000 || $AXI_BASE % $AXI_RANGE != 0 || $AXI_BASE + $AXI_RANGE > 0x100000000} {
+    error "GPGPU AXI aperture must be 64 KiB with an aligned 32-bit base"
+}
+if {[string first $FLOW_VERSION [version -short]] != 0} {
+    error "Vivado $FLOW_VERSION required; running [version -short]"
+}

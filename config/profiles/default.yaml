@@ -19,20 +19,18 @@ hardware:
     port: /dev/ttyACM0
     baud: 115200
   vivado:
-    project_name: GPU
+    ip_project_name: gpgpu_ip_dev
+    project_name: gpgpu_system
     bd_name: design_1
     top: design_1_wrapper
     xsa_name: gpgpu_platform
-    version: "2026.1"
+    version: "2025.2"
     jobs: 6
-    host_interface:
-      address_gpio: "0x41200000"
-      cmd_gpio: "0x41210000"
-      rdata_gpio: "0x41220000"
-      status_gpio: "0x41230000"
-      wdata_gpio: "0x41240000"
+    peripheral:
+      base_address: "0x43C00000"
+      range: "0x00010000"
   vitis:
-    version: "2026.1"
+    version: "2025.2"
     platform_name: gpgpu_platform
     host_name: gpgpu_host
     cpu: ps7_cortexa9_0
@@ -41,7 +39,7 @@ hardware:
     template: empty_application
     default_archive: tools/hardware/vitis/default-project.zip
     host_sources:
-      - software/host/xc7z020/gpgpu_host.c
+      - software/host/xc7z020/gpgpu_driver.c
       - software/host/xc7z020/main.c
 
 software:
