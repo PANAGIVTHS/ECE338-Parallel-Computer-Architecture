@@ -16,17 +16,19 @@ VERILATOR ?= verilator
 JOBS ?= 2
 PLUSARGS ?=
 EXTRA_FLAGS ?=
-SRC_DIR := ../hw/gpgpu
+SRC_DIR := $(REPO_ROOT)/hardware/rtl/gpgpu
 BUILD_DIR ?= $(abspath .sim/$(TOP))
 SIM_EXE := $(BUILD_DIR)/$(notdir $(OUT))
 
-# Parse the interface before consumers. Headers are included, not source units.
+# Compile packages before dependent modules, and interfaces before consumers.
+SV_PACKAGES := $(addprefix $(SRC_DIR)/packages/, \
+    gpu_pkg.sv riscv_pkg.sv alu_pkg.sv control_pkg.sv warp_pkg.sv pipeline_pkg.sv)
 MEMORY_INTERFACE := $(SRC_DIR)/memory/MemoryInterface.sv
-VERILOG_SOURCES := $(MEMORY_INTERFACE) $(filter-out $(MEMORY_INTERFACE),$(wildcard \
-	$(SRC_DIR)/*.sv $(SRC_DIR)/control/*.sv $(SRC_DIR)/memory/*.sv $(SRC_DIR)/sp/*.sv))
+VERILOG_SOURCES := $(SV_PACKAGES) $(MEMORY_INTERFACE) $(filter-out $(MEMORY_INTERFACE),$(wildcard \
+    $(SRC_DIR)/*.sv $(SRC_DIR)/control/*.sv $(SRC_DIR)/memory/*.sv $(SRC_DIR)/sp/*.sv))
 # Keep existing datapath warnings visible; they must not prevent simulation.
 VERILATOR_FLAGS := --binary --timing --assert --trace -Wno-fatal \
-	--timescale 1ns/1ps -I$(SRC_DIR)
+    --timescale 1ns/1ps -I$(SRC_DIR)
 
 UART_PORT ?= /dev/ttyACM0
 UART_BAUD ?= 115200
@@ -54,7 +56,7 @@ compile:
 	@echo "Compiling testbench: $(TB) (Verilator, top $(TOP))"
 	mkdir -p $(BUILD_DIR) $(dir $(abspath $(OUT)))
 	$(VERILATOR) $(VERILATOR_FLAGS) $(EXTRA_FLAGS) --top-module $(TOP) \
-		--Mdir $(BUILD_DIR) -j $(JOBS) -o $(notdir $(OUT)) $(VERILOG_SOURCES) $(TB)
+	    --Mdir $(BUILD_DIR) -j $(JOBS) -o $(notdir $(OUT)) $(VERILOG_SOURCES) $(TB)
 	@if [[ '$(SIM_EXE)' != '$(abspath $(OUT))' ]]; then cp $(SIM_EXE) $(abspath $(OUT)); fi
 
 simulate: compile

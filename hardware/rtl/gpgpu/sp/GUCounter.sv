@@ -23,27 +23,27 @@
 module GUCounter #(
     parameter BITS = 10
 )(
-    input clk,
-    input [1:0] i_set_reset,
-    input i_count_enable,
-    input [BITS-1:0] i_count_set,
-    output reg [BITS-1:0] o_count_cur
+    input logic clk,
+    input logic [1:0] i_set_reset,
+    input logic i_count_enable,
+    input logic [BITS-1:0] i_count_set,
+    output logic [BITS-1:0] o_count_cur
 );
-    wire reset = i_set_reset[1]; 
-    wire count_set = i_set_reset[0]; 
+    wire reset = i_set_reset[1];
+    wire count_set = i_set_reset[0];
 
     initial begin
-        o_count_cur <= {BITS{1'b0}};
+        o_count_cur <= '0;
     end
 
     //! Counter logic
     always @(posedge clk) begin
         if (!reset) begin
-            o_count_cur <= {BITS{1'b0}};
-        end else if (count_set) begin 
-            o_count_cur <= i_count_set; 
+            o_count_cur <= '0;
+        end else if (count_set) begin
+            o_count_cur <= i_count_set;
         end else if (i_count_enable) begin
-            o_count_cur <= o_count_cur + 1; 
+            o_count_cur <= o_count_cur + 1;
         end
     end
 endmodule

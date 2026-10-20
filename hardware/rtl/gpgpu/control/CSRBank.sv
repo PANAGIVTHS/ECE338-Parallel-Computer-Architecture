@@ -55,8 +55,8 @@ module CSRBank #(
     // ========================================================================
 
     wire control_write = i_write_fire && (i_addr == `REG_CONTROL);
-    assign o_start = control_write && (write_value == `CONTROL_START);
-    assign o_stop = control_write && (write_value == `CONTROL_STOP);
+    assign o_start = control_write && (write_value == `CONTROL_START_MASK);
+    assign o_stop = control_write && (write_value == `CONTROL_STOP_MASK);
 
     // ========================================================================
     // CSR: STATUS (0x0008) - Device State / STOPPED Clear
@@ -72,7 +72,7 @@ module CSRBank #(
     assign o_clear_stopped =
         i_write_fire &&
         (i_addr == `REG_STATUS) &&
-        (write_value & `STATUS_STOPPED) != 32'b0;
+        (write_value & `STATUS_STOPPED_MASK) != 32'b0;
 
     // ========================================================================
     // CSR: IRQ_ENABLE (0x000C) - Interrupt Enable
@@ -143,12 +143,12 @@ module CSRBank #(
                     o_status = `RSP_ACCESS_DENIED;
                 end else if (
                     (write_value &
-                        ~(`CONTROL_START | `CONTROL_STOP)) != 32'b0 ||
-                    write_value == (`CONTROL_START | `CONTROL_STOP)
+                        ~(`CONTROL_START_MASK | `CONTROL_STOP_MASK)) != 32'b0 ||
+                    write_value == (`CONTROL_START_MASK | `CONTROL_STOP_MASK)
                 ) begin
                     o_status = `RSP_INVALID_REQUEST;
                 end else if (
-                    write_value == `CONTROL_START &&
+                    write_value == `CONTROL_START_MASK &&
                     (!i_idle || i_stopped)
                 ) begin
                     o_status = `RSP_INVALID_STATE;
@@ -159,7 +159,7 @@ module CSRBank #(
                 if (!i_write) begin
                     o_rdata = status;
                 end else if (
-                    (write_value & ~`STATUS_STOPPED) != 32'b0
+                    (write_value & ~`STATUS_STOPPED_MASK) != 32'b0
                 ) begin
                     o_status = `RSP_ACCESS_DENIED;
                 end

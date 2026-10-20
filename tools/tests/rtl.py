@@ -20,14 +20,12 @@ if TYPE_CHECKING:
 _TEST_CASE = re.compile(r"test\d+")
 _FAILURE_MARKERS = ("[FAIL]", "[Error]", "[ERROR]")
 
-
 def run_command(command: list[str], cwd: Path, create_directory: Path | None = None) -> None:
     """Run one command in *cwd*, optionally creating an output directory first."""
 
     if create_directory is not None:
         create_directory.mkdir(parents=True, exist_ok=True)
     subprocess.run(command, cwd=cwd, check=True)
-
 
 def run_simulation(
     command: list[str],
@@ -41,7 +39,6 @@ def run_simulation(
     log.parent.mkdir(parents=True, exist_ok=True)
     terminal = terminal or sys.__stdout__
     failure_reported = False
-
     with log.open("w", encoding="utf-8") as log_file:
         process = subprocess.Popen(
             command,
@@ -54,7 +51,6 @@ def run_simulation(
         )
         if process.stdout is None:  # pragma: no cover - guaranteed by PIPE
             raise RuntimeError("RTL simulator output pipe was not created")
-
         for line in process.stdout:
             terminal.write(line)
             terminal.flush()
@@ -65,7 +61,6 @@ def run_simulation(
             )
 
         returncode = process.wait()
-
     if returncode != 0:
         raise RuntimeError(f"RTL simulator exited with status {returncode}")
     if failure_reported:
@@ -78,13 +73,11 @@ def _configured_command(config: ResolvedConfig, key: str) -> str:
         raise TypeError(f"{key} must be a string")
     return value
 
-
 def _configured_positive_int(config: ResolvedConfig, key: str) -> int:
     value = config.get(key)
     if not isinstance(value, int) or isinstance(value, bool) or value < 1:
         raise TypeError(f"{key} must be a positive integer")
     return value
-
 
 def _test_cases(cases_root: Path) -> list[Path]:
     return sorted(
@@ -109,7 +102,6 @@ def run_compilation(command: list[str], cwd: Path, build: Path, make: str) -> No
             artifact.unlink()
     run_simulation(command, cwd, build / "build.log", env={**os.environ, "MAKE": make})
 
-
 def run_smx(command: list[str], test_root: Path, log: Path) -> None:
     """Keep simulator artifacts under the build root; resolve cases/ via a link."""
     runtime = log.parent
@@ -122,7 +114,6 @@ def run_smx(command: list[str], test_root: Path, log: Path) -> None:
         cases.symlink_to(test_root / "cases", target_is_directory=True)
     run_simulation(command, runtime, log)
 
-
 def deferred_e2e() -> None:
     raise RuntimeError(
         "E2E RTL simulation is deferred: its testbench has not been migrated to "
@@ -133,14 +124,12 @@ def deferred_e2e() -> None:
 
 def create_tasks(config: ResolvedConfig) -> list[dict[str, Any]]:
     """Create generation, build, run, and aggregate tasks for RTL tests."""
-
     repo_root = config.repo_root
     paths = ProjectPaths.from_config(config)
     rtl_root = paths.hardware_rtl_gpgpu
     test_root = paths.rtl_tests
     cases_root = test_root / "cases"
     build_root = paths.rtl_test_build
-
     python = _configured_command(config, "tools.python.command")
     verilator = _configured_command(config, "tools.verilator.command")
     make = _configured_command(config, "tools.make.command")
@@ -149,12 +138,10 @@ def create_tasks(config: ResolvedConfig) -> list[dict[str, Any]]:
     if not isinstance(trace, bool):
         raise TypeError("tests.rtl.smx.trace must be a boolean")
     num_cores = _configured_positive_int(config, "architecture.num_cores")
-
     assembler = repo_root / "tools/tests/assembler.py"
     expected_generator = repo_root / "tools/tests/expected_generator.py"
     random_tester = repo_root / "tools/tests/random_tester.py"
     testbenches = {"smx": test_root / "tb_GPGPU.sv"}
-
     cases = _test_cases(cases_root)
     assembly_sources = [case / "program.asm" for case in cases]
     optional_seeds = [
@@ -171,16 +158,21 @@ def create_tasks(config: ResolvedConfig) -> list[dict[str, Any]]:
             *(case / f"regfile_c{core}.mem" for core in range(num_cores)),
         )
     ]
-
     # Select production SMX units only, excluding experimental benches and AXI wrappers.
     source_dirs = [rtl_root, *(rtl_root / name for name in ("control", "memory", "sp"))]
+    sv_packages = [
+        rtl_root / "packages" / name
+        for name in (
+            "gpu_pkg.sv", "riscv_pkg.sv", "alu_pkg.sv",
+            "control_pkg.sv", "warp_pkg.sv", "pipeline_pkg.sv",
+        )
+    ]
     memory_interface = rtl_root / "memory/MemoryInterface.sv"
-    rtl_sources = [memory_interface, *sorted(
+    rtl_sources = [*sv_packages, memory_interface, *sorted(
         source for directory in source_dirs for source in directory.glob("*.sv")
         if source != memory_interface
     )]
     rtl_headers = sorted(header for directory in source_dirs for header in directory.glob("*.svh"))
-
     tasks: list[dict[str, Any]] = [
         {
             "name": "tests:rtl:generate",
@@ -210,7 +202,6 @@ def create_tasks(config: ResolvedConfig) -> list[dict[str, Any]]:
             "clean": True,
         }
     ]
-
     testbench_tops = {
         "e2e": "tb_GPGPU_e2e",
         "smx": "tb_GPGPU_smx_only",
@@ -221,7 +212,6 @@ def create_tasks(config: ResolvedConfig) -> list[dict[str, Any]]:
         simulation_log = suite_build_root / "simulation.log"
         build_task = f"tests:rtl:{suite}:build"
         run_task = f"tests:rtl:{suite}:run"
-
         compile_command = [
             verilator, "--binary", "--timing", "--assert", "--autoflush", "-Wno-fatal",
             "--timescale", "1ns/1ps", f"-I{rtl_root}", "-DSIM",
@@ -231,7 +221,6 @@ def create_tasks(config: ResolvedConfig) -> list[dict[str, Any]]:
             *(["--trace"] if trace else []),
             *(str(source) for source in rtl_sources), str(testbench),
         ]
-
         tasks.extend(
             [
                 {
@@ -264,7 +253,6 @@ def create_tasks(config: ResolvedConfig) -> list[dict[str, Any]]:
                 },
             ]
         )
-
     random_iterations = _configured_positive_int(
         config, "tests.rtl.random.iterations"
     )
@@ -273,7 +261,6 @@ def create_tasks(config: ResolvedConfig) -> list[dict[str, Any]]:
         not isinstance(random_seed, int) or isinstance(random_seed, bool)
     ):
         raise TypeError("tests.rtl.random.seed must be an integer or null")
-
     random_build_root = build_root / "random"
     random_log = random_build_root / "random.log"
     random_command = [
@@ -311,7 +298,6 @@ def create_tasks(config: ResolvedConfig) -> list[dict[str, Any]]:
             "clean": True,
         }
     )
-
     tasks.extend(
         {"name": f"tests:rtl:e2e:{stage}", "actions": [(deferred_e2e, [])], "uptodate": [False]}
         for stage in ("build", "run", "all")

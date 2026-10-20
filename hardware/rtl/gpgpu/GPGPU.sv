@@ -1,66 +1,72 @@
 `include "constants.svh"
 
-module GPGPU #(
-    parameter SP_PER_SM = 32,
-    parameter MEMORY_INIT = "empty.mem"
+module GPGPU
+    import gpu_pkg::*;
+    import control_pkg::*;
+#(
+    parameter int unsigned SP_PER_SM = 32,
+    parameter string MEMORY_INIT = "empty.mem"
 ) (
-    input wire clk,
-    input wire rst_n,
+    input logic clk,
+    input logic rst_n,
 
-    output wire o_core_idle,
-    output wire o_core_running,
+    output logic o_core_idle,
+    output logic o_core_running,
 
     // Request signals
-    input wire i_req_valid,
-    output wire o_req_ready,
-    input wire i_req_write,
-    input wire [31:0] i_req_addr,
-    input wire [31:0] i_req_wdata,
-    input wire [3:0] i_req_wstrb,
+    input logic i_req_valid,
+    output logic o_req_ready,
+    input logic i_req_write,
+    input word_t i_req_addr,
+    input word_t i_req_wdata,
+    input logic [3:0] i_req_wstrb,
 
     // Response signals
-    output wire o_rsp_valid,
-    input wire i_rsp_ready,
-    output wire [31:0] o_rsp_rdata,
-    output wire [2:0] o_rsp_status,
+    output logic o_rsp_valid,
+    input logic i_rsp_ready,
+    output word_t o_rsp_rdata,
+    output logic [2:0] o_rsp_status,
 
-    output wire o_irq
+    output logic o_irq
 );
     // tdb was here...
 
     // Control for the core
-    wire [1:0] core_state;
-    wire core_complete, complete_pulse, stopped;
-    wire control_start, control_stop, clear_stopped;
-    wire core_reset = core_state == `CORE_RESET;
-    assign o_core_idle = core_state == `CORE_IDLE;
-    assign o_core_running = core_state == `CORE_RUNNING;
+    logic [1:0] core_state;
+    logic core_complete, complete_pulse, stopped;
+    logic control_start, control_stop, clear_stopped;
+    logic core_reset;
+    assign core_reset = core_state == CORE_RESET;
+    assign o_core_idle = core_state == CORE_IDLE;
+    assign o_core_running = core_state == CORE_RUNNING;
 
     // CSR access description/commit. Register actions go directly to State.
-    wire csr_write_fire;
-    wire [31:0] csr_rdata;
-    wire [2:0] csr_status;
+    logic csr_write_fire;
+    word_t csr_rdata;
+    logic [2:0] csr_status;
 
     // Host memory path bypasses the CSR bank.
-    MemoryInterface #(.ADDR_WIDTH(`IMEM_AW)) host_imem ();
-    MemoryInterface #(.ADDR_WIDTH(`DMEM_AW)) host_dmem ();
+    MemoryInterface #(.ADDR_WIDTH(IMEM_AW)) host_imem ();
+    MemoryInterface #(.ADDR_WIDTH(DMEM_AW)) host_dmem ();
 
     // SMX memory signals
-    wire [`DMEM_AW-1:0] core_dmem_addr_a, core_dmem_addr_b;
-    wire [`IMEM_AW-1:0] core_imem_addr;
-    wire [31:0] core_dmem_wdata_a, core_dmem_wdata_b;
-    wire core_imem_ren, core_dmem_ren_a, core_dmem_ren_b, core_dmem_wen_a, core_dmem_wen_b;
+    MemoryInterface #(.ADDR_WIDTH(DMEM_AW)) core_dmem_a ();
+    MemoryInterface #(.ADDR_WIDTH(DMEM_AW)) core_dmem_b ();
+    imem_idx_t core_imem_addr;
+    logic core_imem_ren;
 
-    assign dmem_if_a.addr = o_core_running ? core_dmem_addr_a : host_dmem.addr;
-    assign dmem_if_a.wdata = o_core_running ? core_dmem_wdata_a : host_dmem.wdata;
-    assign dmem_if_a.ren = o_core_running ? core_dmem_ren_a : host_dmem.ren;
-    assign dmem_if_a.wen = o_core_running ? core_dmem_wen_a : host_dmem.wen;
+    assign dmem_if_a.addr = o_core_running ? core_dmem_a.addr : host_dmem.addr;
+    assign dmem_if_a.wdata = o_core_running ? core_dmem_a.wdata : host_dmem.wdata;
+    assign dmem_if_a.ren = o_core_running ? core_dmem_a.ren : host_dmem.ren;
+    assign dmem_if_a.wen = o_core_running ? core_dmem_a.wen : host_dmem.wen;
     assign host_dmem.rdata = dmem_if_a.rdata;
+    assign core_dmem_a.rdata = dmem_if_a.rdata;
+    assign core_dmem_b.rdata = dmem_if_b.rdata;
 
-    assign dmem_if_b.addr = core_dmem_addr_b;
-    assign dmem_if_b.wdata = core_dmem_wdata_b;
-    assign dmem_if_b.ren = o_core_running ? core_dmem_ren_b : 1'b0;
-    assign dmem_if_b.wen = o_core_running ? core_dmem_wen_b : 1'b0;
+    assign dmem_if_b.addr = core_dmem_b.addr;
+    assign dmem_if_b.wdata = core_dmem_b.wdata;
+    assign dmem_if_b.ren = o_core_running ? core_dmem_b.ren : 1'b0;
+    assign dmem_if_b.wen = o_core_running ? core_dmem_b.wen : 1'b0;
 
     assign imem_if.addr = o_core_running ? core_imem_addr : host_imem.addr;
     assign imem_if.wdata = host_imem.wdata;
@@ -107,29 +113,18 @@ module GPGPU #(
         .i_ifid_instruction(imem_if.rdata),
         .o_imem_addr(core_imem_addr),
         .o_imem_ren(core_imem_ren),
-
-        .i_dmem_rdata_a(dmem_if_a.rdata),
-        .o_dmem_addr_a(core_dmem_addr_a),
-        .o_dmem_ren_a(core_dmem_ren_a),
-        .o_dmem_wen_a(core_dmem_wen_a),
-        .o_dmem_wdata_a(core_dmem_wdata_a),
-
-        .i_dmem_rdata_b(dmem_if_b.rdata),
-        .o_dmem_addr_b(core_dmem_addr_b),
-        .o_dmem_ren_b(core_dmem_ren_b),
-        .o_dmem_wen_b(core_dmem_wen_b),
-        .o_dmem_wdata_b(core_dmem_wdata_b),
-
+        .dmem_a(core_dmem_a),
+        .dmem_b(core_dmem_b),
         .o_kernel_complete(core_complete)
     );
 
     MemoryInterface #(
-        .ADDR_WIDTH($clog2(`IMEM_ENTRIES))
+        .ADDR_WIDTH(IMEM_AW)
     ) imem_if ();
 
     (* dont_touch = `DEBUG *)
     MemorySinglePort #(
-        .DEPTH(`IMEM_ENTRIES),
+        .DEPTH(IMEM_ENTRIES),
         .INIT_FILE(MEMORY_INIT)
     ) instructionMemory (
         .clk(clk),
@@ -137,16 +132,16 @@ module GPGPU #(
     );
 
     MemoryInterface #(
-        .ADDR_WIDTH($clog2(`DMEM_ENTRIES))
+        .ADDR_WIDTH(DMEM_AW)
     ) dmem_if_a ();
 
     MemoryInterface #(
-        .ADDR_WIDTH($clog2(`DMEM_ENTRIES))
+        .ADDR_WIDTH(DMEM_AW)
     ) dmem_if_b ();
 
     (* dont_touch = `DEBUG *)
     MemoryDualPort #(
-        .DEPTH(`DMEM_ENTRIES),
+        .DEPTH(DMEM_ENTRIES),
         .INIT_FILE(MEMORY_INIT)
     ) dataMemory (
         .clk(clk),

@@ -33,6 +33,7 @@ module tb_GPGPU_smx_only ();
 
     GPGPU #(.SP_PER_SM(NUM_CORES), .MEMORY_INIT("")) UUT (
         .clk(clk_in), .rst_n(rst),
+        .o_core_idle(), .o_core_running(),
         .i_req_valid(1'b0), .o_req_ready(), .i_req_write(1'b0),
         .i_req_addr(32'b0), .i_req_wdata(32'b0), .i_req_wstrb(4'b0),
         .o_rsp_valid(), .i_rsp_ready(1'b1), .o_rsp_rdata(),
@@ -161,9 +162,9 @@ module tb_GPGPU_smx_only ();
                     cycle_count,
                     UUT.smx.program_counter,
                     UUT.smx.ifid_program_counter,
-                    UUT.smx.idex_program_counter,
-                    UUT.smx.cores[0].core.exmem_program_counter,
-                    UUT.smx.cores[0].core.memwb_program_counter
+                    UUT.smx.idex.program_counter,
+                    UUT.smx.cores[0].core.exmem.program_counter,
+                    UUT.smx.cores[0].core.memwb.program_counter
                 );
             end
 

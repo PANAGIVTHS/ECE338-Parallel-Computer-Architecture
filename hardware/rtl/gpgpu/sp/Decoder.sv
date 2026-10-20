@@ -1,108 +1,109 @@
-`include "constants.svh"
 
-module Decoder (
-    input [31:0] i_instr,
-    output [4:0] o_rs1,
-    output [4:0] o_rs2,
-    output [4:0] o_rd,
-    output [19:0] o_imm_31_12,
-    output [6:0] o_imm_31_25,
-    output [11:0] o_imm_31_20,
-    output [2:0] o_funct3,
-    output reg [3:0] o_aluop,
-    output reg [1:0] o_instr_type,
-    output [6:0] opcode
+module Decoder
+    import gpu_pkg::*;
+    import riscv_pkg::*;
+    import alu_pkg::*;
+    import pipeline_pkg::*;
+(
+    input word_t i_instr,
+    input pc_t i_program_counter,
+    output id_ex_t o_decoded
 );
-    wire [2:0] funct3;
-    wire [6:0] funct7;
+    wire [2:0] funct3 = i_instr[14:12];
+    wire [6:0] funct7 = i_instr[31:25];
 
     //! Extract fields from instruction
-    assign o_imm_31_25 = i_instr[31:25];
-    assign o_imm_31_20 = i_instr[31:20];
-    assign o_imm_31_12 = i_instr[31:12];
-    assign o_rs2 = i_instr[24:20];
-    assign o_rs1 = i_instr[19:15];
-    assign o_rd = i_instr[11:7];
-    assign funct7 = i_instr[31:25];
-    assign funct3 = i_instr[14:12];
-    assign o_funct3 = funct3;
-    assign opcode = i_instr[6:0];
+    opcode_t opcode;
+    assign opcode = opcode_t'(i_instr[6:0]);
 
     //! Determine ALU operation based on opcode and funct fields
-    always @* begin
+    always_comb begin
+
+        o_decoded = '0;
+        o_decoded.program_counter = i_program_counter;
+        o_decoded.opcode = opcode;
+        o_decoded.rs1 = i_instr[19:15];
+        o_decoded.rs2 = i_instr[24:20];
+        o_decoded.rd = i_instr[11:7];
+        o_decoded.imm_31_12 = i_instr[31:12];
+        o_decoded.imm_31_25 = i_instr[31:25];
+        o_decoded.imm_31_20 = i_instr[31:20];
+        o_decoded.funct3 = funct3;
+        o_decoded.wen = (i_instr[11:7] != 5'b0) && (opcode != OP_SW) && (opcode != OP_BEQ);
+
         case (opcode)
-            `OP_R_TYPE: begin
+            OP_R_TYPE: begin
                 case ({funct7, funct3}) 
-                    {`FUNCT7_ADD, `FUNCT3_ADD_SUB_MUL}: o_aluop = `ALU_ADD;
-                    {`FUNCT7_SUB, `FUNCT3_ADD_SUB_MUL}: o_aluop = `ALU_SUB;
-                    {`FUNCT7_MULDIV, `FUNCT3_ADD_SUB_MUL}: o_aluop = `ALU_MUL;
-                    {`FUNCT7_MULDIV, `FUNCT3_DIV}: o_aluop = `ALU_DIV;
-                    {`FUNCT7_ADD, `FUNCT3_XOR}: o_aluop = `ALU_XOR;
-                    {`FUNCT7_ADD, `FUNCT3_OR}:  o_aluop = `ALU_OR;
-                    {`FUNCT7_ADD, `FUNCT3_SLL}: o_aluop = `ALU_SLL;
-                    {`FUNCT7_SUB, `FUNCT3_SRA}: o_aluop = `ALU_SRA;
-                    {`FUNCT7_ADD, `FUNCT3_AND}: o_aluop = `ALU_AND;
-                    {`FUNCT7_ADD, `FUNCT3_SRL}:  o_aluop = `ALU_SRL;
-                    {`FUNCT7_ADD, `FUNCT3_SLT}:  o_aluop = `ALU_SLT;
-                    {`FUNCT7_ADD, `FUNCT3_SLTU}: o_aluop = `ALU_SLTU;
+                    {FUNCT7_ADD, FUNCT3_ADD_SUB_MUL}: o_decoded.alu_op = ALU_OP_ADD;
+                    {FUNCT7_SUB, FUNCT3_ADD_SUB_MUL}: o_decoded.alu_op = ALU_OP_SUB;
+                    {FUNCT7_MULDIV, FUNCT3_ADD_SUB_MUL}: o_decoded.alu_op = ALU_OP_MUL;
+                    {FUNCT7_MULDIV, FUNCT3_DIV}: o_decoded.alu_op = ALU_OP_DIV;
+                    {FUNCT7_ADD, FUNCT3_XOR}: o_decoded.alu_op = ALU_OP_XOR;
+                    {FUNCT7_ADD, FUNCT3_OR}:  o_decoded.alu_op = ALU_OP_OR;
+                    {FUNCT7_ADD, FUNCT3_SLL}: o_decoded.alu_op = ALU_OP_SLL;
+                    {FUNCT7_SUB, FUNCT3_SRA}: o_decoded.alu_op = ALU_OP_SRA;
+                    {FUNCT7_ADD, FUNCT3_AND}: o_decoded.alu_op = ALU_OP_AND;
+                    {FUNCT7_ADD, FUNCT3_SRL}:  o_decoded.alu_op = ALU_OP_SRL;
+                    {FUNCT7_ADD, FUNCT3_SLT}:  o_decoded.alu_op = ALU_OP_SLT;
+                    {FUNCT7_ADD, FUNCT3_SLTU}: o_decoded.alu_op = ALU_OP_SLTU;
                     default:
-                        o_aluop = `ALU_ADD;
+                        o_decoded.alu_op = ALU_OP_ADD;
                 endcase
-                o_instr_type = `INSTR_TYPE_R;
+                o_decoded.instr_type = INSTR_TYPE_R;
             end
-            `OP_LW: begin 
-                o_aluop = `ALU_ADD;
-                o_instr_type = `INSTR_TYPE_I;
+            OP_LW: begin 
+                o_decoded.alu_op = ALU_OP_ADD;
+                o_decoded.instr_type = INSTR_TYPE_I;
             end
-            `OP_ADDI: begin
-                o_instr_type = `INSTR_TYPE_I;
+            OP_ADDI: begin
+                o_decoded.instr_type = INSTR_TYPE_I;
                 case (funct3)
-                    `FUNCT3_AND: o_aluop = `ALU_AND;
-                    `FUNCT3_XOR: o_aluop = `ALU_XOR;
-                    `FUNCT3_OR: o_aluop = `ALU_OR;
-                    `FUNCT3_SLL: o_aluop = `ALU_SLL;
-                    `FUNCT3_SLT: o_aluop = `ALU_SLT;
-                    `FUNCT3_SLTU: o_aluop = `ALU_SLTU;                    
-                    `FUNCT3_SRL: begin
-                        if (funct7 == `FUNCT7_SUB)
-                            o_aluop = `ALU_SRA;
+                    FUNCT3_AND: o_decoded.alu_op = ALU_OP_AND;
+                    FUNCT3_XOR: o_decoded.alu_op = ALU_OP_XOR;
+                    FUNCT3_OR: o_decoded.alu_op = ALU_OP_OR;
+                    FUNCT3_SLL: o_decoded.alu_op = ALU_OP_SLL;
+                    FUNCT3_SLT: o_decoded.alu_op = ALU_OP_SLT;
+                    FUNCT3_SLTU: o_decoded.alu_op = ALU_OP_SLTU;                    
+                    FUNCT3_SRL: begin
+                        if (funct7 == FUNCT7_SUB)
+                            o_decoded.alu_op = ALU_OP_SRA;
                         else
-                            o_aluop = `ALU_SRL;
+                            o_decoded.alu_op = ALU_OP_SRL;
                     end
-                    default: o_aluop = `ALU_ADD;
+                    default: o_decoded.alu_op = ALU_OP_ADD;
                 endcase
             end
-            `OP_SW: begin 
-                o_aluop = `ALU_ADD;
-                o_instr_type = `INSTR_TYPE_S;
+            OP_SW: begin 
+                o_decoded.alu_op = ALU_OP_ADD;
+                o_decoded.instr_type = INSTR_TYPE_S;
             end
-            `OP_BEQ: begin 
-                o_instr_type = `INSTR_TYPE_S;
+            OP_BEQ: begin 
+                o_decoded.instr_type = INSTR_TYPE_S;
                 case (funct3)
-                    `FUNCT3_BEQ: o_aluop = `ALU_SUB;
-                    `FUNCT3_BNE: o_aluop = `ALU_SUB;
-                    `FUNCT3_BLT: o_aluop = `ALU_SLT;
-                    `FUNCT3_BGE: o_aluop = `ALU_SLT;
-                    `FUNCT3_BLTU: o_aluop = `ALU_SLTU;
-                    `FUNCT3_BGEU: o_aluop = `ALU_SLTU;
-                    default: o_aluop = `ALU_SUB;
+                    FUNCT3_BEQ: o_decoded.alu_op = ALU_OP_SUB;
+                    FUNCT3_BNE: o_decoded.alu_op = ALU_OP_SUB;
+                    FUNCT3_BLT: o_decoded.alu_op = ALU_OP_SLT;
+                    FUNCT3_BGE: o_decoded.alu_op = ALU_OP_SLT;
+                    FUNCT3_BLTU: o_decoded.alu_op = ALU_OP_SLTU;
+                    FUNCT3_BGEU: o_decoded.alu_op = ALU_OP_SLTU;
+                    default: o_decoded.alu_op = ALU_OP_SUB;
                 endcase
             end
-            `OP_JAL: begin
-                o_aluop = `ALU_ADD;
-                o_instr_type = `INSTR_TYPE_U;
+            OP_JAL: begin
+                o_decoded.alu_op = ALU_OP_ADD;
+                o_decoded.instr_type = INSTR_TYPE_U;
             end
-            `OP_JALR: begin
-                o_aluop = `ALU_ADD;
-                o_instr_type = `INSTR_TYPE_I;
+            OP_JALR: begin
+                o_decoded.alu_op = ALU_OP_ADD;
+                o_decoded.instr_type = INSTR_TYPE_I;
             end
-            `OP_LUI: begin
-                o_aluop = `ALU_LUI;
-                o_instr_type = `INSTR_TYPE_U;
+            OP_LUI: begin
+                o_decoded.alu_op = ALU_OP_LUI;
+                o_decoded.instr_type = INSTR_TYPE_U;
             end
             default: begin
-                o_aluop = `ALU_ADD; 
-                o_instr_type = `INSTR_TYPE_R;
+                o_decoded.alu_op = ALU_OP_ADD; 
+                o_decoded.instr_type = INSTR_TYPE_R;
             end
         endcase
     end
