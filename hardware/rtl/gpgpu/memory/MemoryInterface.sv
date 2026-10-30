@@ -17,8 +17,4 @@ interface MemoryInterface #(
 
     modport master (output addr, ren, wen, wdata, input rdata);
     modport slave  (input addr, ren, wen, wdata, output rdata);
-
-    //! SP/crossbar requests
-    modport requester (output addr, ren, wen, wdata, input rdata, grant, rvalid);
-    modport arbiter   (input addr, ren, wen, wdata, output rdata, grant, rvalid);
 endinterface

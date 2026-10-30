@@ -1,8 +1,9 @@
 # Clean-checkout bootstrap only. Existing saved designs are never sourced over.
-# PS user inputs transcribed from the authoritative saved 2025.2 design_1.bd.
+# PS user inputs transcribed from the authoritative saved 2025.2 design_1.bd;
+# the fabric clock comes from hardware.vivado.fabric_clock_mhz.
 # Computed PCW_ACT_* / clock outputs are intentionally left to Vivado.
 proc create_block_design {} {
-    global BD_NAME
+    global BD_NAME FCLK0_MHZ
     if {[version -short] ne "2025.2"} { error "This system requires Vivado 2025.2" }
     create_bd_design $BD_NAME
     current_bd_design $BD_NAME
@@ -15,7 +16,7 @@ proc create_block_design {} {
 
     set ps [create_bd_cell -type ip -vlnv xilinx.com:ip:processing_system7:5.5 processing_system7_0]
     set_property -dict [list \
-        CONFIG.PCW_FPGA0_PERIPHERAL_FREQMHZ {35} \
+        CONFIG.PCW_FPGA0_PERIPHERAL_FREQMHZ $FCLK0_MHZ \
         CONFIG.PCW_FPGA_FCLK0_ENABLE {1} \
         CONFIG.PCW_USE_M_AXI_GP0 {1} \
         CONFIG.PCW_UART0_PERIPHERAL_ENABLE {1} \

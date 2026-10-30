@@ -1,5 +1,5 @@
 module MMIOController 
-    import control_pkg::*;
+    import ControlPkg::*;
     import gpu_pkg::*;
 (
     input logic clk,
@@ -96,8 +96,8 @@ module MMIOController
         i_req_addr < IMEM_BASE + BYTES_PER_WORD * word_t'(IMEM_ENTRIES);
 
     wire dmem_selected =
-        i_req_addr >= DMEM_BASE &&
-        i_req_addr < DMEM_BASE + BYTES_PER_WORD * word_t'(DMEM_ENTRIES);
+        i_req_addr >= ControlPkg::DMEM_BASE &&
+        i_req_addr < ControlPkg::DMEM_BASE + BYTES_PER_WORD * word_t'(DMEM_ENTRIES);
 
     word_t decoded_rdata;
     rsp_status_t decoded_status;
@@ -170,7 +170,7 @@ module MMIOController
             memory_wdata <= i_req_wdata;
 
             memory_address <= HOST_ADDR_WIDTH'(
-                (i_req_addr - (imem_selected ? IMEM_BASE : DMEM_BASE)) >> 2
+                (i_req_addr - (imem_selected ? IMEM_BASE : ControlPkg::DMEM_BASE)) >> 2
             );
         end
     end

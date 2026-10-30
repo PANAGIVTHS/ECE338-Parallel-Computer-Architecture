@@ -28,6 +28,12 @@ vivado:ip:create
   bitstream and fixed, bitstream-inclusive XSA export. Internal staged tasks
   retain checkpoints, jobs and stage diagnostics; a failed bitstream retry does
   not delete routed state. Required OOC IP synthesis belongs here.
+  `hardware.vivado.post_route_phys_opt.{enabled,directive}` (passed as
+  `-post-route-phys-opt` / `-post-route-phys-opt-directive`) set `impl_1`'s
+  post-route `phys_opt_design` step and its `-directive` on every
+  implementation run. The run is launched without `-to_step` (which has no name
+  for that step), so it executes every enabled step before `write_bitstream`;
+  bitstream and XSA use its result.
 
 The former GPIO/module-reference tasks are not part of this pipeline.
 
@@ -54,6 +60,10 @@ hardware:
     xsa_name: gpgpu_platform
     version: "2025.2"
     jobs: 6
+    fabric_clock_mhz: 35
+    post_route_phys_opt:
+      enabled: true
+      directive: AggressiveExplore
     peripheral:
       base_address: "0x43C00000"
       range: "0x00010000"
@@ -67,17 +77,36 @@ were changed. The range is fixed to this ABI; the base must be a valid aligned
 `GPGPU_BASEADDR` (see [Vitis flow](vitis-cli.md)). Core count maps to
 `CONFIG.SP_PER_SM` and the IP user-to-HDL/XGUI parameter, never a second setting.
 
-The tracked `production_sources.tcl` lists only production root/control/memory/
-sp/interfaces files, with `constants.svh` and `MemoryInterface.sv` first.
-`tools/hardware/vivado/ip/empty.mem` provides explicit 2048-word zero
-initialization for IMEM/DMEM. Project and package copy it beside the flattened
+Production sources come from the config, not from a tracked list: the shared
+`hardware.sources` description (extensions, header extensions, compile order)
+under `paths.rtl.sources.gpgpu`, minus `hardware.vivado.exclude_sources` (bare
+directory/file names matched at any depth, or paths relative to the RTL root;
+excluded `ordered` entries are dropped). Headers are packaged first as include
+headers, then the `ordered` files, then the rest in path order, with the
+file declaring the IP top module (`gpgpu_axi`) moved last: with a manual compile
+order `ipx::package_project` takes the last file as the top-level file.
+`hardware.vivado.memory_init` is staged before all of them. Python writes the
+resolved list to `<ip project>/.gpgpu/sources.tsv` (`<kind>\t<path>` lines) and
+passes only that file as `-sources-manifest`: long or brace-quoted list
+arguments do not survive Vivado's `-tclargs` handling. `production_sources.tcl`
+reads and validates it (all files exist, unique file names, headers among the
+sources). The default `hardware.vivado.memory_init`,
+`tools/hardware/vivado/ip/empty.mem`, provides explicit 2048-word zero
+initialization for IMEM/DMEM; its file name must match the RTL's default
+`$readmemh` name. Project and package copy it beside the flattened
 production files; their stage cwd is owned, never a random repository cwd.
 Board XDC is excluded from the reusable IP.
 
 ## System contract
 
 The saved system BD, not its inconsistent neighboring Tcl export, supplied:
-FCLK0 **35 MHz**, DDR **16-bit MT41K256M16 RE-125**, UART0 **EMIO**.
+DDR **16-bit MT41K256M16 RE-125**, UART0 **EMIO**. The fabric clock FCLK0
+(GPGPU, SmartConnect and reset) is configuration-owned:
+`hardware.vivado.fabric_clock_mhz` (default **35 MHz**) is passed as
+`-fclk0-mhz`, used when bootstrapping a new BD and re-applied to a saved BD on
+every `vivado:system:create`, like the core count and AXI aperture. It is the
+requested `PCW_FPGA0_PERIPHERAL_FREQMHZ`; the PS picks the nearest achievable
+frequency from its dividers.
 The system connects PS GP0 -> SmartConnect -> `gpgpu_axi_0/s00_axi`, with
 clock/reset distribution, DDR/FIXED_IO external ports and UART/LED ports.
 `irq` connects through width handling to `IRQ_F2P[0]` (GIC ID 61), matching
@@ -133,7 +162,13 @@ skip completed stages. IP package failure blocks system and Vitis execution.
 The XSA must include `.bit`, `.hwh`, `ps7_init.tcl` and `ps7_init.c` before the
 stage succeeds. Vivado logs/journals/streamed console logs stay in the managed
 project's `.gpgpu/logs/`; the existing JSON-backed CLI monitor also records each
-stage. Use `--plain` for plain live output. The FPGA artifact contract is unchanged:
+stage. Use `--plain` for plain live output. `launch_runs` executes each run in
+its own process, so the synthesis, implementation and bitstream stages also copy
+their runs' logs and reports (`runme.log`, `.vds`, `.vdi`, `.rpt`) to
+`.gpgpu/logs/<stage>/<run>/`: `synth_1` plus every out-of-context IP
+synthesis run (`*synth_1`), or `impl_1`. The copy is refreshed on every
+execution, also when Vivado fails; reused out-of-context runs keep the logs from
+when they ran. The FPGA artifact contract is unchanged:
 published bitstream, Vitis `ps7_init.tcl`, and host ELF. No reference artifact is
 accepted as evidence of a newly completed vendor build.
 

@@ -25,7 +25,7 @@ def package(tmp_path):
 def validate(package):
     root, tree = package
     tree.write(root / 'component.xml')
-    fixture_module.load_package().validate_package(root)
+    fixture_module.validate(root)
 
 
 def extension(tree):

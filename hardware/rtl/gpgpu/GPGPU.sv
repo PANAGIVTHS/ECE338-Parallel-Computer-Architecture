@@ -2,7 +2,8 @@
 
 module GPGPU
     import gpu_pkg::*;
-    import control_pkg::*;
+    import ControlPkg::*;
+    import MemorySubsystemPkg::*;
 #(
     parameter int unsigned SP_PER_SM = 32,
     parameter string MEMORY_INIT = "empty.mem"
@@ -33,10 +34,11 @@ module GPGPU
 
     // Control for the core
     core_state_t core_state;
-    logic core_complete, complete_pulse, stopped;
+    logic core_complete, core_draining, complete_pulse, stopped;
     logic control_start, control_stop, clear_stopped;
-    logic core_reset;
+    logic core_reset, memory_quiet;
     assign core_reset = core_state == CORE_RESET;
+    assign core_draining = core_state == CORE_DRAINING;
     assign o_core_idle = core_state == CORE_IDLE;
     assign o_core_running = core_state == CORE_RUNNING;
 
@@ -45,34 +47,21 @@ module GPGPU
     word_t csr_rdata;
     rsp_status_t csr_status;
 
-    // Host memory path bypasses the CSR bank.
-    MemoryInterface #(.ADDR_WIDTH(IMEM_AW)) host_imem ();
-    MemoryInterface #(.ADDR_WIDTH(DMEM_AW)) host_dmem ();
+    // Memory interfaces 
+    MemoryInterface #(.ADDR_WIDTH(IMEM_AW)) host_imem_if ();
+    MemoryInterface #(.ADDR_WIDTH(IMEM_AW)) smx_imem_if ();
+    MemoryInterface #(.ADDR_WIDTH(IMEM_AW)) imem_if ();
+    MemoryInterface #(.ADDR_WIDTH(DMEM_AW)) host_dmem_if ();
+    MemorySubsystemInterface smx_dmem_if [SP_PER_SM] () ;
+    MemorySubsystemInterface dmem_if [SP_PER_SM] ();
 
-    // SMX memory signals
-    MemoryInterface #(.ADDR_WIDTH(DMEM_AW)) core_dmem_a ();
-    MemoryInterface #(.ADDR_WIDTH(DMEM_AW)) core_dmem_b ();
-    imem_idx_t core_imem_addr;
-    logic core_imem_ren;
+    // Instruction memory multiplexing
+    assign host_imem_if.rdata = imem_if.rdata;
 
-    assign dmem_if_a.addr = o_core_running ? core_dmem_a.addr : host_dmem.addr;
-    assign dmem_if_a.wdata = o_core_running ? core_dmem_a.wdata : host_dmem.wdata;
-    assign dmem_if_a.ren = o_core_running ? core_dmem_a.ren : host_dmem.ren;
-    assign dmem_if_a.wen = o_core_running ? core_dmem_a.wen : host_dmem.wen;
-    assign host_dmem.rdata = dmem_if_a.rdata;
-    assign core_dmem_a.rdata = dmem_if_a.rdata;
-    assign core_dmem_b.rdata = dmem_if_b.rdata;
-
-    assign dmem_if_b.addr = core_dmem_b.addr;
-    assign dmem_if_b.wdata = core_dmem_b.wdata;
-    assign dmem_if_b.ren = o_core_running ? core_dmem_b.ren : '0;
-    assign dmem_if_b.wen = o_core_running ? core_dmem_b.wen : '0;
-
-    assign imem_if.addr = o_core_running ? core_imem_addr : host_imem.addr;
-    assign imem_if.wdata = host_imem.wdata;
-    assign imem_if.ren = o_core_running ? core_imem_ren : host_imem.ren;
-    assign imem_if.wen = o_core_running ? '0 : host_imem.wen;
-    assign host_imem.rdata = imem_if.rdata;
+    assign imem_if.addr = ~o_core_idle ? smx_imem_if.addr : host_imem_if.addr;
+    assign imem_if.wdata = host_imem_if.wdata;
+    assign imem_if.ren = ~o_core_idle ? smx_imem_if.ren : host_imem_if.ren;
+    assign imem_if.wen = ~o_core_idle ? '0 : host_imem_if.wen;
 
     MMIOController mmio (
         .clk(clk), .rst_n(rst_n),
@@ -81,7 +70,7 @@ module GPGPU
         .i_req_wdata(i_req_wdata), .i_req_wstrb(i_req_wstrb),
         .o_rsp_valid(o_rsp_valid), .i_rsp_ready(i_rsp_ready),
         .o_rsp_rdata(o_rsp_rdata), .o_rsp_status(o_rsp_status),
-        .i_idle(o_core_idle), .imem(host_imem), .dmem(host_dmem),
+        .i_idle(o_core_idle), .imem(host_imem_if), .dmem(host_dmem_if),
         .o_csr_write_fire(csr_write_fire),
         .i_csr_rdata(csr_rdata), .i_csr_status(csr_status)
     );
@@ -100,7 +89,7 @@ module GPGPU
     ExecutionController state (
         .clk(clk), .rst_n(rst_n),
         .i_start(control_start), .i_stop(control_stop),
-        .i_clear_stopped(clear_stopped), .i_core_complete(core_complete),
+        .i_clear_stopped(clear_stopped), .i_core_complete(core_complete), .i_memory_quiet(memory_quiet),
         .o_core_state(core_state), .o_stopped(stopped), .o_complete_pulse(complete_pulse)
     );
 
@@ -108,19 +97,18 @@ module GPGPU
         .NUM_CORES(SP_PER_SM)
     ) smx (
         .clk(clk),
-        .rst(rst_n && !core_reset),
+        .rst_n(rst_n && !core_reset),
         .i_enable(o_core_running),
         .i_ifid_instruction(imem_if.rdata),
-        .o_imem_addr(core_imem_addr),
-        .o_imem_ren(core_imem_ren),
-        .dmem_a(core_dmem_a),
-        .dmem_b(core_dmem_b),
+        .o_imem_addr(smx_imem_if.addr),
+        .o_imem_ren(smx_imem_if.ren),
+
+        .memory_bus(smx_dmem_if),
+
         .o_kernel_complete(core_complete)
     );
 
-    MemoryInterface #(
-        .ADDR_WIDTH(IMEM_AW)
-    ) imem_if ();
+    //! Instruction memory (BRAM)
 
     (* dont_touch = `DEBUG *)
     MemorySinglePort #(
@@ -131,22 +119,47 @@ module GPGPU
         .memory(imem_if.slave)
     );
 
-    MemoryInterface #(
-        .ADDR_WIDTH(DMEM_AW)
-    ) dmem_if_a ();
+    //! Data memory (BRAM + DRAM)
 
-    MemoryInterface #(
-        .ADDR_WIDTH(DMEM_AW)
-    ) dmem_if_b ();
+    // Host request built from the word-addressed MMIO DMEM port.
+    mem_req_t host_req;
+    logic host_req_valid;
+    assign host_req_valid = host_dmem_if.ren;
+    assign host_req.write = host_dmem_if.wen;
+    assign host_req.addr = word_t'(host_dmem_if.addr) << 2; // DMEM base = 0: word index -> byte address
+    assign host_req.wdata = host_dmem_if.wdata;
+    assign host_req.wstrb = host_dmem_if.wen ? '1 : '0; // host does full-word writes
+    assign host_dmem_if.rdata = dmem_if[0].rsp.rdata;
+ 
+    // Slot 0: SMX while running, host while idle. Slots 1..N-1: SMX only.
+    for (genvar i = 0; i < SP_PER_SM; i++) begin : g_req_mux
+        if (i == 0) begin : g_host_shared
+            // request side
+            assign dmem_if[0].req_valid = ~o_core_idle ? smx_dmem_if[0].req_valid : host_req_valid;
+            assign dmem_if[0].req = ~o_core_idle ? smx_dmem_if[0].req : host_req;
+            assign dmem_if[0].rsp_ready = ~o_core_idle ? smx_dmem_if[0].rsp_ready : 1'b1;
+            // response side back to the SMX (gated off while the host owns the slot)
+            assign smx_dmem_if[0].req_ready = o_core_running & dmem_if[0].req_ready;
+            assign smx_dmem_if[0].rsp_valid = o_core_running & dmem_if[0].rsp_valid;
+            assign smx_dmem_if[0].rsp = dmem_if[0].rsp;
+        end else begin : g_core_only
+            assign dmem_if[i].req_valid = smx_dmem_if[i].req_valid;
+            assign dmem_if[i].req = smx_dmem_if[i].req;
+            assign dmem_if[i].rsp_ready = smx_dmem_if[i].rsp_ready;
+            assign smx_dmem_if[i].req_ready = dmem_if[i].req_ready;
+            assign smx_dmem_if[i].rsp_valid = dmem_if[i].rsp_valid;
+            assign smx_dmem_if[i].rsp = dmem_if[i].rsp;
+        end
+    end
 
-    (* dont_touch = `DEBUG *)
-    MemoryDualPort #(
-        .DEPTH(DMEM_ENTRIES),
-        .INIT_FILE(MEMORY_INIT)
-    ) dataMemory (
+    MemorySubsystem #(
+        .N(SP_PER_SM)
+    ) memory_subsystem (
         .clk(clk),
-        .memory_a(dmem_if_a.slave),
-        .memory_b(dmem_if_b.slave)
+        .rst_n(rst_n),
+        .abort(core_draining),
+        .memory_if(dmem_if),
+        .idle(memory_quiet)
     );
 
 endmodule

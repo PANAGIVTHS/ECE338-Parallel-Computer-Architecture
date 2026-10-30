@@ -16,16 +16,30 @@ VERILATOR ?= verilator
 JOBS ?= 2
 PLUSARGS ?=
 EXTRA_FLAGS ?=
-SRC_DIR := $(REPO_ROOT)/hardware/rtl/gpgpu
+SRC_DIR ?= $(REPO_ROOT)/hardware/rtl/gpgpu
 BUILD_DIR ?= $(abspath .sim/$(TOP))
 SIM_EXE := $(BUILD_DIR)/$(notdir $(OUT))
 
-# Compile packages before dependent modules, and interfaces before consumers.
-SV_PACKAGES := $(addprefix $(SRC_DIR)/packages/, \
-    gpu_pkg.sv riscv_pkg.sv alu_pkg.sv control_pkg.sv warp_pkg.sv pipeline_pkg.sv)
-MEMORY_INTERFACE := $(SRC_DIR)/memory/MemoryInterface.sv
-VERILOG_SOURCES := $(SV_PACKAGES) $(MEMORY_INTERFACE) $(filter-out $(MEMORY_INTERFACE),$(wildcard \
-    $(SRC_DIR)/*.sv $(SRC_DIR)/control/*.sv $(SRC_DIR)/memory/*.sv $(SRC_DIR)/sp/*.sv))
+# Source discovery (mirrors the runner's tests.rtl.sources.* config).
+#   SRC_DIR        : RTL root to scan.
+#   EXCLUDE_DIRS   : path segments to skip.
+#   ORDERED_SOURCES: the single source of truth for compile order — every
+#                    order-sensitive file (packages + interfaces) in DEPENDENCY
+#                    order, relative to SRC_DIR. Verilator compiles in
+#                    command-line order and needs a package/interface declared
+#                    before anything that uses its types (including other
+#                    packages). Anything NOT listed here is a module and is
+#                    globbed after (module order is irrelevant). No implicit
+#                    detection: a package you forget to list fails loudly with
+#                    "reference before declaration". Headers come in via -I.
+EXCLUDE_DIRS ?= 
+ORDERED_SOURCES ?= 
+
+_PRUNE   := $(foreach d,$(EXCLUDE_DIRS),-not -path '*/$(d)/*')
+_ORDERED := $(addprefix $(SRC_DIR)/,$(ORDERED_SOURCES))
+_REST    := $(filter-out $(_ORDERED),$(shell find $(SRC_DIR) -name '*.sv' $(_PRUNE) | sort))
+VERILOG_SOURCES := $(_ORDERED) $(_REST)
+
 # Keep existing datapath warnings visible; they must not prevent simulation.
 VERILATOR_FLAGS := --binary --timing --assert --trace -Wno-fatal \
     --timescale 1ns/1ps -I$(SRC_DIR)

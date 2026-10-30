@@ -1,4 +1,4 @@
-# Only architecture and the mapped aperture are configuration-owned.
+# Only architecture, the mapped aperture and the fabric clock are configuration-owned.
 # All other saved GUI properties and wiring remain authoritative.
 proc bd_range_bytes {value} {
     if {[string is entier -strict $value]} { return [expr {wide($value)}] }
@@ -9,7 +9,7 @@ proc bd_range_bytes {value} {
 }
 
 proc configure_block_design {} {
-    global NUM_CORES AXI_BASE AXI_RANGE
+    global NUM_CORES AXI_BASE AXI_RANGE FCLK0_MHZ
     set gpgpu [get_bd_cells -quiet gpgpu_axi_0]
     if {[llength $gpgpu] != 1 || [get_property VLNV $gpgpu] ne "user.org:user:gpgpu_axi:1.0"} {
         error "Expected gpgpu_axi_0 with VLNV user.org:user:gpgpu_axi:1.0"
@@ -24,6 +24,15 @@ proc configure_block_design {} {
     set changed 0
     if {[get_property CONFIG.SP_PER_SM $gpgpu] ne $NUM_CORES} {
         set_property CONFIG.SP_PER_SM $NUM_CORES $gpgpu
+        set changed 1
+    }
+    # FCLK_CLK0 clocks the GPGPU, its AXI interconnect and reset (requested
+    # value; the PS derives the nearest achievable frequency from its dividers).
+    set ps [get_bd_cells -quiet processing_system7_0]
+    if {[llength $ps] != 1} {error "Missing processing_system7_0"}
+    set fclk [get_property CONFIG.PCW_FPGA0_PERIPHERAL_FREQMHZ $ps]
+    if {![string is double -strict $fclk] || $fclk != $FCLK0_MHZ} {
+        set_property CONFIG.PCW_FPGA0_PERIPHERAL_FREQMHZ $FCLK0_MHZ $ps
         set changed 1
     }
     if {[llength $mapped] != 1 ||

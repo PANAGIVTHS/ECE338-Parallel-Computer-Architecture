@@ -1,4 +1,4 @@
-package control_pkg;
+package ControlPkg;
 
     //! CSR addresses (Basically commands to GPU)
     localparam logic [gpu_pkg::XLEN-1:0] REG_INFO = gpu_pkg::XLEN'('h0000);
@@ -40,7 +40,8 @@ package control_pkg;
     typedef enum logic [1:0] {
         CORE_IDLE = 2'b00,
         CORE_RESET = 2'b01,
-        CORE_RUNNING = 2'b10
+        CORE_RUNNING = 2'b10,
+        CORE_DRAINING = 2'b11
     } core_state_t;
 
     //! Response type

@@ -34,7 +34,8 @@ if {[file exists $PROJECT_DIR]} {
     }
 }
 # Resolve every required input before creating any project or copying sources.
-set inputs [production_source_paths $RTL_DIR $flow_dir]
+lassign [read_source_manifest $SOURCES_MANIFEST] MEMORY_INIT RTL_SOURCES HEADER_SOURCES
+set inputs [production_source_paths $MEMORY_INIT $RTL_SOURCES $HEADER_SOURCES]
 create_project $PROJECT_NAME $PROJECT_DIR -part $FPGA_PART
 set_property target_language Verilog [current_project]
 set_property simulator_language Mixed [current_project]
@@ -48,11 +49,14 @@ foreach input $inputs {
     lappend sources $output
 }
 add_files -norecurse -fileset sources_1 $sources
-set_property file_type {SystemVerilog Header} [get_files [file join $source_dir constants.svh]]
-# Every macro consumer includes its sibling constants.svh explicitly.
+# Every macro consumer includes its sibling header explicitly.
 # Global-include state is not preserved by ipx::package_project.
-set_property is_global_include false [get_files [file join $source_dir constants.svh]]
-set_property file_type {Memory Initialization Files} [get_files [file join $source_dir empty.mem]]
+foreach header $HEADER_SOURCES {
+    set staged [get_files [file join $source_dir [file tail $header]]]
+    set_property file_type {SystemVerilog Header} $staged
+    set_property is_global_include false $staged
+}
+set_property file_type {Memory Initialization Files} [get_files [file join $source_dir [file tail $MEMORY_INIT]]]
 # All staged RTL and the header share src/: no development-project include path
 # may be imported as an IP-XACT dependency by the packager.
 set_property include_dirs {} [get_filesets sources_1]

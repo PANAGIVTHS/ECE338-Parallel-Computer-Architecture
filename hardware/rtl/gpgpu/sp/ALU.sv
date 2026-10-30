@@ -3,12 +3,12 @@ module ALU
     import alu_pkg::*;
 (
     input logic clk,
-    input logic rst,
+    input logic rst_n,
     input word_t i_operand_a,
     input word_t i_operand_b,
     input alu_op_t i_alu_op,
     input logic i_mul_valid,
-    input logic i_global_stall,
+    input logic i_stall,
     output word_t o_alu_out,
     output logic o_alu_zero
 );
@@ -17,11 +17,11 @@ module ALU
     (* use_dsp = "yes" *) word_t mul_stage3;
 
     always_ff @(posedge clk) begin
-        if (!rst) begin
+        if (!rst_n) begin
             mul_stage1 <= '0;
             mul_stage2 <= '0;
             mul_stage3 <= '0;
-        end else if (!i_global_stall) begin
+        end else if (!i_stall) begin
             mul_stage1 <= i_operand_a * i_operand_b;
             mul_stage2 <= mul_stage1;
             mul_stage3 <= mul_stage2;

@@ -1,6 +1,10 @@
-`include "../constants.svh"
 
-module HostCommandProcessor (
+//! DEPRECATED
+
+import ControlPkg::*;
+
+module HostCommandProcessor 
+(
     input clk,
     input rst,
 
@@ -99,15 +103,15 @@ module HostCommandProcessor (
                 o_host_busy = 1'b1;
                 case (host_command)
                     CMD_DMEM_WRITE: begin
-                        if (i_core_state == `CORE_IDLE)
+                        if (i_core_state == CORE_IDLE)
                             o_host_dmem_wen = 1'b1;
                     end
                     CMD_IMEM_WRITE: begin
-                        if (i_core_state == `CORE_IDLE)
+                        if (i_core_state == CORE_IDLE)
                             o_host_imem_wen = 1'b1;
                     end
                     CMD_RUN: begin
-                        if (i_core_state == `CORE_IDLE)
+                        if (i_core_state == CORE_IDLE)
                             o_host_run = 1'b1;
                     end
                 endcase

@@ -20,7 +20,10 @@ set marker [open $marker_file r]
 set identity [string trim [read $marker]]
 close $marker
 if {$identity ne "gpgpu_axi production project v1"} {error "Invalid production IP project marker"}
-set inputs [production_source_paths $RTL_DIR $flow_dir]
+lassign [read_source_manifest $SOURCES_MANIFEST] MEMORY_INIT RTL_SOURCES HEADER_SOURCES
+set inputs [production_source_paths $MEMORY_INIT $RTL_SOURCES $HEADER_SOURCES]
+set memory_name [file tail $MEMORY_INIT]
+set header_names [lmap header $HEADER_SOURCES {file tail $header}]
 foreach input $inputs {
     if {![file isfile [file join $PROJECT_DIR src [file tail $input]]]} {
         error "Missing staged production source: [file tail $input]"
@@ -29,7 +32,9 @@ foreach input $inputs {
 open_project $PROJECT_FILE
 # Do this BEFORE the packager parses HDL. Global includes are not preserved in
 # packaged IP; every macro consumer explicitly includes its sibling header.
-set_property is_global_include false [get_files [file join $PROJECT_DIR src constants.svh]]
+foreach header $header_names {
+    set_property is_global_include false [get_files [file join $PROJECT_DIR src $header]]
+}
 foreach fileset {sources_1 sim_1} {
     set_property include_dirs {} [get_filesets $fileset]
 }
@@ -128,19 +133,19 @@ foreach {role template} {
     set group [lindex $groups 0]
     set_property model_name $TOP_NAME $group
     # No project-owned include_dir dependency survives in the delivered package.
-    # All explicit includes resolve to constants.svh beside the packaged RTL.
+    # All explicit includes resolve to headers beside the packaged RTL.
     set_property dependency {} $group
     foreach old [ipx::get_files -of_objects $group] {
         ipx::remove_file [get_property name $old] $group
     }
     foreach relative $package_files {
         set entry [ipx::add_file $relative $group]
-        if {[file tail $relative] eq "empty.mem"} {
+        if {[file tail $relative] eq $memory_name} {
             set_property type mif $entry
         } else {
             set_property type systemVerilogSource $entry
         }
-        if {[file tail $relative] eq "constants.svh"} {
+        if {[file tail $relative] in $header_names} {
             set_property is_include true $entry
         }
     }

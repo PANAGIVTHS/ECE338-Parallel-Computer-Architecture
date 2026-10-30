@@ -1,8 +1,10 @@
 """Fail-closed IP-XACT validation before publication of a staged Vivado IP.
 
 No Vivado/Tcl runtime dependency and no writes. Invalid packages raise ValueError.
-The synthesis/simulation filesets must contain the exact production manifest.
+The synthesis/simulation filesets must contain exactly the production inputs the
+caller resolved from configuration (memory initialization, RTL, headers), in order.
 """
+from collections.abc import Sequence
 from pathlib import Path, PurePosixPath
 import re
 import xml.etree.ElementTree as ET
@@ -13,8 +15,13 @@ FLOW = Path(__file__).resolve().parent
 AXI_PORTS = 'AWADDR AWPROT AWVALID AWREADY WDATA WSTRB WVALID WREADY BRESP BVALID BREADY ARADDR ARPROT ARVALID ARREADY RDATA RRESP RVALID RREADY'.split()
 
 
-def validate_package(path: str | Path) -> None:
-    """Require portable production sources, VLNV and decoded 64-KiB ABI."""
+def validate_package(path: str | Path, memory_init: Path, sources: Sequence[Path],
+                     headers: Sequence[Path]) -> None:
+    """Require portable production sources, VLNV and decoded 64-KiB ABI.
+
+    *memory_init* comes first, then *sources* in compile order; *headers* is the
+    subset of *sources* packaged as include files.
+    """
     root = Path(path).resolve(strict=True)
     try:
         component = ET.parse(root / 'component.xml').getroot()
@@ -48,14 +55,17 @@ def validate_package(path: str | Path) -> None:
     require(component.tag == f'{{{NS}}}component', 'Unsupported IP-XACT namespace')
     require(tuple(text(component, k) for k in ('vendor','library','name','version')) ==
             ('user.org','user','gpgpu_axi','1.0'), 'Wrong VLNV')
-    manifest_text = (FLOW / 'production_sources.tcl').read_text()
-    match = re.search(r'set PRODUCTION_RTL_SOURCES\s*\{([^}]+)\}', manifest_text)
-    require(match is not None, 'Invalid production manifest')
-    source_files = {PurePosixPath(p).name: FLOW.parents[2] / 'hardware/rtl/gpgpu' / p
-                    for p in match.group(1).split()}
-    source_files['empty.mem'] = FLOW / 'ip/empty.mem'
+    inputs = [Path(memory_init), *map(Path, sources)]
+    order = [p.name for p in inputs]
+    require(len(set(order)) == len(order), 'Production inputs must have unique file names')
+    source_files = dict(zip(order, inputs))
     expected = set(source_files)
-    constant_macros = set(re.findall(r'^`define\s+(\w+)', source_files['constants.svh'].read_text(), re.M))
+    memory_name = order[0]
+    header_names = [Path(h).name for h in headers]
+    require(set(header_names) <= expected, 'Headers must be production sources')
+    # Macro name -> defining header, for the explicit-include rule below.
+    header_macros = {macro: name for name in header_names
+                     for macro in re.findall(r'^`define\s+(\w+)', source_files[name].read_text(), re.M)}
     # Only filesystem-bearing fields are paths: taxonomy, descriptions, VLNVs
     # and parameter identifiers can legitimately start with '/' or contain '..'.
     def local_name(tag):
@@ -154,18 +164,22 @@ def validate_package(path: str | Path) -> None:
             if relative.name in source_files:
                 require(file.read_bytes() == source_files[relative.name].read_bytes(),
                         f'Packaged source differs from the current production input: {name}')
-            if relative.suffix == '.sv':
+            if relative.name in source_files and relative.name not in header_names \
+                    and relative.name != memory_name:
                 source = file.read_text()
-                uses = [m.start() for m in re.finditer(r'`(\w+)', source) if m.group(1) in constant_macros]
-                if uses:
-                    include = re.search(r'^\s*`include\s+"constants\.svh"', source, re.M)
-                    require(include is not None and include.start() < min(uses),
-                            f'Macro consumer needs explicit constants.svh before use: {name}')
-                    header_path = file.with_name('constants.svh')
+                uses = {}
+                for m in re.finditer(r'`(\w+)', source):
+                    if m.group(1) in header_macros:
+                        uses.setdefault(header_macros[m.group(1)], m.start())
+                for header_name, first_use in uses.items():
+                    include = re.search(r'^\s*`include\s+"' + re.escape(header_name) + '"', source, re.M)
+                    require(include is not None and include.start() < first_use,
+                            f'Macro consumer needs explicit {header_name} before use: {name}')
+                    header_path = file.with_name(header_name)
                     require(header_path.is_file() and header_path.resolve().is_relative_to(root) and
-                            header_path.read_bytes() == source_files['constants.svh'].read_bytes(),
-                            f'constants.svh is not a portable sibling of: {name}')
-            if relative.name == 'empty.mem':
+                            header_path.read_bytes() == source_files[header_name].read_bytes(),
+                            f'{header_name} is not a portable sibling of: {name}')
+            if relative.name == memory_name:
                 require('mif' in [e.text for e in entry.findall('s:userFileType', N)], f'Wrong memory initialization type: {name}')
             else:
                 kind = 'tclSource' if relative.suffix == '.tcl' else 'systemVerilogSource'
@@ -175,13 +189,18 @@ def validate_package(path: str | Path) -> None:
         if group_name in hdl_groups.values():
             require({PurePosixPath(name).name for name in seen} == expected, f'Incomplete production fileset: {group_name}')
             ordered = [PurePosixPath(text(e, 'name')).name for e in entries]
-            require(ordered[:3] == ['empty.mem', 'constants.svh', 'MemoryInterface.sv'],
-                    f'Memory/interface/header compile order: {group_name}')
+            require(ordered == order, f'Production compile order differs: {group_name}')
             require(text(entries[-1], 'fileType') == 'systemVerilogSource' and
                     text(entries[-1], 'isIncludeFile') not in ('true', '1'),
                     f'Last fileset entry must be HDL: {group_name}')
-            header = next(e for e in entries if PurePosixPath(text(e,'name')).name == 'constants.svh')
-            require(text(header,'isIncludeFile') in ('true','1'), f'constants.svh is not an include in {group_name}')
+            # The packager treats the last compile-order file as the top file.
+            top = text(component, 'name')
+            require(re.search(rf'^\s*module\s+{re.escape(top)}\b',
+                              (root / text(entries[-1], 'name')).read_text(), re.M),
+                    f'Last fileset entry must declare top module {top}: {group_name}')
+            for header in (e for e in entries if PurePosixPath(text(e, 'name')).name in header_names):
+                require(text(header, 'isIncludeFile') in ('true', '1'),
+                        f'{text(header, "name")} is not an include in {group_name}')
     require('xilinx_xpgui_view_fileset' in filesets, 'Missing XGUI fileset')
     require(any(n == 'xgui/gpgpu_axi_v1_0.tcl' for n, _ in all_files), 'Missing XGUI')
     users = named(component, 's:parameters/s:parameter')

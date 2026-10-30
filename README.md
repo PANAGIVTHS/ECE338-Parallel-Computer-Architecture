@@ -12,27 +12,53 @@ used. Python dependencies are initialized by `./gpgpu` (using uv when available)
 ./gpgpu run tests:rtl:smx:run
 ./gpgpu run tests:rtl:smx:all
 ./gpgpu --set tests.rtl.random.iterations=3 --set tests.rtl.random.seed=12345 run tests:rtl:random
-./gpgpu --set tests.rtl.smx.trace=true run tests:rtl:smx:all
+./gpgpu --set tests.rtl.trace.enabled=true run tests:rtl:smx:all
 ```
 
 `architecture.num_cores` controls both expected-memory generation and the compiled
-bench parameter. Compilation selects production `.sv` sources from
-`hardware/rtl/gpgpu` and its `control/`, `memory/`, and `sp/` directories, with
-`MemoryInterface.sv` before consumers; `.svh` headers are cache dependencies.
-The top module is `tb_GPGPU_smx_only` in `tests/hardware/rtl/tb_GPGPU.sv`.
-Experimental benches and AXI wrappers are excluded.
+bench parameter. Each suite compiles every `hardware.sources.extensions` file
+under `paths.rtl.sources.gpgpu`, minus its own `tests.rtl.<suite>.exclude_sources`
+(directory or file names), with `hardware.sources.ordered` first (packages and
+interfaces before their users; excluded entries are dropped).
+`hardware.sources.header_extensions` files are cache dependencies only. The bench and top module come from
+`tests.rtl.<suite>.testbench` and `tests.rtl.<suite>.top`.
 
 Generated C++, objects, the native `main` binary, `build.log`, and `simulation.log`
 stay under `<paths.build.root>/tests/rtl/smx/`. Runtime uses this directory with
 a `cases` link to the test inputs, so pipeline timing diagram `trace.csv` files
-remain in `tests/hardware/rtl/cases/test*/`. Enabling `tests.rtl.smx.trace`
-combines compile-time `--trace` and runtime `+DUMP`, producing `dumpfile.vcd`
-in the SMX build directory. `--plain` keeps console output without the monitor.
+remain in `tests/hardware/rtl/cases/test*/`. Enabling `tests.rtl.trace.enabled` (all suites)
+adds `tests.rtl.trace.verilator_flags` at compile time and passes
+`+DUMP_FILE=<tests.rtl.trace.dump_file>` at runtime; the dump lands in the suite's
+build directory. The default flags (`--trace-fst --trace-structs`) split packed
+structs into named fields and keep enum state names; open the dump with Surfer or
+GTKWave. `--plain` keeps console output without the monitor.
 The build cache tracks sources, headers, compiler command/options, make, C++
 compiler, and core count. Random testing reuses the same compiled executable,
 prints reproducible seeds, logs to `<paths.build.root>/tests/rtl/random/random.log`,
 and preserves the first failing `cases/test999` input.
 
+### E2E (AXI4-Lite)
+
+```bash
+./gpgpu run tests:rtl:e2e:all
+./gpgpu --set tests.rtl.trace.enabled=true run tests:rtl:e2e:all
+```
+
+The bench file and top module come from `tests.rtl.e2e.testbench` and
+`tests.rtl.e2e.top`. The bench instantiates the AXI4-Lite wrapper (the IP top
+used on the FPGA) and touches the GPGPU only through AXI4-Lite and the IRQ pin. It first checks the
+CSR map and error responses, plus a host-only DMEM write/readback. Then, for
+each case, it clears DMEM, loads and verifies IMEM, enables the IRQ, writes
+`CONTROL.START`, waits for the completion IRQ, checks `STATUS`/`IRQ_STATUS` and
+the W1C acknowledge, and compares all of DMEM with the expected data file. Register files are
+not host-visible, so they are checked only by the SMX suite. Its
+`tests.rtl.e2e.exclude_sources` keeps `interfaces/` (the AXI wrapper) that the SMX suite
+excludes. Every bench setting (case root, case prefix and first index, program
+and data file names, clock period, reset length, timeouts, RET encoding, unmapped
+address, INFO version) is a required plusarg taken from `tests.rtl.e2e.plusargs`.
+The bench has no defaults and stops if any is missing; add `TEST_END` to stop
+early. The aggregate
+`tests:rtl:{build,run,all}` tasks cover both suites.
 `tests.rtl.range` in `config/profiles/default.yaml` selects directed SMX/E2E
 case IDs: `"all"` (default) or an inclusive range such as `"1-10"` or `"5-5"`.
 For a one-off selection:
@@ -44,13 +70,6 @@ For a one-off selection:
 The range is passed as `+TEST_IDX` / `+TEST_END` at runtime, without recompiling
 the bench. Explicit ranges with missing case sources fail before simulation.
 Shared input generation still prepares all cases; random testing is unaffected.
-E2E commands resolve the same range and show its arguments in their deferred
-diagnostic; this does not enable or migrate the old E2E bench.
-
-**E2E is deferred and unverified.** `tests:rtl:e2e:{build,run,all}` fail with an
-explicit diagnostic without executing the E2E bench. The aggregate
-`tests:rtl:{build,run,all}` still request both suites and therefore also fail;
-they have not been silently redefined as SMX-only commands.
 
 ## Running programs on FPGA
 

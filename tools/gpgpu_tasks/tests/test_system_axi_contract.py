@@ -37,7 +37,8 @@ VIVADO = ROOT / "tools/hardware/vivado"
 
 def test_bootstrap_uses_saved_ps_user_settings_not_computed_overrides():
     text = (VIVADO / "create_block_design.tcl").read_text()
-    assert re.search(r"CONFIG.PCW_FPGA0_PERIPHERAL_FREQMHZ\s+\{35\}", text)
+    # The fabric clock is configuration-owned (hardware.vivado.fabric_clock_mhz).
+    assert re.search(r"CONFIG.PCW_FPGA0_PERIPHERAL_FREQMHZ\s+\$FCLK0_MHZ", text)
     assert "CONFIG.PCW_UIPARAM_DDR_PARTNO {MT41K256M16 RE-125}" in text
     assert "CONFIG.PCW_UIPARAM_DDR_BUS_WIDTH {16 Bit}" in text
     assert "CONFIG.PCW_UIPARAM_DDR_ECC {Disabled}" in text
@@ -49,7 +50,8 @@ def test_bootstrap_uses_saved_ps_user_settings_not_computed_overrides():
 
 CONFIGURATION_API = r'''
 set props [dict create gpgpu_axi_0,VLNV user.org:user:gpgpu_axi:1.0 \
-    gpgpu_axi_0,CONFIG.SP_PER_SM 8 mapped,OFFSET 0x43C00000 mapped,RANGE 64K]
+    gpgpu_axi_0,CONFIG.SP_PER_SM 8 mapped,OFFSET 0x43C00000 mapped,RANGE 64K \
+    processing_system7_0,CONFIG.PCW_FPGA0_PERIPHERAL_FREQMHZ 35]
 proc get_bd_cells {args} {
     set name [lindex $args end]
     if {$name eq "GPGPU_0" || [string match "axi_gpio*" $name]} {return {}}
@@ -80,6 +82,7 @@ def test_configuration_updates_only_owned_core_and_address_settings():
 set NUM_CORES 4
 set AXI_BASE 0x40000000
 set AXI_RANGE 0x10000
+set FCLK0_MHZ 35
 source {{{VIVADO / 'configure_block_design.tcl'}}}
 puts [list CHANGED [configure_block_design]]
 ''')
@@ -96,11 +99,27 @@ def test_configuration_is_noop_when_owned_values_match():
 set NUM_CORES 8
 set AXI_BASE 0x43C00000
 set AXI_RANGE 0x10000
+set FCLK0_MHZ 35.0
 source {{{VIVADO / 'configure_block_design.tcl'}}}
 puts [list CHANGED [configure_block_design]]
 ''')
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "CHANGED 0"
+
+
+def test_configuration_applies_fabric_clock_to_saved_design():
+    result = run_tcl(CONFIGURATION_API + f'''
+set NUM_CORES 8
+set AXI_BASE 0x43C00000
+set AXI_RANGE 0x10000
+set FCLK0_MHZ 50
+source {{{VIVADO / 'configure_block_design.tcl'}}}
+puts [list CHANGED [configure_block_design]]
+''')
+    assert result.returncode == 0, result.stderr
+    assert "SET CONFIG.PCW_FPGA0_PERIPHERAL_FREQMHZ 50 processing_system7_0" in result.stdout
+    assert "CHANGED 1" in result.stdout
+    assert "MAP" not in result.stdout and "SP_PER_SM" not in result.stdout
 
 
 def system_script(tmp_path, existing=False, missing_cell=None, wrong_vlnv=False):
@@ -124,6 +143,7 @@ set XDC_FILE {{{tmp_path / 'board.xdc'}}}
 set NUM_CORES 8
 set AXI_BASE 0x43C00000
 set AXI_RANGE 0x10000
+set FCLK0_MHZ 35
 ''')
     return RECORDING_API + CONFIGURATION_API + f'''
 set missing {{{missing_cell or ''}}}

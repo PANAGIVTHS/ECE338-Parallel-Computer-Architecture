@@ -18,6 +18,27 @@ hardware:
   serial:
     port: /dev/ttyACM0
     baud: 115200
+  # RTL source discovery shared by every consumer (RTL test suites, Vivado IP):
+  # all `extensions` files under paths.rtl.sources.gpgpu, minus the consumer's
+  # own `exclude_sources` list. An entry is a bare directory/file name matched
+  # at any depth (e.g. experimental) or a path relative to paths.rtl.sources.gpgpu
+  # (e.g. memory/bram, sp/ALU.sv). `ordered` files come first,
+  # in dependency order (a package/interface before any file using its types,
+  # including other packages); entries a consumer excludes are dropped.
+  # `header_extensions` files are include headers, never compiled on their own.
+  sources:
+    extensions: [.sv, .v]
+    header_extensions: [.svh]
+    ordered:
+      - packages/gpu_pkg.sv
+      - packages/riscv_pkg.sv
+      - packages/alu_pkg.sv
+      - control/ControlPkg.sv
+      - packages/warp_pkg.sv
+      - packages/pipeline_pkg.sv
+      - memory/MemoryInterface.sv
+      - memory/MemorySubsystemPkg.sv
+      - memory/MemorySubsystemInterface.sv
   vivado:
     ip_project_name: gpgpu_ip_dev
     project_name: gpgpu_system
@@ -26,9 +47,26 @@ hardware:
     xsa_name: gpgpu_platform
     version: "2025.2"
     jobs: 6
+    # Requested PS fabric clock FCLK_CLK0 (MHz) driving the GPGPU, its AXI
+    # interconnect and reset; Vivado selects the nearest achievable frequency.
+    # Applied to new and saved block designs on vivado:system:create.
+    fabric_clock_mhz: 35
+    # phys_opt_design after routing in impl_1, with its -directive (e.g.
+    # AggressiveExplore, Explore, AlternateFlowWithRetiming, Default). Applied
+    # on every implementation run, so disabling it also takes effect.
+    post_route_phys_opt:
+      enabled: true
+      directive: AggressiveExplore
     peripheral:
       base_address: "0x43C00000"
       range: "0x00010000"
+    # Production IP: hardware.sources minus `exclude_sources`; headers first,
+    # the file declaring the IP top module last (the packager's top file).
+    # Keeps interfaces/ (the AXI4-Lite top); drops the deprecated host command
+    # processor. `memory_init` (repo-relative) is staged before all HDL; its
+    # file name must match the RTL's default $readmemh name.
+    exclude_sources: [experimental, HostControllerProcessor.sv]
+    memory_init: tools/hardware/vivado/ip/empty.mem
   vitis:
     version: "2025.2"
     platform_name: gpgpu_platform
@@ -49,17 +87,57 @@ software:
 
 tests:
   rtl:
+    # Waveform tracing for every suite: `enabled` adds `verilator_flags` at
+    # compile time and passes +DUMP_FILE=<dump_file> (written in the suite's
+    # build directory). FST keeps enum names; --trace-structs splits packed
+    # structs into named fields.
+    trace:
+      enabled: false
+      verilator_flags:
+        - --trace-fst
+        - --trace-structs
+      dump_file: dumpfile.fst
     # Directed SMX/E2E test IDs, inclusive: "all" or e.g. "1-10".
     range: "all"
+    # Per suite: `testbench` is relative to the repository root, `top` is the
+    # bench's top module, `exclude_sources` drops directories/files from
+    # hardware.sources, `plusargs` are passed to the simulator as +NAME=value.
     smx:
-      # Compile with --trace and run with +DUMP; VCD stays in build/tests/rtl/smx.
-      trace: false
+      testbench: tests/hardware/rtl/tb_GPGPU.sv
+      top: tb_GPGPU_smx_only
+      # No AXI wrapper: the bench instantiates GPGPU directly.
+      exclude_sources: [experimental, interfaces]
+      plusargs: {}
+    e2e:
+      testbench: tests/hardware/rtl/tb_GPGPU_e2e.sv
+      top: tb_GPGPU_e2e
+      # Keeps interfaces/ for the AXI4-Lite top; drops the deprecated host
+      # command processor.
+      exclude_sources: [experimental, HostControllerProcessor.sv]
+      # All required by the bench (no defaults in SystemVerilog). +TEST_END
+      # is optional and may be added here to stop after a given case.
+      plusargs:
+        TEST_ROOT: cases            # relative to the suite's run directory
+        CASE_PREFIX: test           # case directories are <prefix><index>
+        TEST_IDX: 1                 # first case index
+        PROGRAM_FILE: program.mem
+        DATA_FILE: data.mem
+        CLOCK_PERIOD_NS: 10
+        RESET_CYCLES: 20
+        TEST_TIMEOUT_CYCLES: 10000  # launch to completion IRQ
+        AXI_TIMEOUT_CYCLES: 1000    # per AXI channel handshake
+        RET_INSTR: "00008067"       # hex; kernel end, IMEM is loaded up to it
+        UNMAPPED_ADDR: "00008000"   # hex; must decode to no CSR/IMEM/DMEM
+        INFO_VERSION: 1             # INFO[31:16] reported by the CSR bank
     random:
       iterations: 100
       # Set a non-zero integer for reproducibility; 0 chooses and prints a seed.
       seed: 0
 
 paths:
+  rtl:
+    sources:
+      gpgpu: hardware/rtl/gpgpu
   build:
     root: build
 

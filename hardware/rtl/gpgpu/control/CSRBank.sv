@@ -1,7 +1,7 @@
 
 module CSRBank 
     import gpu_pkg::*;
-    import control_pkg::*;
+    import ControlPkg::*;
 #(
     parameter int unsigned SP_PER_SM = 32
 ) (

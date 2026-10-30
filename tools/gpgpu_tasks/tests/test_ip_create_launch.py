@@ -66,7 +66,8 @@ def launch_setup(tmp_path):
     ])
     definitions = tasks.create_tasks(config)
     stage = next(task for task in definitions if task['name'] == 'vivado:ip:create')
-    action, arguments = stage['actions'][0]
+    action, arguments, kwargs = stage['actions'][0]
+    assert kwargs == {}
     return definitions, action, arguments, Path(stage['targets'][0]), trace
 
 
@@ -88,7 +89,9 @@ def test_ip_create_runs_production_tcl_in_runner_prepared_directory(tmp_path, ca
     assert (target.parent / '.gpgpu-managed.json').is_file()
     assert (target.parent / '.gpgpu/logs/create_ip_project.console.log').is_file()
     assert (target.parent / '.production-ip-project').is_file()
-    assert len(list((target.parent / 'src').iterdir())) == 20
+    memory_init, sources, _ = tasks.production_inputs(resolve_config(ROOT))
+    assert sorted(p.name for p in (target.parent / 'src').iterdir()) == sorted(
+        p.name for p in (memory_init, *sources))
     invocations = [json.loads(line) for line in trace.read_text().splitlines()]
     assert invocations[0] == ['-version']
     assert '-source' in invocations[1]
@@ -113,7 +116,7 @@ def test_ip_create_preserves_foreign_projects_before_vendor_launch(tmp_path, ide
 def test_production_tcl_itself_rejects_foreign_or_populated_state(tmp_path, conflict):
     """Exercise Tcl's guard directly, without the Python preflight masking it."""
     _, _, arguments, target, _ = launch_setup(tmp_path)
-    command, repo, directory, name, part, _ = arguments
+    command, repo, directory, name, part, _, _ = arguments
     tasks.prepare_managed_project(directory, name, part, 'ip')
     marker = directory / '.gpgpu-managed.json'
     if conflict == 'unmanaged':

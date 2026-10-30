@@ -5,7 +5,7 @@
 `define TEST_TIMEOUT_CYCLES 1500
 
 module tb_GPGPU_smx_only 
-    import control_pkg::*;
+    import ControlPkg::*;
     import gpu_pkg::*;
 ();
 
@@ -33,6 +33,7 @@ module tb_GPGPU_smx_only
     reg [8*255:0] data_file;
     reg [8*255:0] reg_file;
     reg [8*255:0] trace_file;
+    string dump_file;
 
     GPGPU #(.SP_PER_SM(NUM_CORES), .MEMORY_INIT("")) UUT (
         .clk(clk_in), .rst_n(rst),
@@ -49,7 +50,8 @@ module tb_GPGPU_smx_only
 
     always #(`CLOCK_PERIOD / 2) clk_in = ~clk_in;
 
-    // Register probes through new hierarchy
+    // Register probes: the regfile storage is LUTRAM without reset, so a
+    // register not written since reset holds its reset value instead
     wire [31:0] core_reg_probes [0:NUM_CORES-1][0:31];
 
     genvar cg, rg;
@@ -57,7 +59,8 @@ module tb_GPGPU_smx_only
         for (cg = 0; cg < NUM_CORES; cg = cg + 1) begin : probe_cores
             for (rg = 0; rg < 32; rg = rg + 1) begin : probe_regs
                 assign core_reg_probes[cg][rg] =
-                    UUT.smx.cores[cg].core.regfile.data[rg];
+                    UUT.smx.cores[cg].core.regfile.written[rg] ? UUT.smx.cores[cg].core.regfile.ram[rg] :
+                    reg_reset_value(rg, cg);
             end
         end
     endgenerate
@@ -118,7 +121,7 @@ module tb_GPGPU_smx_only
                 UUT.instructionMemory.data[i] = 32'b0;
 
             for (i = 0; i < DMEM_ENTRIES; i = i + 1)
-                UUT.dataMemory.data[i] = 32'b0;
+                UUT.memory_subsystem.bramBackend.dataMemory.data[i] = 32'b0;
 
             // Load IMEM directly, like old SMX test
             $readmemh(prog_file, UUT.instructionMemory.data);
@@ -151,7 +154,7 @@ module tb_GPGPU_smx_only
              * to the SMX and makes o_running reflect running state.
              */
             @(negedge UUT.clk);
-            force UUT.core_state = control_pkg::CORE_RUNNING;
+            force UUT.core_state = ControlPkg::CORE_RUNNING;
 
             cycle_count = 0;
 
@@ -174,7 +177,7 @@ module tb_GPGPU_smx_only
             $fclose(fd_trace);
             // Do not change the forced run state in the active writeback edge.
             @(negedge uut_clk);
-            force UUT.core_state = control_pkg::CORE_IDLE;
+            force UUT.core_state = ControlPkg::CORE_IDLE;
 
             if (cycle_count >= `TEST_TIMEOUT_CYCLES) begin
                 $fatal(1, "Test %0d reached timeout of %0d cycles!",
@@ -211,9 +214,9 @@ module tb_GPGPU_smx_only
             data_errors = 0;
 
             for (i = 0; i < DMEM_ENTRIES; i = i + 1) begin
-                if (UUT.dataMemory.data[i] !== expected_data[i]) begin
+                if (UUT.memory_subsystem.bramBackend.dataMemory.data[i] !== expected_data[i]) begin
                     $display("  [ERROR] Data memory Address %0d: Expected %h, Found %h",
-                             i, expected_data[i], UUT.dataMemory.data[i]);
+                             i, expected_data[i], UUT.memory_subsystem.bramBackend.dataMemory.data[i]);
                     data_errors = data_errors + 1;
                 end
             end
@@ -233,8 +236,9 @@ module tb_GPGPU_smx_only
     end
 
     initial begin
-        if ($test$plusargs("DUMP")) begin
-            $dumpfile("dumpfile.vcd");
+        // Waveforms are dumped only when the runner passes +DUMP_FILE.
+        if ($value$plusargs("DUMP_FILE=%s", dump_file)) begin
+            $dumpfile(dump_file);
             $dumpvars(0, tb_GPGPU_smx_only);
         end
     end
