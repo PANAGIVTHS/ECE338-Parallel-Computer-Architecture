@@ -22,6 +22,7 @@ except ImportError:
 RET_INSTR = "00008067"
 DEPTH = 2048
 PROMPT = "gpgpu>"
+WORD_BYTES = struct.calcsize("<I")
 
 
 def normalize_word(word: int | str) -> str:
@@ -35,9 +36,13 @@ def words_to_le_bytes(words: Iterable[int | str]) -> bytes:
 
 
 def parse_memory_dump(text: str) -> dict[int, str]:
+    """Word index -> word from the monitor's `0xBYTE_ADDRESS: 0xWORD` dump lines."""
     result: dict[int, str] = {}
-    for addr, word in re.findall(r"(?m)^\s*(\d+):\s*([0-9a-fA-F]{8})\s*$", text):
-        result[int(addr, 10)] = word.lower()
+    for addr, word in re.findall(r"(?m)^\s*0x([0-9a-fA-F]+):\s*0x([0-9a-fA-F]{8})\s*$", text):
+        byte_address = int(addr, 16)
+        if byte_address % WORD_BYTES:
+            raise RuntimeError(f"Memory dump address 0x{byte_address:08x} is not word-aligned")
+        result[byte_address // WORD_BYTES] = word.lower()
     return result
 
 

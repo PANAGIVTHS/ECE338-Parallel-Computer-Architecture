@@ -158,8 +158,16 @@ IRQ_STATUS    = 0x00000000  no completion pending
 FAULT_INFO    = 0x00000031  cause 1 (memory): a kernel memory access failed
   misaligned: the address is not word-aligned
 FAULT_LANES   = 0xaaaaaaaa  16 lane(s) faulted: 1,3,5,7,9,11,13,15,17,19,21,23,25,27,29,31
-FAULT_PC      = 0x00000004  faulting instruction, IMEM word 1
+FAULT_PC      = 0x00000004  byte address of the faulting instruction (see dumpimem)
 """
+
+
+def test_memory_dump_parser_maps_byte_addresses_to_word_indices():
+    uart = load_module('uart_dump', 'tools/board/xc7z020/uart.py')
+    dump = "BEGIN_DMEM_DUMP\r\n0x00000040: 0x0000ABCD\r\n0x00000044: 0xffffffff\r\nEND_DMEM_DUMP\r\n"
+    assert uart.parse_memory_dump(dump) == {16: '0000abcd', 17: 'ffffffff'}
+    with pytest.raises(RuntimeError, match='not word-aligned'):
+        uart.parse_memory_dump("0x00000042: 0x00000000\r\n")
 
 
 def test_status_parser_reads_faulted_and_the_fault_report():

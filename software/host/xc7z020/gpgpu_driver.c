@@ -254,7 +254,7 @@ static void print_fault(void)
     const u32 pc = gpu_read(GPGPU_REG_FAULT_PC);
     print_register("FAULT_PC", pc);
     if (cause == GPGPU_FAULT_MEMORY)
-        xil_printf("faulting instruction, IMEM word %u\r\n", (unsigned int)(pc / 4U));
+        xil_printf("byte address of the faulting instruction (see dumpimem)\r\n");
     else
         xil_printf("no memory fault\r\n");
 }
@@ -280,8 +280,8 @@ static int report_fault(void)
     }
 
     const u32 lanes = gpu_read(GPGPU_REG_FAULT_LANES);
-    xil_printf("ERROR: kernel %s fault at IMEM word %u, %u lane(s): ",
-               fault_cause_text(cause).name, (unsigned int)(gpu_read(GPGPU_REG_FAULT_PC) / 4U),
+    xil_printf("ERROR: kernel %s fault at pc 0x%08x, %u lane(s): ",
+               fault_cause_text(cause).name, (unsigned int)gpu_read(GPGPU_REG_FAULT_PC),
                (unsigned int)count_bits(lanes));
     print_lanes(lanes);
     xil_printf("\r\n");
@@ -553,7 +553,7 @@ int gpgpu_dump_imem_ascii(u32 offset, u32 count)
     for (u32 i = 0U; i < count; ++i) {
         if (gpgpu_read_imem(offset + i, &word) != 0)
             return GPGPU_ERR_STATE;
-        xil_printf("%04u: %08x\r\n", (unsigned int)(offset + i),
+        xil_printf("0x%08x: 0x%08x\r\n", (unsigned int)(4U * (offset + i)),
                    (unsigned int)word);
     }
     xil_printf("END_IMEM_DUMP\r\n");
@@ -570,7 +570,7 @@ int gpgpu_dump_dmem_ascii(u32 offset, u32 count)
     for (u32 i = 0U; i < count; ++i) {
         if (gpgpu_read_dmem(offset + i, &word) != 0)
             return GPGPU_ERR_STATE;
-        xil_printf("%04u: %08x\r\n", (unsigned int)(offset + i),
+        xil_printf("0x%08x: 0x%08x\r\n", (unsigned int)(4U * (offset + i)),
                    (unsigned int)word);
     }
     xil_printf("END_DMEM_DUMP\r\n");
