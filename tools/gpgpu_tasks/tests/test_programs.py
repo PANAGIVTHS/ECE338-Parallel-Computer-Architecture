@@ -202,23 +202,36 @@ def test_x86_task_builds_and_runs_the_native_executable(tmp_path: Path) -> None:
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-SETTINGS = {"interface_version": 7, "use_irq": False, "irq_id": 61}
-CONTROL_TEXT = (
-    "localparam gpu_pkg::word_t REG_INFO = 'h0000;\n"
-    "localparam gpu_pkg::word_t REG_STATUS = 'h0_024;\n"
-    "localparam int unsigned STATUS_STOPPED_BIT = 2;\n"
-    "localparam gpu_pkg::word_t STATUS_STOPPED_MASK = gpu_pkg::word_t'(1) << STATUS_STOPPED_BIT;\n"
-)
-MEMORY_TEXT = (
-    "typedef enum logic [2:0] {\n"
-    "    ST_OK = 3'd0, // comment, with comma\n"
-    "    ST_SLVERR = 3'd4\n"
-    "} mem_status_t;\n"
-)
-GPU_TEXT = (
-    "localparam int unsigned IMEM_ENTRIES = 1024;\n"
-    "localparam int unsigned DMEM_ENTRIES = 4096;\n"
-)
+SETTINGS = {"export_attribute": "host", "define_prefix": "GPGPU_",
+            "interface_version": 7, "use_irq": False, "irq_id": 61}
+CONTROL_TEXT = """
+package Ctrl;
+    localparam int unsigned STOP_BIT = 2;
+    (* host *) localparam logic [15:0] REG_STATUS = 'h0024;
+    (* host *) localparam logic [31:0] STOP_MASK = 32'(1) << STOP_BIT;
+    localparam logic [31:0] HIDDEN = 'h1;
+endpackage
+"""
+MEMORY_TEXT = """
+package Mem;
+    (* host *) localparam int unsigned DEPTH = 2 * 1024;
+    (* host *) typedef enum logic [2:0] {
+        ST_OK = 3'd0, // comment, with comma
+        ST_SLVERR = 3'd4
+    } status_t;
+endpackage
+"""
+
+
+def exports_of(*texts: str):
+    import pyslang
+    from pyslang import syntax
+
+    options = pyslang.Bag()
+    manager = pyslang.SourceManager()
+    trees = [syntax.SyntaxTree.fromText(text, manager, f"src{index}.sv", "", options)
+             for index, text in enumerate(texts)]
+    return host_platform.collect_exports(trees, manager, options, "host")
 
 
 def header_values(header: str) -> dict[str, str]:
@@ -228,57 +241,80 @@ def header_values(header: str) -> dict[str, str]:
     )
 
 
-def test_committed_platform_header_matches_rtl_and_configuration() -> None:
+def test_committed_platform_header_matches_rtl_and_configuration(tmp_path: Path) -> None:
     from config import resolve_config
 
     config = resolve_config(REPO_ROOT)
     [task] = host_platform.create_tasks(config)
-    control, memory, gpu, settings, output = task["actions"][0][1]
+    sources, include_directory, settings, output = task["actions"][0][1]
     assert output == host_platform.header_path(config)
     assert settings == host_platform.host_settings(config)
-    expected = host_platform.render_header(
-        *(path.read_text(encoding="utf-8") for path in (control, memory, gpu)), settings
-    )
-    assert output.read_text(encoding="utf-8") == expected, (
+    fresh = tmp_path / "gpgpu_platform.h"
+    host_platform.write_header(sources, include_directory, settings, fresh)
+    assert output.read_text(encoding="utf-8") == fresh.read_text(encoding="utf-8"), (
         "gpgpu_platform.h is stale: run software:host:platform"
     )
     assert task["name"] == "software:host:platform"
     assert task["targets"] == [str(output)]
-    assert {str(control), str(memory), str(gpu)} <= set(task["file_dep"])
+    assert {str(path) for path in sources} <= set(task["file_dep"])
     assert task["uptodate"][0].config == settings
 
 
-def test_platform_header_derives_every_value_from_its_inputs() -> None:
-    values = header_values(host_platform.render_header(CONTROL_TEXT, MEMORY_TEXT, GPU_TEXT, SETTINGS))
-    assert values == {
+def test_platform_header_exports_elaborated_values_in_source_order() -> None:
+    exports = exports_of(CONTROL_TEXT, MEMORY_TEXT)
+    assert [(export.package, export.name) for export in exports] == [
+        ("Ctrl", "REG_STATUS"), ("Ctrl", "STOP_MASK"),
+        ("Mem", "DEPTH"), ("Mem", "ST_OK"), ("Mem", "ST_SLVERR"),
+    ]
+    header = host_platform.render_header(exports, SETTINGS, "TEST_H")
+    assert header_values(header) == {
         "GPGPU_INTERFACE_VERSION": "7U",
-        "GPGPU_IMEM_WORDS": "1024U",
-        "GPGPU_DMEM_WORDS": "4096U",
-        "GPGPU_MAX_WORDS": "4096U",
-        "GPGPU_REG_INFO": "0x0000U",
         "GPGPU_REG_STATUS": "0x0024U",
-        "GPGPU_STATUS_STOPPED_BIT": "2U",
-        "GPGPU_STATUS_STOPPED": "0x00000004U",
+        "GPGPU_STOP_MASK": "0x00000004U",
+        "GPGPU_DEPTH": "2048U",
         "GPGPU_ST_OK": "0U",
         "GPGPU_ST_SLVERR": "4U",
         "GPGPU_USE_IRQ": "0",
         "GPGPU_IRQ_ID": "61U",
     }
+    assert "/* Ctrl */" in header and "/* Mem */" in header
+    assert "#ifndef TEST_H" in header and header.rstrip().endswith("#endif /* TEST_H */")
+
+
+def test_platform_header_attribute_prefix_and_guard_follow_configuration() -> None:
+    import pyslang
+    from pyslang import syntax
+
+    options = pyslang.Bag()
+    manager = pyslang.SourceManager()
+    tree = syntax.SyntaxTree.fromText(
+        "package P; (* expose *) localparam int A = 1; (* host *) localparam int B = 2; endpackage",
+        manager, "src.sv", "", options)
+    exports = host_platform.collect_exports([tree], manager, options, "expose")
+    assert [export.name for export in exports] == ["A"]
+    header = host_platform.render_header(exports, {**SETTINGS, "define_prefix": "XYZ_"},
+                                         host_platform.include_guard(Path("my-platform.h")))
+    assert "#define XYZ_A " in header and "GPGPU_" not in header
+    assert "#ifndef MY_PLATFORM_H" in header
 
 
 @pytest.mark.parametrize(
-    ("control", "memory", "gpu", "message"),
+    ("texts", "message"),
     [
-        ("localparam gpu_pkg::word_t REG_X = 'h10 + 4;\n", MEMORY_TEXT, GPU_TEXT, "plain 'h literal"),
-        ("", MEMORY_TEXT, GPU_TEXT, "no register offsets"),
-        (CONTROL_TEXT, "typedef enum logic [2:0] {\n ST_OK = 0\n} mem_status_t;\n", GPU_TEXT, "explicit"),
-        (CONTROL_TEXT, "", GPU_TEXT, "does not declare enum"),
-        (CONTROL_TEXT, MEMORY_TEXT, "localparam int unsigned IMEM_ENTRIES = 2 * 1024;\n", "IMEM_ENTRIES"),
+        (("package P; (* host *) localparam logic [7:0] A = 8'hx5; endpackage",), "unknown bits"),
+        (("package P; (* host *) localparam int A = -3; endpackage",), "negative"),
+        (("package P; (* host *) typedef struct packed { logic a; } s_t; endpackage",), "enum typedefs"),
+        (("package P; localparam int A = 1; endpackage",
+          "module m; (* host *) localparam int B = 2; endmodule"), "on package members"),
+        (("package P; (* host *) localparam int A = 1; endpackage",
+          "package Q; (* host *) localparam int A = 2; endpackage"), "twice: A"),
+        (("package P; (* host *) localparam int A = missing; endpackage",), "do not elaborate"),
+        (("package P; localparam int A = 1; endpackage",), "No \\(\\* host"),
     ],
 )
-def test_platform_header_rejects_unparseable_rtl(control: str, memory: str, gpu: str, message: str) -> None:
+def test_platform_exports_reject_unsupported_rtl(texts: tuple[str, ...], message: str) -> None:
     with pytest.raises(ValueError, match=message):
-        host_platform.render_header(control, memory, gpu, SETTINGS)
+        exports_of(*texts)
 
 
 @pytest.mark.parametrize(
@@ -287,6 +323,8 @@ def test_platform_header_rejects_unparseable_rtl(control: str, memory: str, gpu:
         ("software.host.use_irq", 1),
         ("software.host.irq_id", 0),
         ("architecture.interface_version", -1),
+        ("software.host.export_attribute", "not an identifier"),
+        ("software.host.define_prefix", 3),
     ],
 )
 def test_platform_settings_have_no_fallback(key: str, value: object) -> None:
@@ -294,6 +332,8 @@ def test_platform_settings_have_no_fallback(key: str, value: object) -> None:
         "architecture.interface_version": 2,
         "software.host.use_irq": True,
         "software.host.irq_id": 61,
+        "software.host.export_attribute": "host",
+        "software.host.define_prefix": "GPGPU_",
         key: value,
     }
 

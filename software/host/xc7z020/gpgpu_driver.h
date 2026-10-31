@@ -14,6 +14,10 @@
  * map, memory depths and wait settings come from the generated
  * gpgpu_platform.h. */
 
+/* Largest memory in words: sizes the console's transfer buffer. */
+#define GPGPU_MAX_WORDS \
+    (GPGPU_IMEM_ENTRIES > GPGPU_DMEM_ENTRIES ? GPGPU_IMEM_ENTRIES : GPGPU_DMEM_ENTRIES)
+
 int gpgpu_init(void);
 u32 gpgpu_read_status(void);
 void gpgpu_print_status(void);

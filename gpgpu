@@ -5,16 +5,37 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CLI_PROJECT="$ROOT/tools/gpgpu_cli"
 VENV="$ROOT/.venv"
 
-bootstrap() {
-    printf 'Running first-time initialization...\n'
+# The environment is resynchronized whenever one of these changes, so pulling a
+# commit that adds a dependency installs it on the next run.
+DEPENDENCY_FILES=(
+    "$CLI_PROJECT/pyproject.toml"
+    "$CLI_PROJECT/uv.lock"
+    "$ROOT/tools/gpgpu_tasks/pyproject.toml"
+)
+DEPENDENCY_STAMP="$VENV/.gpgpu-dependencies"
+
+dependency_checksum() {
+    cat "${DEPENDENCY_FILES[@]}" | cksum
+}
+
+install_dependencies() {
     if command -v uv >/dev/null 2>&1; then
-        UV_PROJECT_ENVIRONMENT="$VENV" uv sync --project "$CLI_PROJECT"
+        # --locked: install exactly the committed lock, never rewrite it.
+        UV_PROJECT_ENVIRONMENT="$VENV" uv sync --locked --project "$CLI_PROJECT"
     else
-        python3 -m venv "$VENV"
         "$VENV/bin/python" -m pip install \
             --editable "$ROOT/tools/gpgpu_tasks" \
             --editable "$CLI_PROJECT"
     fi
+    dependency_checksum > "$DEPENDENCY_STAMP"
+}
+
+bootstrap() {
+    printf 'Running first-time initialization...\n'
+    if ! command -v uv >/dev/null 2>&1; then
+        python3 -m venv "$VENV"
+    fi
+    install_dependencies
 
     if [[ ! -e "$ROOT/config/local.yaml" ]]; then
         printf '{}\n' > "$ROOT/config/local.yaml"
@@ -28,9 +49,16 @@ venv_is_healthy() {
     [[ -x "$VENV/bin/gpgpu" ]] && "$VENV/bin/gpgpu" --help >/dev/null 2>&1
 }
 
+dependencies_are_current() {
+    [[ -f "$DEPENDENCY_STAMP" ]] && [[ "$(dependency_checksum)" == "$(cat "$DEPENDENCY_STAMP")" ]]
+}
+
 if ! venv_is_healthy; then
     rm -rf -- "$VENV"
     bootstrap
+elif ! dependencies_are_current; then
+    printf 'Python dependencies changed; synchronizing .venv...\n'
+    install_dependencies
 fi
 
 exec "$VENV/bin/gpgpu" "$@"

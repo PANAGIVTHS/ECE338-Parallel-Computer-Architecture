@@ -50,7 +50,20 @@ def test_root_launcher_is_executable_and_runs_cli(tmp_path: Path) -> None:
     shutil.copy2(REPO_ROOT / 'gpgpu', launcher)
     shutil.copytree(REPO_ROOT / 'config', repo / 'config', ignore=shutil.ignore_patterns('local.yaml'))
     (repo / 'tools/gpgpu_cli').mkdir(parents=True)
+    (repo / 'tools/gpgpu_tasks').mkdir(parents=True)
     (repo / 'hardware/rtl').mkdir(parents=True)
+    dependency_files = [repo / 'tools/gpgpu_cli/pyproject.toml', repo / 'tools/gpgpu_cli/uv.lock',
+                        repo / 'tools/gpgpu_tasks/pyproject.toml']
+    for path in dependency_files:
+        path.write_text(f'{path.name} v1\n')
+    # A fake uv records every sync instead of touching the shared environment.
+    fake_bin = tmp_path / 'bin'
+    fake_bin.mkdir()
+    sync_log = tmp_path / 'uv.log'
+    fake_uv = fake_bin / 'uv'
+    fake_uv.write_text(f'#!/bin/sh\necho "$@" >> {sync_log}\n')
+    fake_uv.chmod(0o755)
+    environment = {**os.environ, 'PATH': f'{fake_bin}{os.pathsep}{os.environ["PATH"]}'}
     # Exercise the real launcher, never the shared environment/bootstrap.
     entry = repo / '.venv/bin/gpgpu'
     entry.parent.mkdir(parents=True)
@@ -60,7 +73,7 @@ def test_root_launcher_is_executable_and_runs_cli(tmp_path: Path) -> None:
     assert os.access(launcher, os.X_OK)
     launcher_text = launcher.read_text(encoding="utf-8")
     assert 'CLI_PROJECT="$ROOT/tools/gpgpu_cli"' in launcher_text
-    assert 'uv sync --project "$CLI_PROJECT"' in launcher_text
+    assert 'uv sync --locked --project "$CLI_PROJECT"' in launcher_text
     assert '--editable "$ROOT/tools/gpgpu_tasks"' in launcher_text
     assert '--editable "$CLI_PROJECT"' in launcher_text
     assert "uv sync" in launcher_text
@@ -68,14 +81,33 @@ def test_root_launcher_is_executable_and_runs_cli(tmp_path: Path) -> None:
     assert "[dev]" not in launcher_text
     assert '"${1:-}" == "init"' not in launcher_text
     assert '"$VENV/bin/gpgpu" doctor' in launcher_text
-    result = subprocess.run(
-        [str(launcher), "config", "get", "architecture.num_cores"],
-        cwd=repo / "hardware/rtl",
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    assert "24" in result.stdout
+    def run():
+        return subprocess.run(
+            [str(launcher), "config", "get", "architecture.num_cores"],
+            cwd=repo / "hardware/rtl",
+            check=True,
+            capture_output=True,
+            text=True,
+            env=environment,
+        )
+
+    def syncs():
+        return sync_log.read_text().splitlines() if sync_log.exists() else []
+
+    # No stamp yet (an environment from before the stamp existed): sync once.
+    expected_cores = yaml.safe_load((repo / 'config/profiles/default.yaml').read_text())['architecture']['num_cores']
+    result = run()
+    assert result.stdout.splitlines()[-1] == str(expected_cores)
+    assert syncs() == [f"sync --locked --project {repo / 'tools/gpgpu_cli'}"]
+    # Unchanged dependency files: no sync.
+    run()
+    assert len(syncs()) == 1
+    # Any dependency file changing (e.g. after a pull): sync again.
+    for path in dependency_files:
+        path.write_text(path.read_text() + 'changed\n')
+        result = run()
+        assert "Python dependencies changed" in result.stdout
+    assert len(syncs()) == 1 + len(dependency_files)
 
 
 
@@ -88,6 +120,9 @@ def test_root_launcher_rebuilds_a_relocated_virtualenv_and_runs_requested_comman
     launcher.write_text((REPO_ROOT / "gpgpu").read_text(encoding="utf-8"), encoding="utf-8")
     launcher.chmod(0o755)
     (repo / "tools/gpgpu_cli").mkdir(parents=True)
+    (repo / "tools/gpgpu_tasks").mkdir(parents=True)
+    for name in ("tools/gpgpu_cli/pyproject.toml", "tools/gpgpu_cli/uv.lock", "tools/gpgpu_tasks/pyproject.toml"):
+        (repo / name).write_text("fixture\n", encoding="utf-8")
     (repo / "config").mkdir()
 
     stale_cli = repo / ".venv/bin/gpgpu"

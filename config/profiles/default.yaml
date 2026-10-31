@@ -1,5 +1,5 @@
 architecture:
-  num_cores: 24
+  num_cores: 32
   interface_version: 2
 
 hardware:
@@ -87,6 +87,11 @@ software:
     # settings below, and committed; the Vitis host build stages it with the
     # driver.
     platform_header: software/host/xc7z020/gpgpu_platform.h
+    # RTL attribute that exports a package parameter or enum typedef to the
+    # header, e.g. (* host *) localparam ... ; the RTL markers must use it.
+    export_attribute: host
+    # Prefix of every generated #define; the host driver uses these names.
+    define_prefix: GPGPU_
     # Wait for completion with the PS interrupt (true) or by polling
     # IRQ_STATUS (false).
     use_irq: true

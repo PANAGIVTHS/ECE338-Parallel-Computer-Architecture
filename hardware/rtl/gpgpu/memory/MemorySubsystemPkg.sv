@@ -8,7 +8,7 @@ package MemorySubsystemPkg;
     localparam int unsigned MAX_BEATS = 16;
     localparam int unsigned WINDOW_BYTES = MAX_BEATS * (AXI_DATA_W / 8);
 
-    typedef enum logic [2:0] {
+    (* host *) typedef enum logic [2:0] {
         ST_OK         = 3'd0,
         ST_UNMAPPED   = 3'd1, // no side effect
         ST_PERMISSION = 3'd2, // no side effect

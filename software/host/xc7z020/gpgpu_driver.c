@@ -39,9 +39,9 @@ void gpgpu_print_status(void)
 
     xil_printf("INFO = 0x%08x\r\n", (unsigned int)info);
     xil_printf("STATUS = 0x%08x\r\n", (unsigned int)status);
-    xil_printf("  idle = %u\r\n", (unsigned int)!!(status & GPGPU_STATUS_IDLE));
-    xil_printf("  running = %u\r\n", (unsigned int)!!(status & GPGPU_STATUS_RUNNING));
-    xil_printf("  stopped = %u\r\n", (unsigned int)!!(status & GPGPU_STATUS_STOPPED));
+    xil_printf("  idle = %u\r\n", (unsigned int)!!(status & GPGPU_STATUS_IDLE_MASK));
+    xil_printf("  running = %u\r\n", (unsigned int)!!(status & GPGPU_STATUS_RUNNING_MASK));
+    xil_printf("  stopped = %u\r\n", (unsigned int)!!(status & GPGPU_STATUS_STOPPED_MASK));
     xil_printf("  irq_enabled = %u\r\n", (unsigned int)(irq_en & 1U));
     xil_printf("  irq_pending = %u\r\n", (unsigned int)(irq_st & 1U));
 }
@@ -49,7 +49,7 @@ void gpgpu_print_status(void)
 static int require_idle(const char *operation)
 {
     const u32 status = gpgpu_read_status();
-    if ((status & GPGPU_STATUS_IDLE) == 0U) {
+    if ((status & GPGPU_STATUS_IDLE_MASK) == 0U) {
         xil_printf("ERROR: %s requires an idle GPU (STATUS=0x%08x)\r\n",
                    operation, (unsigned int)status);
         return -1;
@@ -81,7 +81,7 @@ static int check_span(const char *memory, u32 offset, u32 count, u32 depth)
 
 int gpgpu_write_imem(u32 index, u32 word)
 {
-    if (check_index("IMEM", index, GPGPU_IMEM_WORDS) != 0 ||
+    if (check_index("IMEM", index, GPGPU_IMEM_ENTRIES) != 0 ||
         require_idle("IMEM write") != 0)
         return -1;
     gpu_write(GPGPU_IMEM_BASE + 4U * index, word);
@@ -90,7 +90,7 @@ int gpgpu_write_imem(u32 index, u32 word)
 
 int gpgpu_write_dmem(u32 index, u32 word)
 {
-    if (check_index("DMEM", index, GPGPU_DMEM_WORDS) != 0 ||
+    if (check_index("DMEM", index, GPGPU_DMEM_ENTRIES) != 0 ||
         require_idle("DMEM write") != 0)
         return -1;
     gpu_write(GPGPU_DMEM_BASE + 4U * index, word);
@@ -99,7 +99,7 @@ int gpgpu_write_dmem(u32 index, u32 word)
 
 int gpgpu_read_imem(u32 index, u32 *data)
 {
-    if (data == NULL || check_index("IMEM", index, GPGPU_IMEM_WORDS) != 0 ||
+    if (data == NULL || check_index("IMEM", index, GPGPU_IMEM_ENTRIES) != 0 ||
         require_idle("IMEM read") != 0)
         return -1;
     *data = gpu_read(GPGPU_IMEM_BASE + 4U * index);
@@ -108,7 +108,7 @@ int gpgpu_read_imem(u32 index, u32 *data)
 
 int gpgpu_read_dmem(u32 index, u32 *data)
 {
-    if (data == NULL || check_index("DMEM", index, GPGPU_DMEM_WORDS) != 0 ||
+    if (data == NULL || check_index("DMEM", index, GPGPU_DMEM_ENTRIES) != 0 ||
         require_idle("DMEM read") != 0)
         return -1;
     *data = gpu_read(GPGPU_DMEM_BASE + 4U * index);
@@ -187,7 +187,7 @@ int gpgpu_start_and_wait(void)
     if (require_idle("START") != 0)
         return -1;
     status = gpgpu_read_status();
-    if ((status & GPGPU_STATUS_STOPPED) != 0U) {
+    if ((status & GPGPU_STATUS_STOPPED_MASK) != 0U) {
         xil_printf("ERROR: GPU STOPPED latch set; refusing START\r\n");
         return -1;
     }
@@ -203,7 +203,7 @@ int gpgpu_start_and_wait(void)
 #endif
 
     xil_printf("Starting core...\r\n");
-    gpu_write(GPGPU_REG_CONTROL, GPGPU_CONTROL_START);
+    gpu_write(GPGPU_REG_CONTROL, GPGPU_CONTROL_START_MASK);
 
     /* No timeout: a kernel that never completes blocks here forever. */
 #if GPGPU_USE_IRQ
@@ -217,7 +217,7 @@ int gpgpu_start_and_wait(void)
     gpu_write(GPGPU_REG_IRQ_STATUS, 1U);
 #endif
 
-    if ((gpgpu_read_status() & GPGPU_STATUS_IDLE) == 0U) {
+    if ((gpgpu_read_status() & GPGPU_STATUS_IDLE_MASK) == 0U) {
         xil_printf("ERROR: completion observed, but GPU is not IDLE\r\n");
         gpgpu_print_status();
         return -1;
@@ -230,7 +230,7 @@ int gpgpu_start_and_wait(void)
 int gpgpu_dump_imem_ascii(u32 offset, u32 count)
 {
     u32 word;
-    if (check_span("IMEM", offset, count, GPGPU_IMEM_WORDS) != 0 ||
+    if (check_span("IMEM", offset, count, GPGPU_IMEM_ENTRIES) != 0 ||
         require_idle("IMEM dump") != 0)
         return -1;
     xil_printf("BEGIN_IMEM_DUMP\r\n");
@@ -247,7 +247,7 @@ int gpgpu_dump_imem_ascii(u32 offset, u32 count)
 int gpgpu_dump_dmem_ascii(u32 offset, u32 count)
 {
     u32 word;
-    if (check_span("DMEM", offset, count, GPGPU_DMEM_WORDS) != 0 ||
+    if (check_span("DMEM", offset, count, GPGPU_DMEM_ENTRIES) != 0 ||
         require_idle("DMEM dump") != 0)
         return -1;
     xil_printf("BEGIN_DMEM_DUMP\r\n");

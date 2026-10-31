@@ -1,53 +1,48 @@
 """Generate the host driver's platform header from the RTL and configuration.
 
-``ControlPkg`` is the single source of the host register map,
-``MemorySubsystemPkg`` of the memory status codes and ``gpu_pkg`` of the
-memory depths; the interface version and the driver's interrupt settings come
-from the configuration. The base address is not here: the Vitis
-flow defines GPGPU_BASEADDR from hardware.vivado.peripheral.base_address. The
-generated header is committed so the Vitis host build needs no generation step
-of its own.
-
-TODO(host-export markers): this module still hardcodes what to export:
-CONTROL_PACKAGE, MEMORY_PACKAGE, GPU_PACKAGE, STATUS_ENUM and the
-MEMORY_DEPTHS renaming. Planned fix: mark each host-visible declaration in the
-RTL with a trailing ``// host`` comment and scan every rtl_sources() file for
-marked lines, so the RTL alone decides what the header contains. Section
-titles then come from the enclosing ``package``, the driver uses
-GPGPU_IMEM_ENTRIES/GPGPU_DMEM_ENTRIES directly, and GPGPU_MAX_WORDS becomes an
-expression in gpgpu_driver.h. A marked line in an unsupported form, or a name
-exported twice, is an error.
+The RTL decides what the host sees: every package declaration marked with the
+SystemVerilog attribute named by software.host.export_attribute is exported as
+``<software.host.define_prefix><NAME>`` with the value pyslang elaborates for it. A marked parameter exports its value; a marked
+enum typedef exports each of its members. The interface version and the
+driver's interrupt settings come from the configuration. The base address is
+not here: the Vitis flow defines GPGPU_BASEADDR from
+hardware.vivado.peripheral.base_address. The generated header is committed so
+the Vitis host build needs no generation step of its own.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 import re
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 from doit.tools import config_changed
-from src.hardware_contract import rtl_sources
+import pyslang
+from pyslang import ast, parsing, syntax
+from src.hardware_contract import rtl_root, rtl_sources, string_list
 
 if TYPE_CHECKING:
     from config import ResolvedConfig
 
 
-CONTROL_PACKAGE = "ControlPkg"
-MEMORY_PACKAGE = "MemorySubsystemPkg"
-GPU_PACKAGE = "gpu_pkg"
-STATUS_ENUM = "mem_status_t"
-MEMORY_DEPTHS = {"IMEM_WORDS": "IMEM_ENTRIES", "DMEM_WORDS": "DMEM_ENTRIES"}
-
-_WORD_CONSTANT = re.compile(r"^\s*localparam\s+gpu_pkg::word_t\s+(\w+)\s*=\s*(.+?);", re.M)
-_HEX_LITERAL = re.compile(r"'h([0-9A-Fa-f_]+)")
-_BIT_CONSTANT = re.compile(r"^\s*localparam\s+int\s+unsigned\s+(\w+)_BIT\s*=\s*(\d+)\s*;", re.M)
-_ENUM_ENTRY = re.compile(r"(\w+)\s*=\s*\d*'d(\d+)")
+class Export(NamedTuple):
+    package: str
+    name: str
+    value: int
+    hex_digits: int | None  # None: decimal (integer types and enum members)
 
 
 def _positive_int(config: ResolvedConfig, key: str) -> int:
     value = config.get(key)
     if isinstance(value, bool) or not isinstance(value, int) or value < 1:
         raise ValueError(f"{key} must be a positive integer")
+    return value
+
+
+def _identifier(config: ResolvedConfig, key: str) -> str:
+    value = config.get(key)
+    if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", value):
+        raise ValueError(f"{key} must be an identifier")
     return value
 
 
@@ -58,99 +53,149 @@ def host_settings(config: ResolvedConfig) -> dict[str, Any]:
     if not isinstance(use_irq, bool):
         raise ValueError("software.host.use_irq must be true or false")
     return {
+        "export_attribute": _identifier(config, "software.host.export_attribute"),
+        "define_prefix": _identifier(config, "software.host.define_prefix"),
         "interface_version": _positive_int(config, "architecture.interface_version"),
         "use_irq": use_irq,
         "irq_id": _positive_int(config, "software.host.irq_id"),
     }
 
 
-def package_source(config: ResolvedConfig, package: str) -> Path:
-    """The single RTL source declaring *package*."""
+def production_sources(config: ResolvedConfig) -> tuple[list[Path], list[Path]]:
+    """(sources, headers) of the production IP: the RTL the host talks to."""
 
-    sources, _ = rtl_sources(config, [])
-    declares = re.compile(rf"^\s*package\s+{package}\s*;", re.M)
-    found = [path for path in sources if declares.search(path.read_text(encoding="utf-8"))]
-    if len(found) != 1:
-        raise ValueError(f"Exactly one RTL source must declare package {package}; found {found}")
-    return found[0]
+    return rtl_sources(config, string_list(config, "hardware.vivado.exclude_sources"))
 
 
-def _word_constants(text: str) -> list[tuple[str, int]]:
-    """Hex word constants; *_MASK constants are derived from *_BIT instead."""
-
-    constants = []
-    for name, value in _WORD_CONSTANT.findall(text):
-        if name.endswith("_MASK"):
-            continue
-        literal = _HEX_LITERAL.fullmatch(value.strip())
-        if literal is None:
-            raise ValueError(f"{CONTROL_PACKAGE}.{name} must be a plain 'h literal, got: {value}")
-        constants.append((name, int(literal[1].replace("_", ""), 16)))
-    if not constants:
-        raise ValueError(f"{CONTROL_PACKAGE} declares no register offsets")
-    return constants
+def _integer(symbol: Any, value: Any, attribute: str) -> int:
+    number = value.value
+    if number.hasUnknown:
+        raise ValueError(f"(* {attribute} *) {symbol.name} has unknown bits: {number}")
+    result = int(number)
+    if result < 0:
+        raise ValueError(f"(* {attribute} *) {symbol.name} is negative: {result}")
+    return result
 
 
-def _enum_values(text: str, enum: str) -> list[tuple[str, int]]:
-    match = re.search(r"typedef\s+enum\s+logic\s*\[[^\]]+\]\s*\{(.*?)\}\s*" + enum + r"\s*;", text, re.S)
-    if match is None:
-        raise ValueError(f"{MEMORY_PACKAGE} does not declare enum {enum}")
-    entries = [entry.strip() for entry in re.sub(r"//[^\n]*", "", match[1]).split(",")]
-    values = []
-    for entry in entries:
-        value = _ENUM_ENTRY.fullmatch(entry)
-        if value is None:
-            raise ValueError(f"{enum} entry must be an explicit NAME = N'dV value: {entry!r}")
-        values.append((value[1], int(value[2])))
-    return values
+def _symbol_exports(package: str, symbol: Any, attribute: str) -> list[Export]:
+    if symbol.kind == ast.SymbolKind.Parameter:
+        kind = symbol.type.canonicalType
+        digits = None if kind.isPredefinedInteger else (kind.bitWidth + 3) // 4
+        return [Export(package, symbol.name, _integer(symbol, symbol.value, attribute), digits)]
+    if symbol.kind == ast.SymbolKind.TypeAlias and symbol.targetType.type.canonicalType.isEnum:
+        return [Export(package, member.name, _integer(member, member.value, attribute), None)
+                for member in symbol.targetType.type.canonicalType]
+    raise ValueError(
+        f"(* {attribute} *) supports parameters and enum typedefs; "
+        f"{package}::{symbol.name} is a {symbol.kind.name}"
+    )
 
 
-def _int_constant(text: str, name: str) -> int:
-    match = re.search(rf"^\s*localparam\s+int\s+unsigned\s+{name}\s*=\s*(\d+)\s*;", text, re.M)
-    if match is None:
-        raise ValueError(f"{GPU_PACKAGE} must declare {name} as a plain integer")
-    return int(match[1])
+def collect_exports(trees: list[Any], source_manager: Any, options: Any,
+                    attribute: str) -> list[Export]:
+    """Exports of every package member marked ``(* attribute *)``, in source order.
+
+    Only files declaring a package are elaborated: the exports are package
+    constants, and the rest of the design need not satisfy slang's checks.
+    Every marker in *trees* must be on a package member.
+    """
+
+    def declares_package(tree: Any) -> bool:
+        # A one-item text parses with that item as the root, not a compilation unit.
+        items = tree.root.members if tree.root.kind == syntax.SyntaxKind.CompilationUnit else [tree.root]
+        return any(item.kind == syntax.SyntaxKind.PackageDeclaration for item in items)
+
+    packages = [tree for tree in trees if declares_package(tree)]
+    compilation = ast.Compilation(options)
+    for tree in packages:
+        compilation.addSyntaxTree(tree)
+    errors = [diagnostic for diagnostic in compilation.getAllDiagnostics() if diagnostic.isError()]
+    if errors:
+        engine = pyslang.DiagnosticEngine(source_manager)
+        client = pyslang.TextDiagnosticClient()
+        engine.addClient(client)
+        for diagnostic in errors:
+            engine.issue(diagnostic)
+        raise ValueError(f"RTL packages do not elaborate:\n{client.getString()}")
+
+    order = {tree.root.sourceRange.start.buffer: index for index, tree in enumerate(packages)}
+    marked = []
+    for package in compilation.getPackages():
+        for symbol in package:
+            if any(spec.name == attribute for spec in compilation.getAttributes(symbol)):
+                marked.append(((order[symbol.location.buffer], symbol.location.offset), package.name, symbol))
+    exports = [export for _, package, symbol in sorted(marked, key=lambda item: item[0])
+               for export in _symbol_exports(package, symbol, attribute)]
+
+    attributes = 0
+
+    def count(node: Any) -> None:
+        nonlocal attributes
+        if node.kind == syntax.SyntaxKind.AttributeSpec and node.name.valueText == attribute:
+            attributes += 1
+
+    for tree in trees:
+        tree.root.visit(count)
+    if attributes != len(marked):
+        raise ValueError(
+            f"{attributes} (* {attribute} *) attributes but {len(marked)} on package members: "
+            f"only package parameters and enum typedefs can be exported"
+        )
+    names = [export.name for export in exports]
+    duplicates = sorted({name for name in names if names.count(name) > 1})
+    if duplicates:
+        raise ValueError(f"(* {attribute} *) exports these names twice: {', '.join(duplicates)}")
+    if not exports:
+        raise ValueError(f"No (* {attribute} *) declarations found in the RTL packages")
+    return exports
 
 
-def render_header(control_text: str, memory_text: str, gpu_text: str,
-                  settings: dict[str, Any]) -> str:
-    """The C header text for the given package sources and host settings."""
+def read_exports(sources: list[Path], include_directory: Path, attribute: str) -> list[Export]:
+    preprocessor = parsing.PreprocessorOptions()
+    preprocessor.additionalIncludePaths = [str(include_directory)]
+    options = pyslang.Bag([preprocessor])
+    source_manager = pyslang.SourceManager()
+    trees = [syntax.SyntaxTree.fromFile(str(path), source_manager, options) for path in sources]
+    return collect_exports(trees, source_manager, options, attribute)
+
+
+def include_guard(header: Path) -> str:
+    """The include guard derived from the header's file name."""
+
+    return re.sub(r"\W", "_", header.name).upper()
+
+
+def render_header(exports: list[Export], settings: dict[str, Any], guard: str) -> str:
+    """The C header text for the given exports and host settings."""
 
     lines = []
 
     def define(name: str, value: str) -> None:
-        lines.append(f"#define GPGPU_{name:<28} {value}")
+        lines.append(f"#define {settings['define_prefix']}{name:<28} {value}")
 
     lines += [
         "/* Generated by tools/software/host_platform.py (task software:host:platform)",
-        f" * from {CONTROL_PACKAGE}, {MEMORY_PACKAGE}, {GPU_PACKAGE} and the configuration.",
-        " * Do not edit: change the RTL packages or the configuration and regenerate.",
+        f" * from the (* {settings['export_attribute']} *) declarations in the RTL and the configuration.",
+        " * Do not edit: change the RTL or the configuration and regenerate.",
         " */",
-        "#ifndef GPGPU_PLATFORM_H",
-        "#define GPGPU_PLATFORM_H",
+        f"#ifndef {guard}",
+        f"#define {guard}",
         "",
         "/* Interface version reported in INFO[31:16] (architecture.interface_version). */",
     ]
     define("INTERFACE_VERSION", f"{settings['interface_version']}U")
-    lines += ["", f"/* Memory depths in 32-bit words ({GPU_PACKAGE}). */"]
-    depths = {name: _int_constant(gpu_text, constant) for name, constant in MEMORY_DEPTHS.items()}
-    for name, value in depths.items():
-        define(name, f"{value}U")
-    define("MAX_WORDS", f"{max(depths.values())}U")
-    lines += ["", f"/* Register and memory-window byte offsets ({CONTROL_PACKAGE}). */"]
-    for name, value in _word_constants(control_text):
-        define(name, f"0x{value:04X}U")
-    lines += ["", f"/* Register bits and masks ({CONTROL_PACKAGE}). */"]
-    for name, bit in _BIT_CONSTANT.findall(control_text):
-        define(f"{name}_BIT", f"{bit}U")
-        define(name, f"0x{1 << int(bit):08X}U")
-    lines += ["", f"/* Memory access status codes ({MEMORY_PACKAGE}::{STATUS_ENUM}). */"]
-    for name, value in _enum_values(memory_text, STATUS_ENUM):
-        define(name, f"{value}U")
+    package = None
+    for export in exports:
+        if export.package != package:
+            package = export.package
+            lines += ["", f"/* {package} */"]
+        value = (f"{export.value}U" if export.hex_digits is None
+                 else f"0x{export.value:0{export.hex_digits}X}U")
+        define(export.name, value)
     lines += ["", "/* Completion wait: PS interrupt or IRQ_STATUS polling (software.host). */"]
     define("USE_IRQ", "1" if settings["use_irq"] else "0")
     define("IRQ_ID", f"{settings['irq_id']}U")
-    lines += ["", "#endif /* GPGPU_PLATFORM_H */", ""]
+    lines += ["", f"#endif /* {guard} */", ""]
     return "\n".join(lines)
 
 
@@ -161,26 +206,23 @@ def header_path(config: ResolvedConfig) -> Path:
     return config.repo_root / value
 
 
-def write_header(control: Path, memory: Path, gpu: Path, settings: dict[str, Any],
+def write_header(sources: list[Path], include_directory: Path, settings: dict[str, Any],
                  output: Path) -> None:
-    output.write_text(
-        render_header(*(path.read_text(encoding="utf-8") for path in (control, memory, gpu)),
-                      settings),
-        encoding="utf-8",
-    )
+    exports = read_exports(sources, include_directory, settings["export_attribute"])
+    output.write_text(render_header(exports, settings, include_guard(output)), encoding="utf-8")
 
 
 def create_tasks(config: ResolvedConfig) -> list[dict[str, Any]]:
     """The platform-header generation task."""
 
-    packages = [package_source(config, name) for name in (CONTROL_PACKAGE, MEMORY_PACKAGE, GPU_PACKAGE)]
+    sources, headers = production_sources(config)
     settings = host_settings(config)
     output = header_path(config)
     return [
         {
             "name": "software:host:platform",
-            "actions": [(write_header, [*packages, settings, output])],
-            "file_dep": [*map(str, packages), str(Path(__file__).resolve())],
+            "actions": [(write_header, [sources, rtl_root(config), settings, output])],
+            "file_dep": [*map(str, (*sources, *headers)), str(Path(__file__).resolve())],
             "targets": [str(output)],
             "uptodate": [config_changed(settings)],
         }
