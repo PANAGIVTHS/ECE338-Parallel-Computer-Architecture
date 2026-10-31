@@ -1,4 +1,4 @@
-import gpu_pkg::*;
+import DDRBackendPkg::*;
 import MemorySubsystemPkg::*;
 
 module MemorySubsystem #(
@@ -35,15 +35,13 @@ module MemorySubsystem #(
         $fatal(1, "DDR_ENABLE=1: the DDR backend is not implemented yet");
     end
 
+    // Request expansions
     mem_req_t [NUM_REQ-1:0] req;
     logic [NUM_REQ-1:0] req_valid;
     logic [NUM_REQ-1:0] rsp_ready;
     logic [NUM_REQ-1:0] is_idle;
 
-    word_t bram_rdata [NUM_REQ-1:0];
-    logic [NUM_REQ-1:0] bram_cand;
-    logic [NUM_REQ-1:0] bram_take;
-    logic [NUM_REQ-1:0] bram_accept;
+    BRAMBackendInterface bram_if [NUM_REQ] ();
     logic bram_busy;
 
     for (genvar i = 0; i < NUM_REQ; i++) begin : gen_reqs
@@ -59,18 +57,13 @@ module MemorySubsystem #(
             .clk(clk),
             .rst_n(rst_n),
             .en(i_req_enable),
-            .rsp_ready(rsp_ready[i]),
             .req_valid(req_valid[i]),
-            .req(req[i]),
-            .bram_accept(bram_accept[i]),
-            .bram_rdata(bram_rdata[i]),
-            .ddr_accept('b0),
             .req_ready(memory_if[i].req_ready),
             .rsp_valid(memory_if[i].rsp_valid),
+            .rsp_ready(rsp_ready[i]),
+            .req(req[i]),
             .rsp(memory_if[i].rsp),
-            .bram_cand(bram_cand[i]),
-            .bram_take(bram_take[i]),
-            .ddr_cand(),
+            .bram_if(bram_if[i]),
             .is_idle(is_idle[i])
         );
     end
@@ -82,11 +75,14 @@ module MemorySubsystem #(
         .clk(clk),
         .rst_n(rst_n),
         .req(req),
-        .bram_cand(bram_cand),
-        .bram_take(bram_take),
-        .bram_accept(bram_accept),
-        .bram_rdata(bram_rdata),
+        .bram_if(bram_if),
         .bram_busy(bram_busy)
+    );
+
+    DDRBackend #(
+        .NUM_REQ(NUM_REQ)
+    ) ddrBackend (
+        
     );
 
     assign o_idle = (&is_idle) & ~bram_busy;

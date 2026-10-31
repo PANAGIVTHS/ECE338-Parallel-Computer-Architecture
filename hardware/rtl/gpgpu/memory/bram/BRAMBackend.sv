@@ -9,16 +9,20 @@ module BRAMBackend
     input clk,
     input rst_n,
 
-    //! Requests and ready
     input mem_req_t [NUM_REQ-1:0] req,
-    input logic [NUM_REQ-1:0] bram_cand,
-    input logic [NUM_REQ-1:0] bram_take,
+    BRAMBackendInterface.responder bram_if [NUM_REQ],
 
-    //! Responses
-    output logic [NUM_REQ-1:0] bram_accept,
-    output word_t bram_rdata [NUM_REQ-1:0],
     output logic bram_busy
 );
+
+    //& =============================================
+    //& PORT EXPANSION
+    //& =============================================
+    logic [NUM_REQ-1:0] cand, take;
+    for (genvar i = 0; i < NUM_REQ; i++) begin : cand_expand
+        assign cand[i] = bram_if[i].cand;
+        assign take[i] = bram_if[i].take;
+    end
 
     //& =============================================
     //& BUSY PORT MANAGING
@@ -33,7 +37,7 @@ module BRAMBackend
     wire [1:0] available = ~hold;
 
     for (genvar i = 0; i < 2; i++) begin : hold_ports
-        assign hold[i] = busy[i] & ~bram_take[owners[i]];
+        assign hold[i] = busy[i] & ~take[owners[i]];
     end
 
     assign bram_busy = busy[0] | busy[1];
@@ -49,7 +53,7 @@ module BRAMBackend
         .N(NUM_REQ),
         .M(2)
     ) arbiterMLowest (
-        .req(bram_cand),
+        .req(cand),
         .grant(),
         .win_oh(win_oh),
         .win_vld(win_vld),
@@ -68,7 +72,10 @@ module BRAMBackend
     logic [1:0] win_issue;
     assign win_issue[0] = (available[0] | available[1]) & win_vld[0];
     assign win_issue[1] = (available[0] & available[1]) & win_vld[1] & ~conflict;
-    assign bram_accept = (win_issue[0] ? win_oh[0] : '0) | (win_issue[1] ? win_oh[1] : '0);
+
+    for (genvar i = 0; i < NUM_REQ; i++) begin : accept_join
+        assign bram_if[i].accept = (win_issue[0] ? win_oh[0][i] : '0) | (win_issue[1] ? win_oh[1][i] : '0);
+    end
 
     MemoryInterface #(
         .ADDR_WIDTH(DMEM_AW)
@@ -106,13 +113,13 @@ module BRAMBackend
             if (portA_load) begin 
                 busy[0] <= 1'b1; 
                 owners[0] <= portA_idx; 
-            end else if (busy[0] & bram_take[owners[0]]) 
+            end else if (busy[0] & take[0]) 
                 busy[0] <= 1'b0;
             
             if (portB_load) begin 
                 busy[1] <= 1'b1;
                 owners[1] <= portB_idx; 
-            end else if (busy[1] & bram_take[owners[1]]) 
+            end else if (busy[1] & take[1]) 
                 busy[1] <= 1'b0;
         end
     end
@@ -135,11 +142,11 @@ module BRAMBackend
     for (genvar g = 0; g < NUM_REQ; g = g + 1) begin : routing
         always_comb begin
             if (busy[0] && owners[0] == g[IDX_W-1:0]) begin
-                bram_rdata[g] = port_a.rdata;
+                bram_if[g].rdata = port_a.rdata;
             end else if (busy[1] && owners[1] == g[IDX_W-1:0]) begin
-                bram_rdata[g] = port_b.rdata;
+                bram_if[g].rdata = port_b.rdata;
             end else begin
-                bram_rdata[g] = '0;
+                bram_if[g].rdata = '0;
             end
         end
     end
