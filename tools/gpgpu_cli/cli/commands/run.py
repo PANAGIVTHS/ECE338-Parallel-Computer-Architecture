@@ -39,6 +39,10 @@ Possible values:
 
 Example: `software:programs:simple:x86`
 
+[bold cyan]Host[/bold cyan]
+
+• `software:host:platform` — Regenerate the driver header `software.host.platform_header` from `ControlPkg`, `MemorySubsystemPkg`, `gpu_pkg`, `architecture.interface_version` and `software.host`.
+
 [bold cyan]Tests[/bold cyan]
 
 • `tests:rtl:generate` — Generate shared test programs and expected-memory files.
@@ -123,7 +127,7 @@ def _format_task_help(text: str) -> str:
         value = match[1]
         style = (
             "bold bright_green"
-            if value.startswith(("software:programs:", "tests:rtl:", "vivado:", "vitis:", "fpga:"))
+            if value.startswith(("software:programs:", "software:host:", "tests:rtl:", "vivado:", "vitis:", "fpga:"))
             else "yellow"
         )
         return f"[{style}]{escape(value)}[/{style}]"

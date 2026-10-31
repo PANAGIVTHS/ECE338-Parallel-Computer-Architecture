@@ -53,12 +53,14 @@ def test_public_graph_always_rebuilds_hardware_dependency_even_if_xsa_exists(tmp
     assert tasks[0]['task_dep'] == ['vivado:system:build']
     assert str(xsa) in tasks[0]['file_dep']
     assert tasks[1]['task_dep'] == ['vitis:project']
-    assert tasks[2]['task_dep'] == ['vitis:build:platform']
+    assert tasks[2]['task_dep'] == ['vitis:build:platform', 'software:host:platform']
     assert tasks[3]['task_dep'] == ['vitis:build:host']
     assert not tasks[4].get('task_dep')
     assert str(tmp_path / 'src/gpgpu_driver.h') in tasks[2]['file_dep']
     assert not any('old_platform' in p for t in tasks for p in t.get('file_dep', []))
-    effective = TaskControl([dict_to_task({'name': 'vivado:system:build', 'actions': [], 'targets': [str(xsa)]}), *(dict_to_task(t) for t in tasks)])
+    effective = TaskControl([dict_to_task({'name': 'vivado:system:build', 'actions': [], 'targets': [str(xsa)]}),
+                             dict_to_task({'name': 'software:host:platform', 'actions': []}),
+                             *(dict_to_task(t) for t in tasks)])
     effective.process(['vitis:build:all'])  # actual pydoit graph, including inferred file edges
     assert effective.tasks['vitis:project'].task_dep == ['vivado:system:build']
     assert 'vitis:build:host' not in effective.tasks['vitis:project'].task_dep
@@ -201,7 +203,9 @@ def create_client(): return Client()
         def load_doit_config(self): return {'dep_file': str(tmp_path / 'doit.db'), 'verbosity': 2}
         def load_tasks(self, cmd, pos_args):
             upstream = {'name': 'vivado:system:build', 'actions': [hardware_build], 'file_dep': [str(hardware_input)], 'targets': [str(xsa)]}
-            return [dict_to_task(upstream), *(dict_to_task(task) for task in vitis.create_tasks(config))]
+            platform = {'name': 'software:host:platform', 'actions': []}
+            return [dict_to_task(upstream), dict_to_task(platform),
+                    *(dict_to_task(task) for task in vitis.create_tasks(config))]
     def run():
         assert DoitMain(Loader()).run(['run', 'vitis:build:all']) == 0
     run()

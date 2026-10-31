@@ -14,7 +14,8 @@ module tb_GPGPU_e2e
     import ControlPkg::*;
     import gpu_pkg::*;
 #(
-    parameter int unsigned NUM_CORES
+    parameter int unsigned NUM_CORES,
+    parameter int unsigned INTERFACE_VERSION
 ) ();
 
     // AXI response codes
@@ -81,7 +82,6 @@ module tb_GPGPU_e2e
     integer axi_timeout_cycles;
     reg [31:0] ret_instr;
     reg [31:0] unmapped_addr;
-    reg [31:0] info_version;
     bit settings_ready = 1'b0;
 
     // ============================================================
@@ -89,7 +89,8 @@ module tb_GPGPU_e2e
     // ============================================================
 
     gpgpu_axi #(
-        .SP_PER_SM(NUM_CORES)
+        .SP_PER_SM(NUM_CORES),
+        .INTERFACE_VERSION(INTERFACE_VERSION)
     ) UUT (
         .irq(irq),
         .o_core_idle(o_core_idle),
@@ -314,7 +315,6 @@ module tb_GPGPU_e2e
         `REQUIRE_PLUSARG("AXI_TIMEOUT_CYCLES=%d", axi_timeout_cycles)
         `REQUIRE_PLUSARG("RET_INSTR=%h", ret_instr)
         `REQUIRE_PLUSARG("UNMAPPED_ADDR=%h", unmapped_addr)
-        `REQUIRE_PLUSARG("INFO_VERSION=%d", info_version)
         settings_ready = 1'b1;
 
         has_test_end = $value$plusargs("TEST_END=%d", test_end) != 0;
@@ -332,7 +332,7 @@ module tb_GPGPU_e2e
         csr_errors = 0;
 
         $display("\n[INFO] ---> Checking host interface...");
-        expect_csr(REG_INFO, {info_version[XLEN/2-1:0], (XLEN/2)'(NUM_CORES)}, "INFO");
+        expect_csr(REG_INFO, {(XLEN/2)'(INTERFACE_VERSION), (XLEN/2)'(NUM_CORES)}, "INFO");
         expect_csr(REG_STATUS, STATUS_IDLE_MASK, "STATUS");
         expect_csr(REG_IRQ_ENABLE, 32'd0, "IRQ_ENABLE");
         expect_csr(REG_IRQ_STATUS, 32'd0, "IRQ_STATUS");

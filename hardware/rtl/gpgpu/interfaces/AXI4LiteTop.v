@@ -5,6 +5,9 @@
 	(
 		// Users to add parameters here
         parameter integer SP_PER_SM = 32,
+        // Set by IP packaging from architecture.interface_version; the CSR
+        // bank rejects 0 at elaboration.
+        parameter integer INTERFACE_VERSION = 0,
 		// User parameters ends
 		// Do not modify the parameters beyond this line
 
@@ -110,7 +113,8 @@
 	// Add user logic here
 
     GPGPU #(
-        .SP_PER_SM(SP_PER_SM)
+        .SP_PER_SM(SP_PER_SM),
+        .INTERFACE_VERSION(INTERFACE_VERSION)
     ) gpu (
         .clk(s00_axi_aclk),
         .rst_n(s00_axi_aresetn),

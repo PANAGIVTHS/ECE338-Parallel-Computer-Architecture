@@ -5,7 +5,7 @@ import shutil
 
 import pytest
 from doit.tools import config_changed
-from tools.software import programs
+from tools.software import host_platform, programs
 
 
 class StubResolvedConfig:
@@ -199,3 +199,107 @@ def test_x86_task_builds_and_runs_the_native_executable(tmp_path: Path) -> None:
     assert run_task["task_dep"] == ["software:programs:example:x86:build"]
     assert run_task["uptodate"] == [False]
     assert marker.read_text(encoding="utf-8") == "executed"
+
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+SETTINGS = {"interface_version": 7, "use_irq": False, "irq_id": 61}
+CONTROL_TEXT = (
+    "localparam gpu_pkg::word_t REG_INFO = 'h0000;\n"
+    "localparam gpu_pkg::word_t REG_STATUS = 'h0_024;\n"
+    "localparam int unsigned STATUS_STOPPED_BIT = 2;\n"
+    "localparam gpu_pkg::word_t STATUS_STOPPED_MASK = gpu_pkg::word_t'(1) << STATUS_STOPPED_BIT;\n"
+)
+MEMORY_TEXT = (
+    "typedef enum logic [2:0] {\n"
+    "    ST_OK = 3'd0, // comment, with comma\n"
+    "    ST_SLVERR = 3'd4\n"
+    "} mem_status_t;\n"
+)
+GPU_TEXT = (
+    "localparam int unsigned IMEM_ENTRIES = 1024;\n"
+    "localparam int unsigned DMEM_ENTRIES = 4096;\n"
+)
+
+
+def header_values(header: str) -> dict[str, str]:
+    return dict(
+        line.split()[1:3] for line in header.splitlines()
+        if line.startswith("#define GPGPU_") and len(line.split()) == 3
+    )
+
+
+def test_committed_platform_header_matches_rtl_and_configuration() -> None:
+    from config import resolve_config
+
+    config = resolve_config(REPO_ROOT)
+    [task] = host_platform.create_tasks(config)
+    control, memory, gpu, settings, output = task["actions"][0][1]
+    assert output == host_platform.header_path(config)
+    assert settings == host_platform.host_settings(config)
+    expected = host_platform.render_header(
+        *(path.read_text(encoding="utf-8") for path in (control, memory, gpu)), settings
+    )
+    assert output.read_text(encoding="utf-8") == expected, (
+        "gpgpu_platform.h is stale: run software:host:platform"
+    )
+    assert task["name"] == "software:host:platform"
+    assert task["targets"] == [str(output)]
+    assert {str(control), str(memory), str(gpu)} <= set(task["file_dep"])
+    assert task["uptodate"][0].config == settings
+
+
+def test_platform_header_derives_every_value_from_its_inputs() -> None:
+    values = header_values(host_platform.render_header(CONTROL_TEXT, MEMORY_TEXT, GPU_TEXT, SETTINGS))
+    assert values == {
+        "GPGPU_INTERFACE_VERSION": "7U",
+        "GPGPU_IMEM_WORDS": "1024U",
+        "GPGPU_DMEM_WORDS": "4096U",
+        "GPGPU_MAX_WORDS": "4096U",
+        "GPGPU_REG_INFO": "0x0000U",
+        "GPGPU_REG_STATUS": "0x0024U",
+        "GPGPU_STATUS_STOPPED_BIT": "2U",
+        "GPGPU_STATUS_STOPPED": "0x00000004U",
+        "GPGPU_ST_OK": "0U",
+        "GPGPU_ST_SLVERR": "4U",
+        "GPGPU_USE_IRQ": "0",
+        "GPGPU_IRQ_ID": "61U",
+    }
+
+
+@pytest.mark.parametrize(
+    ("control", "memory", "gpu", "message"),
+    [
+        ("localparam gpu_pkg::word_t REG_X = 'h10 + 4;\n", MEMORY_TEXT, GPU_TEXT, "plain 'h literal"),
+        ("", MEMORY_TEXT, GPU_TEXT, "no register offsets"),
+        (CONTROL_TEXT, "typedef enum logic [2:0] {\n ST_OK = 0\n} mem_status_t;\n", GPU_TEXT, "explicit"),
+        (CONTROL_TEXT, "", GPU_TEXT, "does not declare enum"),
+        (CONTROL_TEXT, MEMORY_TEXT, "localparam int unsigned IMEM_ENTRIES = 2 * 1024;\n", "IMEM_ENTRIES"),
+    ],
+)
+def test_platform_header_rejects_unparseable_rtl(control: str, memory: str, gpu: str, message: str) -> None:
+    with pytest.raises(ValueError, match=message):
+        host_platform.render_header(control, memory, gpu, SETTINGS)
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("software.host.use_irq", 1),
+        ("software.host.irq_id", 0),
+        ("architecture.interface_version", -1),
+    ],
+)
+def test_platform_settings_have_no_fallback(key: str, value: object) -> None:
+    values = {
+        "architecture.interface_version": 2,
+        "software.host.use_irq": True,
+        "software.host.irq_id": 61,
+        key: value,
+    }
+
+    class Config:
+        def get(self, name: str):
+            return values[name]
+
+    with pytest.raises(ValueError, match=key):
+        host_platform.host_settings(Config())  # type: ignore[arg-type]

@@ -15,6 +15,7 @@ class StubResolvedConfig:
     def get(self, key):
         return {
             "architecture.num_cores": 8,
+            "architecture.interface_version": 2,
             "tools.python.command": sys.executable,
             "tools.verilator.command": "verilator-configured",
             "tools.make.command": "make-configured",

@@ -173,6 +173,7 @@ def create_tasks(config: ResolvedConfig) -> list[dict[str, Any]]:
     trace_flags = string_list(config, "tests.rtl.trace.verilator_flags")
     dump_file = _configured_command(config, "tests.rtl.trace.dump_file")
     num_cores = _configured_positive_int(config, "architecture.num_cores")
+    interface_version = _configured_positive_int(config, "architecture.interface_version")
     range_args = rtl_range_plusargs(_configured_command(config, "tests.rtl.range"))
     assembler = repo_root / "tools/tests/assembler.py"
     expected_generator = repo_root / "tools/tests/expected_generator.py"
@@ -257,6 +258,7 @@ def create_tasks(config: ResolvedConfig) -> list[dict[str, Any]]:
             verilator, "--binary", "--timing", "--assert", "--autoflush", "-Wno-fatal",
             "--timescale", "1ns/1ps", f"-I{rtl_src_root}", "-DSIM",
             "--top-module", testbench_tops[suite], f"-GNUM_CORES={num_cores}",
+            f"-GINTERFACE_VERSION={interface_version}",
             "--Mdir", str(suite_build_root), "-o", executable.name,
             "-MAKEFLAGS", shlex.join([f"CXX={cxx}", f"LINK={cxx}"]),
             *(trace_flags if trace else []),

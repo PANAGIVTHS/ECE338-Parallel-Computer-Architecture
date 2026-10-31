@@ -3,7 +3,8 @@ module CSRBank
     import gpu_pkg::*;
     import ControlPkg::*;
 #(
-    parameter int unsigned SP_PER_SM = 32
+    parameter int unsigned SP_PER_SM = 32,
+    parameter int unsigned INTERFACE_VERSION
 ) (
     input logic clk,
     input logic rst_n,
@@ -69,16 +70,20 @@ module CSRBank
     assign write_value = i_wdata & write_mask;
 
     // ========================================================================
-    // CSR: INFO (0x0000) - Read-Only Device Information
+    // CSR: INFO - Read-Only Device Information
     // ========================================================================
     
     localparam int unsigned INFO_FIELD_WIDTH = XLEN / 2;
 
-    localparam logic [INFO_FIELD_WIDTH-1:0] INTERFACE_VERSION = INFO_FIELD_WIDTH'(1);
+    if (INTERFACE_VERSION == 0 || INTERFACE_VERSION >= (1 << INFO_FIELD_WIDTH)) begin : g_version_check
+        $fatal(1, "INTERFACE_VERSION must be in 1..%0d", (1 << INFO_FIELD_WIDTH) - 1);
+    end
+
+    localparam logic [INFO_FIELD_WIDTH-1:0] VERSION_FIELD = INFO_FIELD_WIDTH'(INTERFACE_VERSION);
     localparam logic [INFO_FIELD_WIDTH-1:0] SP_COUNT = INFO_FIELD_WIDTH'(SP_PER_SM);
 
     // ========================================================================
-    // CSR: CONTROL (0x0004) - START / STOP Commands
+    // CSR: CONTROL - START / STOP Commands
     // ========================================================================
 
     logic control_write;
@@ -87,7 +92,7 @@ module CSRBank
     assign o_stop = control_write && (write_value == CONTROL_STOP_MASK);
 
     // ========================================================================
-    // CSR: STATUS (0x0008) - Device State / STOPPED Clear
+    // CSR: STATUS - Device State / STOPPED Clear
     // ========================================================================
 
     word_t status;
@@ -104,7 +109,7 @@ module CSRBank
         (write_value & STATUS_STOPPED_MASK) != '0;
 
     // ========================================================================
-    // CSR: IRQ_ENABLE (0x000C) - Interrupt Enable
+    // CSR: IRQ_ENABLE - Interrupt Enable
     // ========================================================================
 
     logic irq_enable;
@@ -122,7 +127,7 @@ module CSRBank
     end
 
     // ========================================================================
-    // CSR: IRQ_STATUS (0x0010) - IRQ Fired / W1C
+    // CSR: IRQ_STATUS - IRQ Fired / W1C
     // ========================================================================
 
     logic irq_status;
@@ -159,13 +164,17 @@ module CSRBank
     
         case (i_addr)
 
+            // ---------------- Identity block ----------------
+
             REG_INFO: begin
                 if (i_write) begin
                     o_status = RSP_ACCESS_DENIED;
                 end else begin
-                    o_rdata = {INTERFACE_VERSION, SP_COUNT};
+                    o_rdata = {VERSION_FIELD, SP_COUNT};
                 end
             end
+
+            // ---------------- Control block ----------------
 
             REG_CONTROL: begin
                 if (!i_write) begin

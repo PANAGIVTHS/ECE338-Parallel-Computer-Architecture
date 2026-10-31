@@ -81,7 +81,7 @@ static int check_span(const char *memory, u32 offset, u32 count, u32 depth)
 
 int gpgpu_write_imem(u32 index, u32 word)
 {
-    if (check_index("IMEM", index, IMEM_WORDS) != 0 ||
+    if (check_index("IMEM", index, GPGPU_IMEM_WORDS) != 0 ||
         require_idle("IMEM write") != 0)
         return -1;
     gpu_write(GPGPU_IMEM_BASE + 4U * index, word);
@@ -90,7 +90,7 @@ int gpgpu_write_imem(u32 index, u32 word)
 
 int gpgpu_write_dmem(u32 index, u32 word)
 {
-    if (check_index("DMEM", index, DMEM_WORDS) != 0 ||
+    if (check_index("DMEM", index, GPGPU_DMEM_WORDS) != 0 ||
         require_idle("DMEM write") != 0)
         return -1;
     gpu_write(GPGPU_DMEM_BASE + 4U * index, word);
@@ -99,7 +99,7 @@ int gpgpu_write_dmem(u32 index, u32 word)
 
 int gpgpu_read_imem(u32 index, u32 *data)
 {
-    if (data == NULL || check_index("IMEM", index, IMEM_WORDS) != 0 ||
+    if (data == NULL || check_index("IMEM", index, GPGPU_IMEM_WORDS) != 0 ||
         require_idle("IMEM read") != 0)
         return -1;
     *data = gpu_read(GPGPU_IMEM_BASE + 4U * index);
@@ -108,7 +108,7 @@ int gpgpu_read_imem(u32 index, u32 *data)
 
 int gpgpu_read_dmem(u32 index, u32 *data)
 {
-    if (data == NULL || check_index("DMEM", index, DMEM_WORDS) != 0 ||
+    if (data == NULL || check_index("DMEM", index, GPGPU_DMEM_WORDS) != 0 ||
         require_idle("DMEM read") != 0)
         return -1;
     *data = gpu_read(GPGPU_DMEM_BASE + 4U * index);
@@ -162,7 +162,7 @@ static int initialize_interrupts(void)
 int gpgpu_init(void)
 {
     const u32 info = gpu_read(GPGPU_REG_INFO);
-    if ((info >> 16) != 1U) {
+    if ((info >> 16) != GPGPU_INTERFACE_VERSION) {
         xil_printf("ERROR: unsupported GPU MMIO version: INFO=0x%08x\r\n",
                    (unsigned int)info);
         return -1;
@@ -182,7 +182,6 @@ int gpgpu_init(void)
 
 int gpgpu_start_and_wait(void)
 {
-    u32 remaining = GPGPU_WAIT_LIMIT;
     u32 status;
 
     if (require_idle("START") != 0)
@@ -206,26 +205,14 @@ int gpgpu_start_and_wait(void)
     xil_printf("Starting core...\r\n");
     gpu_write(GPGPU_REG_CONTROL, GPGPU_CONTROL_START);
 
+    /* No timeout: a kernel that never completes blocks here forever. */
 #if GPGPU_USE_IRQ
-    while (remaining-- != 0U && gpu_finished == 0U) {
+    while (gpu_finished == 0U) {
         /* The ISR clears the GPU IRQ and sets gpu_finished. */
-    }
-    if (gpu_finished == 0U) {
-        xil_printf("ERROR: timeout waiting for GPU interrupt\r\n");
-        gpgpu_print_status();
-        gpu_write(GPGPU_REG_IRQ_ENABLE, 0U);
-        return -1;
     }
     gpu_write(GPGPU_REG_IRQ_ENABLE, 0U);
 #else
-    while (remaining-- != 0U) {
-        if ((gpu_read(GPGPU_REG_IRQ_STATUS) & 1U) != 0U)
-            break;
-    }
-    if ((gpu_read(GPGPU_REG_IRQ_STATUS) & 1U) == 0U) {
-        xil_printf("ERROR: timeout waiting for GPU completion\r\n");
-        gpgpu_print_status();
-        return -1;
+    while ((gpu_read(GPGPU_REG_IRQ_STATUS) & 1U) == 0U) {
     }
     gpu_write(GPGPU_REG_IRQ_STATUS, 1U);
 #endif
@@ -243,7 +230,7 @@ int gpgpu_start_and_wait(void)
 int gpgpu_dump_imem_ascii(u32 offset, u32 count)
 {
     u32 word;
-    if (check_span("IMEM", offset, count, IMEM_WORDS) != 0 ||
+    if (check_span("IMEM", offset, count, GPGPU_IMEM_WORDS) != 0 ||
         require_idle("IMEM dump") != 0)
         return -1;
     xil_printf("BEGIN_IMEM_DUMP\r\n");
@@ -260,7 +247,7 @@ int gpgpu_dump_imem_ascii(u32 offset, u32 count)
 int gpgpu_dump_dmem_ascii(u32 offset, u32 count)
 {
     u32 word;
-    if (check_span("DMEM", offset, count, DMEM_WORDS) != 0 ||
+    if (check_span("DMEM", offset, count, GPGPU_DMEM_WORDS) != 0 ||
         require_idle("DMEM dump") != 0)
         return -1;
     xil_printf("BEGIN_DMEM_DUMP\r\n");

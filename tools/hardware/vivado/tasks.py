@@ -361,9 +361,11 @@ def create_tasks(config):
     version = config.get('hardware.vivado.version')
     vendor = config.get('tools.vivado.command')
     cores = config.get('architecture.num_cores')
+    interface_version = config.get('architecture.interface_version')
     jobs = config.get('hardware.vivado.jobs')
-    if any(not isinstance(v, int) or isinstance(v, bool) or v < 1 for v in (cores, jobs)):
-        raise ValueError('architecture.num_cores and hardware.vivado.jobs must be positive integers')
+    if any(not isinstance(v, int) or isinstance(v, bool) or v < 1 for v in (cores, interface_version, jobs)):
+        raise ValueError('architecture.num_cores, architecture.interface_version and '
+                         'hardware.vivado.jobs must be positive integers')
     post_route_phys_opt = config.get('hardware.vivado.post_route_phys_opt.enabled')
     if not isinstance(post_route_phys_opt, bool):
         raise ValueError('hardware.vivado.post_route_phys_opt.enabled must be true or false')
@@ -394,7 +396,7 @@ def create_tasks(config):
                   'sources-manifest': ip_dir / '.gpgpu/sources.tsv', 'xdc-file': xdc,
                   'bitstream-dir': paths.bitstream, 'platform-dir': paths.platform,
                   'xsa-name': xsa.stem, 'export-file': system / '.gpgpu/export.raw.tcl',
-                  'num-cores': cores, 'jobs': jobs, 'repo-root': repo, 'ip-repo-dir': ip_repo,
+                  'num-cores': cores, 'interface-version': interface_version, 'jobs': jobs, 'repo-root': repo, 'ip-repo-dir': ip_repo,
                   'axi-base': base, 'axi-range': size, 'fclk0-mhz': fclk0,
                   'post-route-phys-opt': int(post_route_phys_opt),
                   'post-route-phys-opt-directive': phys_opt_directive, 'flow-version': version}

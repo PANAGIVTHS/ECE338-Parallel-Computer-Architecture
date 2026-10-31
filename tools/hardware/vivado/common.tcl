@@ -3,7 +3,7 @@ set SCRIPT_DIR [file normalize [file dirname [info script]]]
 array set options {
     -project-dir "" -project-name "" -part "" -bd-name "" -top ""
     -sources-manifest "" -xdc-file "" -bitstream-dir "" -platform-dir ""
-    -xsa-name "" -export-file "" -num-cores "" -jobs ""
+    -xsa-name "" -export-file "" -num-cores "" -interface-version "" -jobs ""
     -repo-root "" -ip-repo-dir "" -axi-base "" -axi-range "" -fclk0-mhz "" -post-route-phys-opt ""
     -post-route-phys-opt-directive "" -flow-version "" -ip-revision 1
 }
@@ -18,7 +18,7 @@ foreach {key name} {
     -project-dir PROJECT_DIR -project-name PROJECT_NAME -part FPGA_PART
     -bd-name BD_NAME -top TOP_NAME -sources-manifest SOURCES_MANIFEST -xdc-file XDC_FILE
     -bitstream-dir BITSTREAM_DIR -platform-dir PLATFORM_DIR -xsa-name XSA_NAME
-    -export-file EXPORT_FILE -num-cores NUM_CORES -jobs JOBS -repo-root REPO_ROOT
+    -export-file EXPORT_FILE -num-cores NUM_CORES -interface-version INTERFACE_VERSION -jobs JOBS -repo-root REPO_ROOT
     -ip-repo-dir IP_REPO_DIR -axi-base AXI_BASE -axi-range AXI_RANGE -fclk0-mhz FCLK0_MHZ
     -post-route-phys-opt POST_ROUTE_PHYS_OPT -post-route-phys-opt-directive POST_ROUTE_PHYS_OPT_DIRECTIVE
     -flow-version FLOW_VERSION -ip-revision IP_REVISION
@@ -27,7 +27,7 @@ foreach name {PROJECT_DIR SOURCES_MANIFEST XDC_FILE BITSTREAM_DIR PLATFORM_DIR E
     set $name [file normalize [set $name]]
 }
 set PROJECT_FILE [file join $PROJECT_DIR "$PROJECT_NAME.xpr"]
-foreach name {NUM_CORES JOBS IP_REVISION} {
+foreach name {NUM_CORES INTERFACE_VERSION JOBS IP_REVISION} {
     if {![string is integer -strict [set $name]] || [set $name] < 1} {error "$name must be positive"}
 }
 if {![string is double -strict $FCLK0_MHZ] || $FCLK0_MHZ <= 0} {error "FCLK0_MHZ must be a positive number"}

@@ -44,6 +44,7 @@ def make_task_repo(tmp_path: Path) -> StubResolvedConfig:
         encoding="utf-8",
     )
     for relative_path in (
+        "tools/software/host_platform.py",
         "tools/tests/rtl.py",
         "tools/hardware/vivado/tasks.py",
         "tools/hardware/vitis/tasks.py",

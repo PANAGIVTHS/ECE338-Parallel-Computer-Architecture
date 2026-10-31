@@ -18,6 +18,7 @@ class Config:
     def get(self, key):
         return {
             "architecture.num_cores": self.num_cores,
+            "architecture.interface_version": 2,
             "tools.python.command": sys.executable,
             "tools.verilator.command": self.verilator,
             "tools.make.command": "configured-make",
@@ -62,7 +63,8 @@ def test_real_checkout_verilator_sources_and_core_count():
     root = repo / "hardware/rtl/gpgpu"
     assert command[0] == "configured-verilator"
     assert all(Path(p).is_file() for p in build["file_dep"])
-    for flag in ("--binary", "--timing", "--assert", "--autoflush", "-GNUM_CORES=8"):
+    for flag in ("--binary", "--timing", "--assert", "--autoflush", "-GNUM_CORES=8",
+                 "-GINTERFACE_VERSION=2"):
         assert flag in command
     assert command[command.index("--top-module") + 1] == "tb_GPGPU_smx_only"
     assert command.index(str(root / "memory/MemoryInterface.sv")) < command.index(str(root / "GPGPU.sv"))

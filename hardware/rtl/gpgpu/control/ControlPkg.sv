@@ -1,13 +1,20 @@
 package ControlPkg;
 
-    //! CSR addresses (Basically commands to GPU)
-    localparam logic [gpu_pkg::XLEN-1:0] REG_INFO = gpu_pkg::XLEN'('h0000);
-    localparam logic [gpu_pkg::XLEN-1:0] REG_CONTROL = gpu_pkg::XLEN'('h0004);
-    localparam logic [gpu_pkg::XLEN-1:0] REG_STATUS = gpu_pkg::XLEN'('h0008);
-    localparam logic [gpu_pkg::XLEN-1:0] REG_IRQ_ENABLE = gpu_pkg::XLEN'('h000C);
-    localparam logic [gpu_pkg::XLEN-1:0] REG_IRQ_STATUS = gpu_pkg::XLEN'('h0010);
-    localparam logic [gpu_pkg::XLEN-1:0] IMEM_BASE = 'h2000;
-    localparam logic [gpu_pkg::XLEN-1:0] DMEM_BASE = 'h4000;
+    //! Host register map: byte offsets inside the MMIO aperture.
+    //! The host header gpgpu_platform.h is generated from these declarations.
+
+    // Identity block (0x000-0x01C)
+    localparam gpu_pkg::word_t REG_INFO = 'h0000;
+
+    // Control block (0x020-0x03C)
+    localparam gpu_pkg::word_t REG_CONTROL = 'h0020;
+    localparam gpu_pkg::word_t REG_STATUS = 'h0024;
+    localparam gpu_pkg::word_t REG_IRQ_ENABLE = 'h0028;
+    localparam gpu_pkg::word_t REG_IRQ_STATUS = 'h002C;
+
+    // Memory windows
+    localparam gpu_pkg::word_t IMEM_BASE = 'h2000;
+    localparam gpu_pkg::word_t DMEM_BASE = 'h4000;
 
     //! Control bits (start/stop GPU)
     localparam int unsigned CONTROL_START_BIT = 0;
@@ -22,20 +29,11 @@ package ControlPkg;
     localparam int unsigned IRQ_COMPLETE_BIT = 0;
 
     //! Derive masks from bit positions
-    localparam logic [gpu_pkg::XLEN-1:0] CONTROL_START_MASK =
-        gpu_pkg::XLEN'(1) << CONTROL_START_BIT;
-
-    localparam logic [gpu_pkg::XLEN-1:0] CONTROL_STOP_MASK =
-        gpu_pkg::XLEN'(1) << CONTROL_STOP_BIT;
-
-    localparam logic [gpu_pkg::XLEN-1:0] STATUS_IDLE_MASK =
-        gpu_pkg::XLEN'(1) << STATUS_IDLE_BIT;
-
-    localparam logic [gpu_pkg::XLEN-1:0] STATUS_RUNNING_MASK =
-        gpu_pkg::XLEN'(1) << STATUS_RUNNING_BIT;
-
-    localparam logic [gpu_pkg::XLEN-1:0] STATUS_STOPPED_MASK =
-        gpu_pkg::XLEN'(1) << STATUS_STOPPED_BIT;
+    localparam gpu_pkg::word_t CONTROL_START_MASK = gpu_pkg::word_t'(1) << CONTROL_START_BIT;
+    localparam gpu_pkg::word_t CONTROL_STOP_MASK = gpu_pkg::word_t'(1) << CONTROL_STOP_BIT;
+    localparam gpu_pkg::word_t STATUS_IDLE_MASK = gpu_pkg::word_t'(1) << STATUS_IDLE_BIT;
+    localparam gpu_pkg::word_t STATUS_RUNNING_MASK = gpu_pkg::word_t'(1) << STATUS_RUNNING_BIT;
+    localparam gpu_pkg::word_t STATUS_STOPPED_MASK = gpu_pkg::word_t'(1) << STATUS_STOPPED_BIT;
 
     typedef enum logic [1:0] {
         CORE_IDLE = 2'b00,

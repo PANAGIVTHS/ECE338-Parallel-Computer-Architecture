@@ -8,7 +8,7 @@
 #include <string.h>
 #include <ctype.h>
 
-static u32 rx_buffer[MAX_WORDS];
+static u32 rx_buffer[GPGPU_MAX_WORDS];
 extern char inbyte(void);
 
 static void read_line(char *buf, int max_len) {
@@ -99,9 +99,9 @@ static int parse_count(const char *s, u32 *out) {
 static int load_imem_from_uart(u32 offset, u32 count) {
     char line[128];
 
-    if (offset > IMEM_WORDS || count > (IMEM_WORDS - offset)) {
-        xil_printf("ERROR: IMEM load range offset=%u count=%u exceeds IMEM_WORDS=%d\r\n",
-                   offset, count, IMEM_WORDS);
+    if (offset > GPGPU_IMEM_WORDS || count > (GPGPU_IMEM_WORDS - offset)) {
+        xil_printf("ERROR: IMEM load range offset=%u count=%u exceeds GPGPU_IMEM_WORDS=%d\r\n",
+                   offset, count, GPGPU_IMEM_WORDS);
         return -1;
     }
 
@@ -130,9 +130,9 @@ static int load_imem_from_uart(u32 offset, u32 count) {
 static int load_dmem_from_uart(u32 offset, u32 count) {
     char line[128];
 
-    if (offset > DMEM_WORDS || count > (DMEM_WORDS - offset)) {
-        xil_printf("ERROR: DMEM load range offset=%u count=%u exceeds DMEM_WORDS=%d\r\n",
-                   offset, count, DMEM_WORDS);
+    if (offset > GPGPU_DMEM_WORDS || count > (GPGPU_DMEM_WORDS - offset)) {
+        xil_printf("ERROR: DMEM load range offset=%u count=%u exceeds GPGPU_DMEM_WORDS=%d\r\n",
+                   offset, count, GPGPU_DMEM_WORDS);
         return -1;
     }
 
@@ -161,9 +161,9 @@ static int load_dmem_from_uart(u32 offset, u32 count) {
 }
 
 static int load_imem_binary(u32 offset, u32 count) {
-    if (offset > IMEM_WORDS || count > (IMEM_WORDS - offset)) {
-        xil_printf("ERROR: IMEM binary load range offset=%u count=%u exceeds IMEM_WORDS=%d\n",
-                   offset, count, IMEM_WORDS);
+    if (offset > GPGPU_IMEM_WORDS || count > (GPGPU_IMEM_WORDS - offset)) {
+        xil_printf("ERROR: IMEM binary load range offset=%u count=%u exceeds GPGPU_IMEM_WORDS=%d\n",
+                   offset, count, GPGPU_IMEM_WORDS);
         return -1;
     }
 
@@ -185,9 +185,9 @@ static int load_imem_binary(u32 offset, u32 count) {
 }
 
 static int load_dmem_binary(u32 offset, u32 count) {
-    if (offset > DMEM_WORDS || count > (DMEM_WORDS - offset)) {
-        xil_printf("ERROR: DMEM binary load range offset=%u count=%u exceeds DMEM_WORDS=%d\n",
-                   offset, count, DMEM_WORDS);
+    if (offset > GPGPU_DMEM_WORDS || count > (GPGPU_DMEM_WORDS - offset)) {
+        xil_printf("ERROR: DMEM binary load range offset=%u count=%u exceeds GPGPU_DMEM_WORDS=%d\n",
+                   offset, count, GPGPU_DMEM_WORDS);
         return -1;
     }
 
@@ -210,9 +210,9 @@ static int load_dmem_binary(u32 offset, u32 count) {
 }
 
 static int gpgpu_dump_dmem_binary(u32 offset, u32 count) {
-    if (offset > DMEM_WORDS || count > (DMEM_WORDS - offset)) {
-        xil_printf("ERROR: DMEM binary dump range offset=%u count=%u exceeds DMEM_WORDS=%d\n",
-                   offset, count, DMEM_WORDS);
+    if (offset > GPGPU_DMEM_WORDS || count > (GPGPU_DMEM_WORDS - offset)) {
+        xil_printf("ERROR: DMEM binary dump range offset=%u count=%u exceeds GPGPU_DMEM_WORDS=%d\n",
+                   offset, count, GPGPU_DMEM_WORDS);
         return -1;
     }
 

@@ -122,7 +122,7 @@ def package_fixture(tmp_path):
     block=add(mm,'addressBlock')
     for tag,value in [('name','reg0'),('baseAddress','0'),('range','65536'),('width','32'),('usage','register')]: add(block,tag,value)
     model=add(r,'model'); mp=add(model,'modelParameters'); up=add(r,'parameters')
-    for name,value in [('SP_PER_SM','8'),('C_S00_AXI_DATA_WIDTH','32'),('C_S00_AXI_ADDR_WIDTH','32')]:
+    for name,value in [('SP_PER_SM','8'),('INTERFACE_VERSION','2'),('C_S00_AXI_DATA_WIDTH','32'),('C_S00_AXI_ADDR_WIDTH','32')]:
         p=add(up,'parameter');add(p,'name',name);add(p,'value',value,resolve='user')
         p=add(mp,'modelParameter');add(p,'name',name);add(p,'value',value,resolve='generated',dependency=f"spirit:decode(id('PARAM_VALUE.{name}'))")
     files=add(r,'fileSets')
@@ -282,7 +282,7 @@ def tcl_driver(tmp_path, script, *, group_types=None, **overrides):
     shutil.copytree(FLOW/'ip',flow/'ip',dirs_exist_ok=True)
     project=tmp_path/'project'; staging=tmp_path/'staging'
     values={'PROJECT_DIR':project,'PROJECT_NAME':'gpgpu_ip_dev','PROJECT_FILE':project/'gpgpu_ip_dev.xpr',
-            'TOP_NAME':'gpgpu_axi','FPGA_PART':'xc7z020clg484-1','NUM_CORES':8,'IP_REVISION':7,'FLOW_VERSION':'2025.2',
+            'TOP_NAME':'gpgpu_axi','FPGA_PART':'xc7z020clg484-1','NUM_CORES':8,'INTERFACE_VERSION':2,'IP_REVISION':7,'FLOW_VERSION':'2025.2',
             'REPO_ROOT':ROOT,'SOURCES_MANIFEST':manifest,'IP_REPO_DIR':staging}
     values.update(overrides)
     (flow/'common.tcl').write_text('\n'.join(f'set {k} {{{v}}}' for k,v in values.items()))
@@ -328,7 +328,7 @@ def test_ip_project_recreation_is_portable_production_only(tmp_path):
     assert added
     assert sorted(p.name for p in (values['PROJECT_DIR']/'src').iterdir())==sorted(input_names())
     assert not any(name in ('open_project','launch_runs','read_xdc') for name,args in calls)
-    assert any(name=='set_property' and args[:2]==('generic','SP_PER_SM=8') for name,args in calls)
+    assert any(name=='set_property' and args[:2]==('generic','SP_PER_SM=8 INTERFACE_VERSION=2') for name,args in calls)
 
 
 @pytest.mark.parametrize('guard', ['existing_project','wrong_version','wrong_top'])

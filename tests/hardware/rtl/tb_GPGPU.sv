@@ -7,9 +7,10 @@
 module tb_GPGPU_smx_only 
     import ControlPkg::*;
     import gpu_pkg::*;
-();
-
-    parameter NUM_CORES = 32;
+#(
+    parameter NUM_CORES = 32,
+    parameter int unsigned INTERFACE_VERSION
+) ();
 
     reg clk_in, rst;
 
@@ -35,7 +36,7 @@ module tb_GPGPU_smx_only
     reg [8*255:0] trace_file;
     string dump_file;
 
-    GPGPU #(.SP_PER_SM(NUM_CORES), .MEMORY_INIT("")) UUT (
+    GPGPU #(.SP_PER_SM(NUM_CORES), .MEMORY_INIT(""), .INTERFACE_VERSION(INTERFACE_VERSION)) UUT (
         .clk(clk_in), .rst_n(rst),
         .o_core_idle(), .o_core_running(),
         .i_req_valid(1'b0), .o_req_ready(), .i_req_write(1'b0),

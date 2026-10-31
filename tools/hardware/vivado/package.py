@@ -12,6 +12,7 @@ import xml.etree.ElementTree as ET
 NS = 'http://www.spiritconsortium.org/XMLSchema/SPIRIT/1685-2009'
 N = {'s': NS}
 FLOW = Path(__file__).resolve().parent
+HDL_PARAMETERS = ('SP_PER_SM', 'INTERFACE_VERSION', 'C_S00_AXI_DATA_WIDTH', 'C_S00_AXI_ADDR_WIDTH')
 AXI_PORTS = 'AWADDR AWPROT AWVALID AWREADY WDATA WSTRB WVALID WREADY BRESP BVALID BREADY ARADDR ARPROT ARVALID ARREADY RDATA RRESP RVALID RREADY'.split()
 
 
@@ -205,15 +206,16 @@ def validate_package(path: str | Path, memory_init: Path, sources: Sequence[Path
     require(any(n == 'xgui/gpgpu_axi_v1_0.tcl' for n, _ in all_files), 'Missing XGUI')
     users = named(component, 's:parameters/s:parameter')
     models = named(component, 's:model/s:modelParameters/s:modelParameter')
-    for param in ('SP_PER_SM','C_S00_AXI_DATA_WIDTH','C_S00_AXI_ADDR_WIDTH'):
+    for param in HDL_PARAMETERS:
         require(param in users and param in models, f'Missing HDL/user parameter: {param}')
         value = number(text(users[param], 'value'))
-        require(value > 0 if param == 'SP_PER_SM' else value == 32, f'Invalid parameter: {param}')
+        require(value > 0 if param in ('SP_PER_SM', 'INTERFACE_VERSION') else value == 32,
+                f'Invalid parameter: {param}')
         v = models[param].find('s:value', N)
         require(v is not None and f"PARAM_VALUE.{param}" in v.get(f'{{{NS}}}dependency', ''), f'Missing HDL mapping: {param}')
     gui = (root / 'xgui/gpgpu_axi_v1_0.tcl').read_text()
     require(gui == (FLOW / 'ip/xgui/gpgpu_axi_v1_0.tcl').read_text(), 'XGUI differs from production parameter mapping')
-    for param in ('SP_PER_SM','C_S00_AXI_DATA_WIDTH','C_S00_AXI_ADDR_WIDTH'):
+    for param in HDL_PARAMETERS:
         require(f'proc update_MODELPARAM_VALUE.{param}' in gui and f'${{PARAM_VALUE.{param}}}' in gui and f'${{MODELPARAM_VALUE.{param}}}' in gui, f'Missing XGUI mapping: {param}')
     buses = named(component, 's:busInterfaces/s:busInterface')
     for name, kind, role, maps in [

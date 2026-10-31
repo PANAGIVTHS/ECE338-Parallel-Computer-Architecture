@@ -1,0 +1,187 @@
+"""Generate the host driver's platform header from the RTL and configuration.
+
+``ControlPkg`` is the single source of the host register map,
+``MemorySubsystemPkg`` of the memory status codes and ``gpu_pkg`` of the
+memory depths; the interface version and the driver's interrupt settings come
+from the configuration. The base address is not here: the Vitis
+flow defines GPGPU_BASEADDR from hardware.vivado.peripheral.base_address. The
+generated header is committed so the Vitis host build needs no generation step
+of its own.
+
+TODO(host-export markers): this module still hardcodes what to export:
+CONTROL_PACKAGE, MEMORY_PACKAGE, GPU_PACKAGE, STATUS_ENUM and the
+MEMORY_DEPTHS renaming. Planned fix: mark each host-visible declaration in the
+RTL with a trailing ``// host`` comment and scan every rtl_sources() file for
+marked lines, so the RTL alone decides what the header contains. Section
+titles then come from the enclosing ``package``, the driver uses
+GPGPU_IMEM_ENTRIES/GPGPU_DMEM_ENTRIES directly, and GPGPU_MAX_WORDS becomes an
+expression in gpgpu_driver.h. A marked line in an unsupported form, or a name
+exported twice, is an error.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+import re
+from typing import TYPE_CHECKING, Any
+
+from doit.tools import config_changed
+from src.hardware_contract import rtl_sources
+
+if TYPE_CHECKING:
+    from config import ResolvedConfig
+
+
+CONTROL_PACKAGE = "ControlPkg"
+MEMORY_PACKAGE = "MemorySubsystemPkg"
+GPU_PACKAGE = "gpu_pkg"
+STATUS_ENUM = "mem_status_t"
+MEMORY_DEPTHS = {"IMEM_WORDS": "IMEM_ENTRIES", "DMEM_WORDS": "DMEM_ENTRIES"}
+
+_WORD_CONSTANT = re.compile(r"^\s*localparam\s+gpu_pkg::word_t\s+(\w+)\s*=\s*(.+?);", re.M)
+_HEX_LITERAL = re.compile(r"'h([0-9A-Fa-f_]+)")
+_BIT_CONSTANT = re.compile(r"^\s*localparam\s+int\s+unsigned\s+(\w+)_BIT\s*=\s*(\d+)\s*;", re.M)
+_ENUM_ENTRY = re.compile(r"(\w+)\s*=\s*\d*'d(\d+)")
+
+
+def _positive_int(config: ResolvedConfig, key: str) -> int:
+    value = config.get(key)
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise ValueError(f"{key} must be a positive integer")
+    return value
+
+
+def host_settings(config: ResolvedConfig) -> dict[str, Any]:
+    """Configuration values the generated header carries."""
+
+    use_irq = config.get("software.host.use_irq")
+    if not isinstance(use_irq, bool):
+        raise ValueError("software.host.use_irq must be true or false")
+    return {
+        "interface_version": _positive_int(config, "architecture.interface_version"),
+        "use_irq": use_irq,
+        "irq_id": _positive_int(config, "software.host.irq_id"),
+    }
+
+
+def package_source(config: ResolvedConfig, package: str) -> Path:
+    """The single RTL source declaring *package*."""
+
+    sources, _ = rtl_sources(config, [])
+    declares = re.compile(rf"^\s*package\s+{package}\s*;", re.M)
+    found = [path for path in sources if declares.search(path.read_text(encoding="utf-8"))]
+    if len(found) != 1:
+        raise ValueError(f"Exactly one RTL source must declare package {package}; found {found}")
+    return found[0]
+
+
+def _word_constants(text: str) -> list[tuple[str, int]]:
+    """Hex word constants; *_MASK constants are derived from *_BIT instead."""
+
+    constants = []
+    for name, value in _WORD_CONSTANT.findall(text):
+        if name.endswith("_MASK"):
+            continue
+        literal = _HEX_LITERAL.fullmatch(value.strip())
+        if literal is None:
+            raise ValueError(f"{CONTROL_PACKAGE}.{name} must be a plain 'h literal, got: {value}")
+        constants.append((name, int(literal[1].replace("_", ""), 16)))
+    if not constants:
+        raise ValueError(f"{CONTROL_PACKAGE} declares no register offsets")
+    return constants
+
+
+def _enum_values(text: str, enum: str) -> list[tuple[str, int]]:
+    match = re.search(r"typedef\s+enum\s+logic\s*\[[^\]]+\]\s*\{(.*?)\}\s*" + enum + r"\s*;", text, re.S)
+    if match is None:
+        raise ValueError(f"{MEMORY_PACKAGE} does not declare enum {enum}")
+    entries = [entry.strip() for entry in re.sub(r"//[^\n]*", "", match[1]).split(",")]
+    values = []
+    for entry in entries:
+        value = _ENUM_ENTRY.fullmatch(entry)
+        if value is None:
+            raise ValueError(f"{enum} entry must be an explicit NAME = N'dV value: {entry!r}")
+        values.append((value[1], int(value[2])))
+    return values
+
+
+def _int_constant(text: str, name: str) -> int:
+    match = re.search(rf"^\s*localparam\s+int\s+unsigned\s+{name}\s*=\s*(\d+)\s*;", text, re.M)
+    if match is None:
+        raise ValueError(f"{GPU_PACKAGE} must declare {name} as a plain integer")
+    return int(match[1])
+
+
+def render_header(control_text: str, memory_text: str, gpu_text: str,
+                  settings: dict[str, Any]) -> str:
+    """The C header text for the given package sources and host settings."""
+
+    lines = []
+
+    def define(name: str, value: str) -> None:
+        lines.append(f"#define GPGPU_{name:<28} {value}")
+
+    lines += [
+        "/* Generated by tools/software/host_platform.py (task software:host:platform)",
+        f" * from {CONTROL_PACKAGE}, {MEMORY_PACKAGE}, {GPU_PACKAGE} and the configuration.",
+        " * Do not edit: change the RTL packages or the configuration and regenerate.",
+        " */",
+        "#ifndef GPGPU_PLATFORM_H",
+        "#define GPGPU_PLATFORM_H",
+        "",
+        "/* Interface version reported in INFO[31:16] (architecture.interface_version). */",
+    ]
+    define("INTERFACE_VERSION", f"{settings['interface_version']}U")
+    lines += ["", f"/* Memory depths in 32-bit words ({GPU_PACKAGE}). */"]
+    depths = {name: _int_constant(gpu_text, constant) for name, constant in MEMORY_DEPTHS.items()}
+    for name, value in depths.items():
+        define(name, f"{value}U")
+    define("MAX_WORDS", f"{max(depths.values())}U")
+    lines += ["", f"/* Register and memory-window byte offsets ({CONTROL_PACKAGE}). */"]
+    for name, value in _word_constants(control_text):
+        define(name, f"0x{value:04X}U")
+    lines += ["", f"/* Register bits and masks ({CONTROL_PACKAGE}). */"]
+    for name, bit in _BIT_CONSTANT.findall(control_text):
+        define(f"{name}_BIT", f"{bit}U")
+        define(name, f"0x{1 << int(bit):08X}U")
+    lines += ["", f"/* Memory access status codes ({MEMORY_PACKAGE}::{STATUS_ENUM}). */"]
+    for name, value in _enum_values(memory_text, STATUS_ENUM):
+        define(name, f"{value}U")
+    lines += ["", "/* Completion wait: PS interrupt or IRQ_STATUS polling (software.host). */"]
+    define("USE_IRQ", "1" if settings["use_irq"] else "0")
+    define("IRQ_ID", f"{settings['irq_id']}U")
+    lines += ["", "#endif /* GPGPU_PLATFORM_H */", ""]
+    return "\n".join(lines)
+
+
+def header_path(config: ResolvedConfig) -> Path:
+    value = config.get("software.host.platform_header")
+    if not isinstance(value, str) or not value.endswith(".h"):
+        raise ValueError("software.host.platform_header must be a repository-relative .h path")
+    return config.repo_root / value
+
+
+def write_header(control: Path, memory: Path, gpu: Path, settings: dict[str, Any],
+                 output: Path) -> None:
+    output.write_text(
+        render_header(*(path.read_text(encoding="utf-8") for path in (control, memory, gpu)),
+                      settings),
+        encoding="utf-8",
+    )
+
+
+def create_tasks(config: ResolvedConfig) -> list[dict[str, Any]]:
+    """The platform-header generation task."""
+
+    packages = [package_source(config, name) for name in (CONTROL_PACKAGE, MEMORY_PACKAGE, GPU_PACKAGE)]
+    settings = host_settings(config)
+    output = header_path(config)
+    return [
+        {
+            "name": "software:host:platform",
+            "actions": [(write_header, [*packages, settings, output])],
+            "file_dep": [*map(str, packages), str(Path(__file__).resolve())],
+            "targets": [str(output)],
+            "uptodate": [config_changed(settings)],
+        }
+    ]

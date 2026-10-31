@@ -90,7 +90,10 @@ set_property range_dependency {} $block
 set_property width 32 $block
 set_property usage register $block
 
-foreach {name value} [list SP_PER_SM $NUM_CORES C_S00_AXI_DATA_WIDTH 32 C_S00_AXI_ADDR_WIDTH 32] {
+# INTERFACE_VERSION is fixed at packaging, like the AXI widths: it describes
+# the packaged RTL, so a block design cannot change it.
+foreach {name value} [list SP_PER_SM $NUM_CORES INTERFACE_VERSION $INTERFACE_VERSION \
+        C_S00_AXI_DATA_WIDTH 32 C_S00_AXI_ADDR_WIDTH 32] {
     set user [ipx::get_user_parameters $name -of_objects $core]
     if {[llength $user] == 0} {set user [ipx::add_user_parameter $name $core]}
     set_property value $value $user
