@@ -15,7 +15,11 @@ module tb_GPGPU_e2e
     import gpu_pkg::*;
 #(
     parameter int unsigned NUM_CORES,
-    parameter int unsigned INTERFACE_VERSION
+    parameter int unsigned INTERFACE_VERSION,
+    parameter int unsigned CLOCK_KHZ,
+    parameter int unsigned BUILD_HASH,
+    parameter int unsigned BUILD_DIRTY,
+    parameter int unsigned DDR_ENABLE
 ) ();
 
     // AXI response codes
@@ -90,7 +94,11 @@ module tb_GPGPU_e2e
 
     gpgpu_axi #(
         .SP_PER_SM(NUM_CORES),
-        .INTERFACE_VERSION(INTERFACE_VERSION)
+        .INTERFACE_VERSION(INTERFACE_VERSION),
+        .CLOCK_KHZ(CLOCK_KHZ),
+        .BUILD_HASH(BUILD_HASH),
+        .BUILD_DIRTY(BUILD_DIRTY),
+        .DDR_ENABLE(DDR_ENABLE)
     ) UUT (
         .irq(irq),
         .o_core_idle(o_core_idle),
@@ -333,6 +341,14 @@ module tb_GPGPU_e2e
 
         $display("\n[INFO] ---> Checking host interface...");
         expect_csr(REG_INFO, {(XLEN/2)'(INTERFACE_VERSION), (XLEN/2)'(NUM_CORES)}, "INFO");
+        expect_csr(REG_INFO_MEM, {(XLEN/2)'(IMEM_ENTRIES), (XLEN/2)'(DMEM_ENTRIES)}, "INFO_MEM");
+        expect_csr(REG_INFO_FEATURES, 32'(DDR_ENABLE) << FEATURE_DDR_BIT, "INFO_FEATURES");
+        expect_csr(REG_INFO_CLOCK, 32'(CLOCK_KHZ), "INFO_CLOCK");
+        expect_csr(REG_BUILD_ID, 32'(BUILD_HASH) | (32'(BUILD_DIRTY) << BUILD_DIRTY_BIT), "BUILD_ID");
+        expect_write_resp(REG_INFO_MEM, 32'd0, AXI_SLVERR);       // identity is read-only
+        expect_write_resp(REG_INFO_FEATURES, 32'd0, AXI_SLVERR);
+        expect_write_resp(REG_INFO_CLOCK, 32'd0, AXI_SLVERR);
+        expect_write_resp(REG_BUILD_ID, 32'd0, AXI_SLVERR);
         expect_csr(REG_STATUS, STATUS_IDLE_MASK, "STATUS");
         expect_csr(REG_IRQ_ENABLE, 32'd0, "IRQ_ENABLE");
         expect_csr(REG_IRQ_STATUS, 32'd0, "IRQ_STATUS");

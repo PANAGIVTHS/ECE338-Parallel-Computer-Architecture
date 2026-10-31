@@ -43,6 +43,10 @@ Example: `software:programs:simple:x86`
 
 • `software:host:platform` — Regenerate the driver header `software.host.platform_header` from `ControlPkg`, `MemorySubsystemPkg`, `gpu_pkg`, `architecture.interface_version` and `software.host`.
 
+[bold cyan]Hardware[/bold cyan]
+
+• `hardware:identity` — Record the RTL's build identity (last commit touching `paths.rtl.sources.gpgpu` and whether it has uncommitted changes) for BUILD_ID. Runs before every RTL build and IP stage; they rebuild only when it changes.
+
 [bold cyan]Tests[/bold cyan]
 
 • `tests:rtl:generate` — Generate shared test programs and expected-memory files.
@@ -127,7 +131,7 @@ def _format_task_help(text: str) -> str:
         value = match[1]
         style = (
             "bold bright_green"
-            if value.startswith(("software:programs:", "software:host:", "tests:rtl:", "vivado:", "vitis:", "fpga:"))
+            if value.startswith(("software:programs:", "software:host:", "hardware:", "tests:rtl:", "vivado:", "vitis:", "fpga:"))
             else "yellow"
         )
         return f"[{style}]{escape(value)}[/{style}]"

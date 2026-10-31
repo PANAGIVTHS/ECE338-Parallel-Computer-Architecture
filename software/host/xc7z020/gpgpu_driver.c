@@ -44,6 +44,10 @@ void gpgpu_print_status(void)
     xil_printf("  stopped = %u\r\n", (unsigned int)!!(status & GPGPU_STATUS_STOPPED_MASK));
     xil_printf("  irq_enabled = %u\r\n", (unsigned int)(irq_en & 1U));
     xil_printf("  irq_pending = %u\r\n", (unsigned int)(irq_st & 1U));
+    xil_printf("INFO_MEM = 0x%08x\r\n", (unsigned int)gpu_read(GPGPU_REG_INFO_MEM));
+    xil_printf("INFO_FEATURES = 0x%08x\r\n", (unsigned int)gpu_read(GPGPU_REG_INFO_FEATURES));
+    xil_printf("INFO_CLOCK = %u kHz\r\n", (unsigned int)gpu_read(GPGPU_REG_INFO_CLOCK));
+    xil_printf("BUILD_ID = 0x%08x\r\n", (unsigned int)gpu_read(GPGPU_REG_BUILD_ID));
 }
 
 static int require_idle(const char *operation)
@@ -167,6 +171,24 @@ int gpgpu_init(void)
                    (unsigned int)info);
         return -1;
     }
+
+    /* The bitstream and this driver must come from the same RTL: the memory
+     * sizes compiled in from gpgpu_platform.h must match the hardware's. */
+    const u32 info_mem = gpu_read(GPGPU_REG_INFO_MEM);
+    if ((info_mem >> 16) != GPGPU_IMEM_ENTRIES || (info_mem & 0xFFFFU) != GPGPU_DMEM_ENTRIES) {
+        xil_printf("ERROR: GPU memory sizes INFO_MEM=0x%08x do not match this driver "
+                   "(IMEM %u, DMEM %u words)\r\n", (unsigned int)info_mem,
+                   (unsigned int)GPGPU_IMEM_ENTRIES, (unsigned int)GPGPU_DMEM_ENTRIES);
+        return -1;
+    }
+
+    const u32 build = gpu_read(GPGPU_REG_BUILD_ID);
+    xil_printf("GPU: RTL %07x%s, %u cores, %u kHz, IMEM %u / DMEM %u words, DDR %s\r\n",
+               (unsigned int)(build & GPGPU_BUILD_HASH_MASK),
+               (build & GPGPU_BUILD_DIRTY_MASK) != 0U ? "-dirty" : "",
+               (unsigned int)(info & 0xFFFFU), (unsigned int)gpu_read(GPGPU_REG_INFO_CLOCK),
+               (unsigned int)GPGPU_IMEM_ENTRIES, (unsigned int)GPGPU_DMEM_ENTRIES,
+               (gpu_read(GPGPU_REG_INFO_FEATURES) & GPGPU_FEATURE_DDR_MASK) != 0U ? "on" : "off");
 
     gpu_write(GPGPU_REG_IRQ_ENABLE, 0U);
     gpu_write(GPGPU_REG_IRQ_STATUS, 1U); /* W1C pending completion. */

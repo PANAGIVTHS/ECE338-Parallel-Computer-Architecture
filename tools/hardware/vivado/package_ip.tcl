@@ -90,16 +90,19 @@ set_property range_dependency {} $block
 set_property width 32 $block
 set_property usage register $block
 
-# INTERFACE_VERSION is fixed at packaging, like the AXI widths: it describes
-# the packaged RTL, so a block design cannot change it.
-foreach {name value} [list SP_PER_SM $NUM_CORES INTERFACE_VERSION $INTERFACE_VERSION \
+# SP_PER_SM and CLOCK_KHZ are set by the block design (CLOCK_KHZ from the
+# achieved fabric clock). The other HDL parameters describe the packaged RTL
+# and are fixed at packaging, like the AXI widths.
+read_build_identity
+set block_design_parameters {SP_PER_SM CLOCK_KHZ}
+foreach {name value} [list SP_PER_SM $NUM_CORES {*}$HDL_PARAMETERS \
         C_S00_AXI_DATA_WIDTH 32 C_S00_AXI_ADDR_WIDTH 32] {
     set user [ipx::get_user_parameters $name -of_objects $core]
     if {[llength $user] == 0} {set user [ipx::add_user_parameter $name $core]}
     set_property value $value $user
     set_property value_format long $user
     set_property value_resolve_type user $user
-    if {$name ne "SP_PER_SM"} {set_property enablement_value false $user}
+    if {$name ni $block_design_parameters} {set_property enablement_value false $user}
     set model [ipx::get_hdl_parameters $name -of_objects $core]
     if {[llength $model] != 1} {error "Required HDL parameter missing: $name"}
     set_property value $value $model

@@ -19,9 +19,11 @@ def test_standalone_public_tasks_and_system_checkpoint_chain(tmp_path):
              'vivado:system:_synthesis', 'vivado:system:_implementation',
              'vivado:system:_bitstream', 'vivado:system:build']
     assert set(tasks) == set(chain)
+    # The IP stages also need the build identity (BUILD_HASH, BUILD_DIRTY).
+    identity = ['hardware:identity']
+    assert tasks[chain[0]]['task_dep'] == identity
     for first, second in zip(chain, chain[1:]):
-        assert tasks[second]['task_dep'] == [first]
-    assert tasks[chain[0]]['task_dep'] == []
+        assert tasks[second]['task_dep'] == [first, *(identity if second == 'vivado:ip:build' else [])]
 
 
 def test_configured_vendor_and_arguments_in_all_commands(tmp_path):

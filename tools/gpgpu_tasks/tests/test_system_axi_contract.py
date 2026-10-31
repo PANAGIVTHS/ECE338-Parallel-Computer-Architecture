@@ -51,7 +51,9 @@ def test_bootstrap_uses_saved_ps_user_settings_not_computed_overrides():
 CONFIGURATION_API = r'''
 set props [dict create gpgpu_axi_0,VLNV user.org:user:gpgpu_axi:1.0 \
     gpgpu_axi_0,CONFIG.SP_PER_SM 8 mapped,OFFSET 0x43C00000 mapped,RANGE 64K \
-    processing_system7_0,CONFIG.PCW_FPGA0_PERIPHERAL_FREQMHZ 35]
+    processing_system7_0,CONFIG.PCW_FPGA0_PERIPHERAL_FREQMHZ 35 \
+    processing_system7_0,CONFIG.PCW_ACT_FPGA0_PERIPHERAL_FREQMHZ 35.000000 \
+    gpgpu_axi_0,CONFIG.CLOCK_KHZ 35000]
 proc get_bd_cells {args} {
     set name [lindex $args end]
     if {$name eq "GPGPU_0" || [string match "axi_gpio*" $name]} {return {}}
@@ -120,6 +122,37 @@ puts [list CHANGED [configure_block_design]]
     assert "SET CONFIG.PCW_FPGA0_PERIPHERAL_FREQMHZ 50 processing_system7_0" in result.stdout
     assert "CHANGED 1" in result.stdout
     assert "MAP" not in result.stdout and "SP_PER_SM" not in result.stdout
+
+
+@pytest.mark.parametrize("achieved,expected", [("35.714287", "35714"), ("50.000000", "50000")])
+def test_configuration_reports_achieved_fabric_clock_to_the_gpgpu(achieved, expected):
+    result = run_tcl(CONFIGURATION_API + f'''
+dict set props processing_system7_0,CONFIG.PCW_ACT_FPGA0_PERIPHERAL_FREQMHZ {achieved}
+set NUM_CORES 8
+set AXI_BASE 0x43C00000
+set AXI_RANGE 0x10000
+set FCLK0_MHZ 35
+source {{{VIVADO / 'configure_block_design.tcl'}}}
+puts [list CHANGED [configure_block_design]]
+''')
+    assert result.returncode == 0, result.stderr
+    assert f"SET CONFIG.CLOCK_KHZ {expected} gpgpu_axi_0" in result.stdout
+    assert "CHANGED 1" in result.stdout
+
+
+def test_configuration_refuses_missing_achieved_fabric_clock():
+    result = run_tcl(CONFIGURATION_API + f'''
+dict unset props processing_system7_0,CONFIG.PCW_ACT_FPGA0_PERIPHERAL_FREQMHZ
+set NUM_CORES 8
+set AXI_BASE 0x43C00000
+set AXI_RANGE 0x10000
+set FCLK0_MHZ 35
+source {{{VIVADO / 'configure_block_design.tcl'}}}
+configure_block_design
+''')
+    assert result.returncode != 0
+    assert "PCW_ACT_FPGA0_PERIPHERAL_FREQMHZ" in result.stderr
+    assert "CLOCK_KHZ" not in result.stdout
 
 
 def system_script(tmp_path, existing=False, missing_cell=None, wrong_vlnv=False):

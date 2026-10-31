@@ -7,7 +7,11 @@ module GPGPU
 #(
     parameter int unsigned SP_PER_SM = 32,
     parameter string MEMORY_INIT = "empty.mem",
-    parameter int unsigned INTERFACE_VERSION
+    parameter int unsigned INTERFACE_VERSION,
+    parameter int unsigned CLOCK_KHZ,
+    parameter int unsigned BUILD_HASH,
+    parameter bit BUILD_DIRTY,
+    parameter bit DDR_ENABLE
 ) (
     input logic clk,
     input logic rst_n,
@@ -32,6 +36,10 @@ module GPGPU
     output logic o_irq
 );
     // tdb was here...
+
+    if (DDR_ENABLE) begin : g_ddr_check
+        $fatal(1, "DDR_ENABLE=1: the DDR backend of the memory subsystem is not implemented yet");
+    end
 
     // Control for the core
     core_state_t core_state;
@@ -75,7 +83,10 @@ module GPGPU
         .i_csr_rdata(csr_rdata), .i_csr_status(csr_status)
     );
 
-    CSRBank #(.SP_PER_SM(SP_PER_SM), .INTERFACE_VERSION(INTERFACE_VERSION)) regs (
+    CSRBank #(
+        .SP_PER_SM(SP_PER_SM), .INTERFACE_VERSION(INTERFACE_VERSION), .CLOCK_KHZ(CLOCK_KHZ),
+        .BUILD_HASH(BUILD_HASH), .BUILD_DIRTY(BUILD_DIRTY), .DDR_ENABLE(DDR_ENABLE)
+    ) regs (
         .clk(clk), .rst_n(rst_n),
         .i_write(i_req_write), .i_addr(i_req_addr), .i_wdata(i_req_wdata),
         .i_byte_en(i_req_wstrb), .i_write_fire(csr_write_fire),

@@ -12,7 +12,17 @@ import xml.etree.ElementTree as ET
 NS = 'http://www.spiritconsortium.org/XMLSchema/SPIRIT/1685-2009'
 N = {'s': NS}
 FLOW = Path(__file__).resolve().parent
-HDL_PARAMETERS = ('SP_PER_SM', 'INTERFACE_VERSION', 'C_S00_AXI_DATA_WIDTH', 'C_S00_AXI_ADDR_WIDTH')
+# Allowed values of every packaged HDL parameter.
+HDL_PARAMETERS = {
+    'SP_PER_SM': lambda value: value > 0,
+    'INTERFACE_VERSION': lambda value: value > 0,
+    'CLOCK_KHZ': lambda value: value > 0,
+    'BUILD_HASH': lambda value: value >= 0,
+    'BUILD_DIRTY': lambda value: value in (0, 1),
+    'DDR_ENABLE': lambda value: value in (0, 1),
+    'C_S00_AXI_DATA_WIDTH': lambda value: value == 32,
+    'C_S00_AXI_ADDR_WIDTH': lambda value: value == 32,
+}
 AXI_PORTS = 'AWADDR AWPROT AWVALID AWREADY WDATA WSTRB WVALID WREADY BRESP BVALID BREADY ARADDR ARPROT ARVALID ARREADY RDATA RRESP RVALID RREADY'.split()
 
 
@@ -206,11 +216,10 @@ def validate_package(path: str | Path, memory_init: Path, sources: Sequence[Path
     require(any(n == 'xgui/gpgpu_axi_v1_0.tcl' for n, _ in all_files), 'Missing XGUI')
     users = named(component, 's:parameters/s:parameter')
     models = named(component, 's:model/s:modelParameters/s:modelParameter')
-    for param in HDL_PARAMETERS:
+    for param, allowed in HDL_PARAMETERS.items():
         require(param in users and param in models, f'Missing HDL/user parameter: {param}')
         value = number(text(users[param], 'value'))
-        require(value > 0 if param in ('SP_PER_SM', 'INTERFACE_VERSION') else value == 32,
-                f'Invalid parameter: {param}')
+        require(allowed(value), f'Invalid parameter: {param}')
         v = models[param].find('s:value', N)
         require(v is not None and f"PARAM_VALUE.{param}" in v.get(f'{{{NS}}}dependency', ''), f'Missing HDL mapping: {param}')
     gui = (root / 'xgui/gpgpu_axi_v1_0.tcl').read_text()

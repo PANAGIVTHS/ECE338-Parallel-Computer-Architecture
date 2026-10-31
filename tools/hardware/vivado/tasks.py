@@ -14,7 +14,10 @@ import zipfile
 
 from doit.tools import config_changed
 from src.project_paths import ProjectPaths
-from src.hardware_contract import axi_address, fabric_clock_mhz, identifier, rtl_sources, string_list, xsa_path
+from src.hardware_contract import (
+    axi_address, build_identity_path, fabric_clock_mhz, format_parameters, identifier, rtl_sources,
+    static_hdl_parameters, string_list, xsa_path,
+)
 
 
 IP_TOP = 'gpgpu_axi'
@@ -361,11 +364,11 @@ def create_tasks(config):
     version = config.get('hardware.vivado.version')
     vendor = config.get('tools.vivado.command')
     cores = config.get('architecture.num_cores')
-    interface_version = config.get('architecture.interface_version')
     jobs = config.get('hardware.vivado.jobs')
-    if any(not isinstance(v, int) or isinstance(v, bool) or v < 1 for v in (cores, interface_version, jobs)):
-        raise ValueError('architecture.num_cores, architecture.interface_version and '
-                         'hardware.vivado.jobs must be positive integers')
+    if any(not isinstance(v, int) or isinstance(v, bool) or v < 1 for v in (cores, jobs)):
+        raise ValueError('architecture.num_cores and hardware.vivado.jobs must be positive integers')
+    parameters = format_parameters(static_hdl_parameters(config))
+    identity = build_identity_path(config)
     post_route_phys_opt = config.get('hardware.vivado.post_route_phys_opt.enabled')
     if not isinstance(post_route_phys_opt, bool):
         raise ValueError('hardware.vivado.post_route_phys_opt.enabled must be true or false')
@@ -396,7 +399,7 @@ def create_tasks(config):
                   'sources-manifest': ip_dir / '.gpgpu/sources.tsv', 'xdc-file': xdc,
                   'bitstream-dir': paths.bitstream, 'platform-dir': paths.platform,
                   'xsa-name': xsa.stem, 'export-file': system / '.gpgpu/export.raw.tcl',
-                  'num-cores': cores, 'interface-version': interface_version, 'jobs': jobs, 'repo-root': repo, 'ip-repo-dir': ip_repo,
+                  'num-cores': cores, 'hdl-parameters': parameters, 'build-identity': identity, 'jobs': jobs, 'repo-root': repo, 'ip-repo-dir': ip_repo,
                   'axi-base': base, 'axi-range': size, 'fclk0-mhz': fclk0,
                   'post-route-phys-opt': int(post_route_phys_opt),
                   'post-route-phys-opt-directive': phys_opt_directive, 'flow-version': version}
@@ -418,11 +421,14 @@ def create_tasks(config):
                        'uptodate': [config_changed({'command': cmd}), (tool_current, [vendor, version])],
                        'clean': []})
 
+    # The IP stages read the build identity (BUILD_HASH, BUILD_DIRTY) when they run.
     stage('vivado:ip:create', 'create_ip_project.tcl', create_ip,
-          [repo, ip_dir, ip_name, part, version, inputs], [*source_deps, scripts / 'production_sources.tcl'], [ip_xpr], ip=True)
+          [repo, ip_dir, ip_name, part, version, inputs], [*source_deps, scripts / 'production_sources.tcl', identity],
+          [ip_xpr], ['hardware:identity'], ip=True)
     stage('vivado:ip:build', 'package_ip.tcl', package_ip, [repo, ip_dir, ip_repo, inputs],
-          [ip_xpr, *source_deps, scripts / 'production_sources.tcl', scripts / 'package.py', scripts / 'ip/xgui/gpgpu_axi_v1_0.tcl'],
-          [component, stamp], ['vivado:ip:create'], ip=True)
+          [ip_xpr, *source_deps, scripts / 'production_sources.tcl', scripts / 'package.py', scripts / 'ip/xgui/gpgpu_axi_v1_0.tcl',
+           identity],
+          [component, stamp], ['vivado:ip:create', 'hardware:identity'], ip=True)
     result[-1]['uptodate'].append((package_current, [ip_repo, repo, inputs]))
     stage('vivado:system:create', 'create_system.tcl', create_system,
           [repo, system, name, part, bd, wrapper, ip_repo, version, inputs],

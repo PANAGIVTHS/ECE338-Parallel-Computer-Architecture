@@ -19,6 +19,8 @@ class Config:
         return {
             "architecture.num_cores": self.num_cores,
             "architecture.interface_version": 2,
+            "architecture.ddr_enable": False,
+            "hardware.vivado.fabric_clock_mhz": 35,
             "tools.python.command": sys.executable,
             "tools.verilator.command": self.verilator,
             "tools.make.command": "configured-make",
@@ -62,9 +64,11 @@ def test_real_checkout_verilator_sources_and_core_count():
     command = build["actions"][0][1][0]
     root = repo / "hardware/rtl/gpgpu"
     assert command[0] == "configured-verilator"
-    assert all(Path(p).is_file() for p in build["file_dep"])
+    identity = config.build_root / "hardware/build_identity.txt"
+    assert all(Path(p).is_file() for p in build["file_dep"] if Path(p) != identity)
+    assert str(identity) in build["file_dep"]
     for flag in ("--binary", "--timing", "--assert", "--autoflush", "-GNUM_CORES=8",
-                 "-GINTERFACE_VERSION=2"):
+                 "-GINTERFACE_VERSION=2", "-GCLOCK_KHZ=35000", "-GDDR_ENABLE=0"):
         assert flag in command
     assert command[command.index("--top-module") + 1] == "tb_GPGPU_smx_only"
     assert command.index(str(root / "memory/MemoryInterface.sv")) < command.index(str(root / "GPGPU.sv"))

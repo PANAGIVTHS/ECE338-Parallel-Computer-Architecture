@@ -4,6 +4,10 @@ package ControlPkg;
 
     // Identity block (0x000-0x01C)
     (* host *) localparam gpu_pkg::word_t REG_INFO = 'h0000;
+    (* host *) localparam gpu_pkg::word_t REG_INFO_MEM = 'h0004;
+    (* host *) localparam gpu_pkg::word_t REG_INFO_FEATURES = 'h0008;
+    (* host *) localparam gpu_pkg::word_t REG_INFO_CLOCK = 'h000C;
+    (* host *) localparam gpu_pkg::word_t REG_BUILD_ID = 'h0010;
 
     // Control block (0x020-0x03C)
     (* host *) localparam gpu_pkg::word_t REG_CONTROL = 'h0020;
@@ -27,12 +31,23 @@ package ControlPkg;
     //! GPU interrupt bits
     localparam int unsigned IRQ_COMPLETE_BIT = 0;
 
+    //! INFO_FEATURES bits
+    localparam int unsigned FEATURE_DDR_BIT = 0;
+
+    //! BUILD_ID fields: [BUILD_HASH_BITS-1:0] short hash of the last RTL commit,
+    //! then the dirty bit (uncommitted RTL changes)
+    localparam int unsigned BUILD_HASH_BITS = 28;
+    localparam int unsigned BUILD_DIRTY_BIT = BUILD_HASH_BITS;
+
     //! Derive masks from bit positions
     (* host *) localparam gpu_pkg::word_t CONTROL_START_MASK = gpu_pkg::word_t'(1) << CONTROL_START_BIT;
     (* host *) localparam gpu_pkg::word_t CONTROL_STOP_MASK = gpu_pkg::word_t'(1) << CONTROL_STOP_BIT;
     (* host *) localparam gpu_pkg::word_t STATUS_IDLE_MASK = gpu_pkg::word_t'(1) << STATUS_IDLE_BIT;
     (* host *) localparam gpu_pkg::word_t STATUS_RUNNING_MASK = gpu_pkg::word_t'(1) << STATUS_RUNNING_BIT;
     (* host *) localparam gpu_pkg::word_t STATUS_STOPPED_MASK = gpu_pkg::word_t'(1) << STATUS_STOPPED_BIT;
+    (* host *) localparam gpu_pkg::word_t FEATURE_DDR_MASK = gpu_pkg::word_t'(1) << FEATURE_DDR_BIT;
+    (* host *) localparam gpu_pkg::word_t BUILD_HASH_MASK = (gpu_pkg::word_t'(1) << BUILD_HASH_BITS) - 1;
+    (* host *) localparam gpu_pkg::word_t BUILD_DIRTY_MASK = gpu_pkg::word_t'(1) << BUILD_DIRTY_BIT;
 
     typedef enum logic [1:0] {
         CORE_IDLE = 2'b00,

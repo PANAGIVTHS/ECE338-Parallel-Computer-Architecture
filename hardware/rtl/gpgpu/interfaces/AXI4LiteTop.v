@@ -5,9 +5,13 @@
 	(
 		// Users to add parameters here
         parameter integer SP_PER_SM = 32,
-        // Set by IP packaging from architecture.interface_version; the CSR
-        // bank rejects 0 at elaboration.
+        // Set by IP packaging (CLOCK_KHZ by the block design) from the
+        // configuration; the CSR bank rejects the 0 defaults of the first two.
         parameter integer INTERFACE_VERSION = 0,
+        parameter integer CLOCK_KHZ = 0,
+        parameter integer BUILD_HASH = 0,
+        parameter integer BUILD_DIRTY = 0,
+        parameter integer DDR_ENABLE = 0,
 		// User parameters ends
 		// Do not modify the parameters beyond this line
 
@@ -114,7 +118,11 @@
 
     GPGPU #(
         .SP_PER_SM(SP_PER_SM),
-        .INTERFACE_VERSION(INTERFACE_VERSION)
+        .INTERFACE_VERSION(INTERFACE_VERSION),
+        .CLOCK_KHZ(CLOCK_KHZ),
+        .BUILD_HASH(BUILD_HASH),
+        .BUILD_DIRTY(BUILD_DIRTY != 0),
+        .DDR_ENABLE(DDR_ENABLE != 0)
     ) gpu (
         .clk(s00_axi_aclk),
         .rst_n(s00_axi_aresetn),

@@ -17,7 +17,7 @@ def test_shipped_config_and_public_graph(tmp_path):
     assert {'vivado:ip:create', 'vivado:ip:build', 'vivado:system:create', 'vivado:system:build'} <= graph.keys()
     assert 'vivado:project' not in graph
     assert 'vivado:xsa' not in graph
-    assert graph['vivado:ip:build']['task_dep'] == ['vivado:ip:create']
+    assert graph['vivado:ip:build']['task_dep'] == ['vivado:ip:create', 'hardware:identity']
     assert graph['vivado:system:create']['task_dep'] == ['vivado:ip:build']
     assert cfg.get('hardware.vivado.project_name') == 'gpgpu_system'
     assert cfg.get('hardware.vivado.version') == '2025.2'

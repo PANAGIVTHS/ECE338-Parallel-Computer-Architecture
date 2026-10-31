@@ -1,6 +1,9 @@
 architecture:
   num_cores: 32
   interface_version: 2
+  # DDR backend of the memory subsystem (reported in INFO_FEATURES). Must stay
+  # false until the backend exists: the RTL refuses to elaborate otherwise.
+  ddr_enable: false
 
 hardware:
   fpga:

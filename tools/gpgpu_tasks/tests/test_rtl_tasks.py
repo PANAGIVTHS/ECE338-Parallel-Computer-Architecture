@@ -16,6 +16,8 @@ class StubResolvedConfig:
         return {
             "architecture.num_cores": 8,
             "architecture.interface_version": 2,
+            "architecture.ddr_enable": False,
+            "hardware.vivado.fabric_clock_mhz": 35,
             "tools.python.command": sys.executable,
             "tools.verilator.command": "verilator-configured",
             "tools.make.command": "make-configured",
@@ -69,7 +71,7 @@ def tasks_by_name(config):
 def test_current_layout_generation_and_build_dependencies(tmp_path):
     tasks = tasks_by_name(make_repo(tmp_path))
     assert set(tasks) == {
-        "tests:rtl:generate", "tests:rtl:random",
+        "hardware:identity", "tests:rtl:generate", "tests:rtl:random",
         *(f"tests:rtl:{suite}:{stage}" for suite in ("smx", "e2e") for stage in ("build", "run", "all")),
         *(f"tests:rtl:{stage}" for stage in ("build", "run", "all")),
     }
@@ -85,6 +87,13 @@ def test_current_layout_generation_and_build_dependencies(tmp_path):
     assert command[0] == "verilator-configured"
     assert command[command.index("-MAKEFLAGS") + 1] == "CXX=cxx-configured LINK=cxx-configured"
     assert build["uptodate"][0].config == {"command": command, "make": "make-configured"}
+    # The build identity comes from git through its own task, never at discovery.
+    identity = tmp_path / "build/hardware/build_identity.txt"
+    assert build["task_dep"] == ["hardware:identity"]
+    assert str(identity) in build["file_dep"]
+    assert build["actions"][0][1][-1] == identity
+    assert tasks["hardware:identity"]["targets"] == [str(identity)]
+    assert not any(arg.startswith("-GBUILD_") for arg in command)
     run = tasks["tests:rtl:smx:run"]
     assert run["task_dep"] == ["tests:rtl:generate", "tests:rtl:smx:build"]
     assert run["actions"][0][1][0] == build["targets"]
@@ -143,11 +152,13 @@ def test_compilation_does_not_reuse_objects_from_previous_toolchain(tmp_path):
     build.mkdir()
     (build / "old.o").write_text("previous compiler object")
     (build / "Vtb_GPGPU_smx_only__pch.h.fast.gch").write_text("old precompiled header")
-    command = [sys.executable, "-c", "print('new build')"]
-    rtl.run_compilation(command, tmp_path, build, "configured-make")
+    command = [sys.executable, "-c", "import sys; print('new build', *sys.argv[1:])"]
+    identity = tmp_path / "build_identity.txt"
+    identity.write_text("BUILD_HASH=12,BUILD_DIRTY=1\n")
+    rtl.run_compilation(command, tmp_path, build, "configured-make", identity)
     assert not (build / "old.o").exists()
     assert not (build / "Vtb_GPGPU_smx_only__pch.h.fast.gch").exists()
-    assert (build / "build.log").read_text() == "new build\n"
+    assert (build / "build.log").read_text() == "new build -GBUILD_HASH=12 -GBUILD_DIRTY=1\n"
 
 
 def test_smx_runtime_resolves_cases_and_contains_dump(tmp_path):
@@ -186,3 +197,106 @@ def test_exclude_sources_accepts_names_and_relative_paths(tmp_path, exclude, dro
     rtl_root = tmp_path / "hardware/rtl/gpgpu"
     assert not any(str(rtl_root / path) in command for path in dropped)
     assert all(str(rtl_root / path) in command for path in kept)
+
+
+def git_checkout(tmp_path):
+    """A repository whose RTL has one commit, for the build identity."""
+    import subprocess
+
+    rtl = tmp_path / "hardware/rtl/gpgpu"
+    rtl.mkdir(parents=True)
+    (rtl / "GPGPU.sv").write_text("module GPGPU; endmodule\n")
+    (tmp_path / "README.md").write_text("outside the RTL\n")
+    git = ["git", "-C", str(tmp_path), "-c", "user.name=fixture", "-c", "user.email=fixture@example.com"]
+    subprocess.run([*git, "init", "--quiet"], check=True)
+    subprocess.run([*git, "add", "--all"], check=True)
+    subprocess.run([*git, "commit", "--quiet", "--no-gpg-sign", "-m", "rtl"], check=True)
+    commit = subprocess.run([*git, "rev-parse", "HEAD"], check=True, capture_output=True, text=True).stdout
+    return rtl, int(commit[:7], 16)
+
+
+class IdentityConfig:
+    def __init__(self, root):
+        self.repo_root = root
+        self.build_root = root / "build"
+
+    def get(self, key):
+        return {"tools.git.command": "git", "paths.rtl.sources.gpgpu": "hardware/rtl/gpgpu"}[key]
+
+
+def test_build_identity_is_the_rtl_commit_and_dirty_only_for_rtl_changes(tmp_path):
+    from src.hardware_contract import build_identity, build_identity_path, write_build_identity
+
+    rtl, commit = git_checkout(tmp_path)
+    config = IdentityConfig(tmp_path)
+    assert build_identity(config) == {"BUILD_HASH": commit, "BUILD_DIRTY": 0}
+    (tmp_path / "README.md").write_text("edited outside the RTL\n")
+    assert build_identity(config)["BUILD_DIRTY"] == 0
+    (rtl / "GPGPU.sv").write_text("module GPGPU; wire edited; endmodule\n")
+    assert build_identity(config) == {"BUILD_HASH": commit, "BUILD_DIRTY": 1}
+
+    # Rewritten only on change, so dependents compare the file as unchanged.
+    output = build_identity_path(config)
+    write_build_identity(config, output)
+    assert output.read_text() == f"BUILD_HASH={commit},BUILD_DIRTY=1\n"
+    stamp = output.stat().st_mtime_ns
+    write_build_identity(config, output)
+    assert output.stat().st_mtime_ns == stamp
+
+
+def test_build_identity_requires_an_rtl_commit(tmp_path):
+    import subprocess
+    from src.hardware_contract import build_identity
+
+    (tmp_path / "hardware/rtl/gpgpu").mkdir(parents=True)
+    subprocess.run(["git", "-C", str(tmp_path), "init", "--quiet"], check=True)
+    with pytest.raises((ValueError, subprocess.CalledProcessError)):
+        build_identity(IdentityConfig(tmp_path))
+
+
+def test_hdl_parameters_round_trip_and_reject_malformed_text():
+    from src.hardware_contract import format_parameters, parse_parameters
+
+    parameters = {"INTERFACE_VERSION": 2, "CLOCK_KHZ": 35000, "DDR_ENABLE": 0}
+    assert format_parameters(parameters) == "INTERFACE_VERSION=2,CLOCK_KHZ=35000,DDR_ENABLE=0"
+    assert parse_parameters(format_parameters(parameters) + "\n") == parameters
+    for text in ("A=1,A=2", "lower=1", "A=-1", "A=1 B=2", ""):
+        with pytest.raises(ValueError):
+            parse_parameters(text)
+
+
+VALID_STATIC = {
+    "architecture.interface_version": 2,
+    "architecture.ddr_enable": False,
+    "hardware.vivado.fabric_clock_mhz": 35.714,
+}
+
+
+def static_config(values):
+    class Config:
+        def get(self, name):
+            return values[name]
+    return Config()
+
+
+def test_static_hdl_parameters_come_from_configuration():
+    from src.hardware_contract import static_hdl_parameters
+
+    assert static_hdl_parameters(static_config(VALID_STATIC)) == {
+        "INTERFACE_VERSION": 2, "CLOCK_KHZ": 35714, "DDR_ENABLE": 0,
+    }
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("architecture.interface_version", 0),
+        ("architecture.ddr_enable", 1),
+        ("hardware.vivado.fabric_clock_mhz", 0),
+    ],
+)
+def test_static_hdl_parameters_have_no_fallback(key, value):
+    from src.hardware_contract import static_hdl_parameters
+
+    with pytest.raises(ValueError, match=key):
+        static_hdl_parameters(static_config({**VALID_STATIC, key: value}))

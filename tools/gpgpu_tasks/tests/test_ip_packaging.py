@@ -122,7 +122,8 @@ def package_fixture(tmp_path):
     block=add(mm,'addressBlock')
     for tag,value in [('name','reg0'),('baseAddress','0'),('range','65536'),('width','32'),('usage','register')]: add(block,tag,value)
     model=add(r,'model'); mp=add(model,'modelParameters'); up=add(r,'parameters')
-    for name,value in [('SP_PER_SM','8'),('INTERFACE_VERSION','2'),('C_S00_AXI_DATA_WIDTH','32'),('C_S00_AXI_ADDR_WIDTH','32')]:
+    for name,value in [('SP_PER_SM','8'),('INTERFACE_VERSION','2'),('CLOCK_KHZ','35000'),('BUILD_HASH','12'),
+                       ('BUILD_DIRTY','0'),('DDR_ENABLE','0'),('C_S00_AXI_DATA_WIDTH','32'),('C_S00_AXI_ADDR_WIDTH','32')]:
         p=add(up,'parameter');add(p,'name',name);add(p,'value',value,resolve='user')
         p=add(mp,'modelParameter');add(p,'name',name);add(p,'value',value,resolve='generated',dependency=f"spirit:decode(id('PARAM_VALUE.{name}'))")
     files=add(r,'fileSets')
@@ -282,10 +283,12 @@ def tcl_driver(tmp_path, script, *, group_types=None, **overrides):
     shutil.copytree(FLOW/'ip',flow/'ip',dirs_exist_ok=True)
     project=tmp_path/'project'; staging=tmp_path/'staging'
     values={'PROJECT_DIR':project,'PROJECT_NAME':'gpgpu_ip_dev','PROJECT_FILE':project/'gpgpu_ip_dev.xpr',
-            'TOP_NAME':'gpgpu_axi','FPGA_PART':'xc7z020clg484-1','NUM_CORES':8,'INTERFACE_VERSION':2,'IP_REVISION':7,'FLOW_VERSION':'2025.2',
+            'TOP_NAME':'gpgpu_axi','FPGA_PART':'xc7z020clg484-1','NUM_CORES':8,'HDL_PARAMETERS':'INTERFACE_VERSION 2 CLOCK_KHZ 35000 DDR_ENABLE 0','IP_REVISION':7,'FLOW_VERSION':'2025.2',
             'REPO_ROOT':ROOT,'SOURCES_MANIFEST':manifest,'IP_REPO_DIR':staging}
     values.update(overrides)
-    (flow/'common.tcl').write_text('\n'.join(f'set {k} {{{v}}}' for k,v in values.items()))
+    (flow/'common.tcl').write_text('\n'.join(f'set {k} {{{v}}}' for k,v in values.items()) +
+        '\nproc read_build_identity {} {global HDL_PARAMETERS; dict set HDL_PARAMETERS BUILD_HASH 12; '
+        'dict set HDL_PARAMETERS BUILD_DIRTY 0}\n')
     tcl=tcl_interpreter(); commands=[]
     import tkinter
     groups = dict(group_types if group_types is not None else {
@@ -328,7 +331,7 @@ def test_ip_project_recreation_is_portable_production_only(tmp_path):
     assert added
     assert sorted(p.name for p in (values['PROJECT_DIR']/'src').iterdir())==sorted(input_names())
     assert not any(name in ('open_project','launch_runs','read_xdc') for name,args in calls)
-    assert any(name=='set_property' and args[:2]==('generic','SP_PER_SM=8 INTERFACE_VERSION=2') for name,args in calls)
+    assert any(name=='set_property' and args[:2]==('generic','SP_PER_SM=8 INTERFACE_VERSION=2 CLOCK_KHZ=35000 DDR_ENABLE=0 BUILD_HASH=12 BUILD_DIRTY=0') for name,args in calls)
 
 
 @pytest.mark.parametrize('guard', ['existing_project','wrong_version','wrong_top'])
@@ -367,6 +370,13 @@ def test_ip_package_driver_configures_contract_without_reference_opens(tmp_path,
         return
     assert error is None
     assert sum(n == 'ipx::add_file_group' for n, _ in calls) == created
+    # Every HDL parameter is packaged; only SP_PER_SM and CLOCK_KHZ stay editable
+    # for the block design, the rest describe the packaged RTL.
+    packaged = [args[0] for n, args in calls if n == 'ipx::get_user_parameters']
+    assert packaged == ['SP_PER_SM', 'INTERFACE_VERSION', 'CLOCK_KHZ', 'DDR_ENABLE', 'BUILD_HASH',
+                        'BUILD_DIRTY', 'C_S00_AXI_DATA_WIDTH', 'C_S00_AXI_ADDR_WIDTH']
+    assert sum(n == 'set_property' and args[:2] == ('enablement_value', 'false') for n, args in calls) == \
+        len(packaged) - 2
     for group in {a[-1] for n, a in calls if n == 'ipx::add_file'}:
         ordered = [Path(a[0]).name for n, a in calls if n == 'ipx::add_file' and a[-1] == group]
         assert ordered == input_names()
@@ -399,7 +409,8 @@ def test_package_refuses_populated_destination_before_open(tmp_path):
     ('24', 'true'), ('0', 'false'), ('-1', 'false'),
     ('not-an-integer', 'false'), ('1.5', 'false'), ('', 'false'),
 ])
-def test_sp_per_sm_xgui_returns_literal_booleans(value, expected):
+@pytest.mark.parametrize('parameter', ['SP_PER_SM', 'CLOCK_KHZ'])
+def test_block_design_parameters_xgui_returns_literal_booleans(parameter, value, expected):
     """Execute production Tcl; this does not substitute for vendor customization."""
     tcl = tcl_interpreter()
     calls = []
@@ -408,7 +419,7 @@ def test_sp_per_sm_xgui_returns_literal_booleans(value, expected):
         return value
     tcl.createcommand('get_property', get_property)
     tcl.call('source', str(FLOW / 'ip/xgui/gpgpu_axi_v1_0.tcl'))
-    assert tcl.eval('validate_PARAM_VALUE.SP_PER_SM test_parameter') == expected
+    assert tcl.eval(f'validate_PARAM_VALUE.{parameter} test_parameter') == expected
     assert calls == [('value', 'test_parameter')]
 
 

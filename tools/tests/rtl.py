@@ -13,7 +13,10 @@ from typing import TYPE_CHECKING, Any, TextIO
 
 from doit.tools import config_changed
 from src.project_paths import ProjectPaths
-from src.hardware_contract import rtl_root, rtl_sources, string_list
+from src.hardware_contract import (
+    build_identity_path, build_identity_task, parse_parameters, rtl_root, rtl_sources,
+    static_hdl_parameters, string_list,
+)
 
 if TYPE_CHECKING:
     from config import ResolvedConfig
@@ -123,8 +126,14 @@ def rtl_range_plusargs(value: str) -> list[str]:
     return [f"+TEST_IDX={first}", f"+TEST_END={last}"]
 
 
-def run_compilation(command: list[str], cwd: Path, build: Path, make: str) -> None:
-    """Build with configured native prerequisites and preserve live build output."""
+def run_compilation(command: list[str], cwd: Path, build: Path, make: str, identity: Path) -> None:
+    """Build with configured native prerequisites and preserve live build output.
+
+    The build identity (BUILD_HASH, BUILD_DIRTY) is read here, not at discovery:
+    it comes from git through the hardware:identity task.
+    """
+    command = [*command, *(f"-G{name}={value}"
+                           for name, value in parse_parameters(identity.read_text()).items())]
     build.mkdir(parents=True, exist_ok=True)
     # doit decides whether to rebuild. Once invalidated, make must not reuse
     # objects/PCH from a different compiler or set of compile options.
@@ -173,7 +182,8 @@ def create_tasks(config: ResolvedConfig) -> list[dict[str, Any]]:
     trace_flags = string_list(config, "tests.rtl.trace.verilator_flags")
     dump_file = _configured_command(config, "tests.rtl.trace.dump_file")
     num_cores = _configured_positive_int(config, "architecture.num_cores")
-    interface_version = _configured_positive_int(config, "architecture.interface_version")
+    parameters = static_hdl_parameters(config)
+    identity = build_identity_path(config)
     range_args = rtl_range_plusargs(_configured_command(config, "tests.rtl.range"))
     assembler = repo_root / "tools/tests/assembler.py"
     expected_generator = repo_root / "tools/tests/expected_generator.py"
@@ -219,6 +229,7 @@ def create_tasks(config: ResolvedConfig) -> list[dict[str, Any]]:
         )
 
     tasks: list[dict[str, Any]] = [
+        build_identity_task(config),
         {
             "name": "tests:rtl:generate",
             "actions": [
@@ -258,7 +269,7 @@ def create_tasks(config: ResolvedConfig) -> list[dict[str, Any]]:
             verilator, "--binary", "--timing", "--assert", "--autoflush", "-Wno-fatal",
             "--timescale", "1ns/1ps", f"-I{rtl_src_root}", "-DSIM",
             "--top-module", testbench_tops[suite], f"-GNUM_CORES={num_cores}",
-            f"-GINTERFACE_VERSION={interface_version}",
+            *(f"-G{name}={value}" for name, value in parameters.items()),
             "--Mdir", str(suite_build_root), "-o", executable.name,
             "-MAKEFLAGS", shlex.join([f"CXX={cxx}", f"LINK={cxx}"]),
             *(trace_flags if trace else []),
@@ -269,9 +280,11 @@ def create_tasks(config: ResolvedConfig) -> list[dict[str, Any]]:
                 {
                     "name": build_task,
                     "actions": [
-                        (run_compilation, [compile_command, repo_root, suite_build_root, make])
+                        (run_compilation, [compile_command, repo_root, suite_build_root, make, identity])
                     ],
-                    "file_dep": [str(testbench), *(str(source) for source in (*sources, *suite_headers[suite]))],
+                    "file_dep": [str(testbench), *(str(source) for source in (*sources, *suite_headers[suite])),
+                                 str(identity)],
+                    "task_dep": ["hardware:identity"],
                     "targets": [str(executable)],
                     "uptodate": [config_changed({"command": compile_command, "make": make})],
                     "clean": True,

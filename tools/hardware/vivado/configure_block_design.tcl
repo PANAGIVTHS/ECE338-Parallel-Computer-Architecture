@@ -1,4 +1,5 @@
-# Only architecture, the mapped aperture and the fabric clock are configuration-owned.
+# Only architecture, the mapped aperture and the fabric clock (and the GPGPU's
+# CLOCK_KHZ derived from it) are configuration-owned.
 # All other saved GUI properties and wiring remain authoritative.
 proc bd_range_bytes {value} {
     if {[string is entier -strict $value]} { return [expr {wide($value)}] }
@@ -33,6 +34,17 @@ proc configure_block_design {} {
     set fclk [get_property CONFIG.PCW_FPGA0_PERIPHERAL_FREQMHZ $ps]
     if {![string is double -strict $fclk] || $fclk != $FCLK0_MHZ} {
         set_property CONFIG.PCW_FPGA0_PERIPHERAL_FREQMHZ $FCLK0_MHZ $ps
+        set changed 1
+    }
+    # INFO_CLOCK reports the frequency the PS dividers actually produce, which
+    # may differ from the requested one.
+    set achieved [get_property CONFIG.PCW_ACT_FPGA0_PERIPHERAL_FREQMHZ $ps]
+    if {![string is double -strict $achieved] || $achieved <= 0} {
+        error "Missing achieved FCLK_CLK0 frequency (PCW_ACT_FPGA0_PERIPHERAL_FREQMHZ): $achieved"
+    }
+    set clock_khz [expr {round($achieved * 1000.0)}]
+    if {[get_property CONFIG.CLOCK_KHZ $gpgpu] ne $clock_khz} {
+        set_property CONFIG.CLOCK_KHZ $clock_khz $gpgpu
         set changed 1
     }
     if {[llength $mapped] != 1 ||

@@ -14,6 +14,10 @@
 
 /* ControlPkg */
 #define GPGPU_REG_INFO                     0x00000000U
+#define GPGPU_REG_INFO_MEM                 0x00000004U
+#define GPGPU_REG_INFO_FEATURES            0x00000008U
+#define GPGPU_REG_INFO_CLOCK               0x0000000CU
+#define GPGPU_REG_BUILD_ID                 0x00000010U
 #define GPGPU_REG_CONTROL                  0x00000020U
 #define GPGPU_REG_STATUS                   0x00000024U
 #define GPGPU_REG_IRQ_ENABLE               0x00000028U
@@ -25,6 +29,9 @@
 #define GPGPU_STATUS_IDLE_MASK             0x00000001U
 #define GPGPU_STATUS_RUNNING_MASK          0x00000002U
 #define GPGPU_STATUS_STOPPED_MASK          0x00000004U
+#define GPGPU_FEATURE_DDR_MASK             0x00000001U
+#define GPGPU_BUILD_HASH_MASK              0x0FFFFFFFU
+#define GPGPU_BUILD_DIRTY_MASK             0x10000000U
 
 /* MemorySubsystemPkg */
 #define GPGPU_ST_OK                        0U

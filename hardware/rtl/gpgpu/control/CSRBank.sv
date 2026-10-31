@@ -4,7 +4,11 @@ module CSRBank
     import ControlPkg::*;
 #(
     parameter int unsigned SP_PER_SM = 32,
-    parameter int unsigned INTERFACE_VERSION
+    parameter int unsigned INTERFACE_VERSION,
+    parameter int unsigned CLOCK_KHZ,
+    parameter int unsigned BUILD_HASH,
+    parameter bit BUILD_DIRTY,
+    parameter bit DDR_ENABLE
 ) (
     input logic clk,
     input logic rst_n,
@@ -81,6 +85,27 @@ module CSRBank
 
     localparam logic [INFO_FIELD_WIDTH-1:0] VERSION_FIELD = INFO_FIELD_WIDTH'(INTERFACE_VERSION);
     localparam logic [INFO_FIELD_WIDTH-1:0] SP_COUNT = INFO_FIELD_WIDTH'(SP_PER_SM);
+
+    // ========================================================================
+    // CSR: INFO_MEM, INFO_FEATURES, INFO_CLOCK, BUILD_ID - Read-Only Identity
+    // ========================================================================
+
+    if (IMEM_ENTRIES >= (1 << INFO_FIELD_WIDTH) || DMEM_ENTRIES >= (1 << INFO_FIELD_WIDTH)) begin : g_mem_check
+        $fatal(1, "IMEM_ENTRIES and DMEM_ENTRIES must fit INFO_MEM's %0d-bit fields", INFO_FIELD_WIDTH);
+    end
+
+    if (CLOCK_KHZ == 0) begin : g_clock_check
+        $fatal(1, "CLOCK_KHZ must be the fabric clock in kHz, not 0");
+    end
+
+    if (BUILD_HASH >= (1 << BUILD_HASH_BITS)) begin : g_build_hash_check
+        $fatal(1, "BUILD_HASH must fit BUILD_ID's %0d-bit hash field", BUILD_HASH_BITS);
+    end
+
+    localparam word_t INFO_MEM = {INFO_FIELD_WIDTH'(IMEM_ENTRIES), INFO_FIELD_WIDTH'(DMEM_ENTRIES)};
+    localparam word_t INFO_FEATURES = DDR_ENABLE ? FEATURE_DDR_MASK : '0;
+    localparam word_t BUILD_ID = (word_t'(BUILD_HASH) & BUILD_HASH_MASK)
+                               | (BUILD_DIRTY ? BUILD_DIRTY_MASK : '0);
 
     // ========================================================================
     // CSR: CONTROL - START / STOP Commands
@@ -171,6 +196,20 @@ module CSRBank
                     o_status = RSP_ACCESS_DENIED;
                 end else begin
                     o_rdata = {VERSION_FIELD, SP_COUNT};
+                end
+            end
+
+            REG_INFO_MEM, REG_INFO_FEATURES, REG_INFO_CLOCK, REG_BUILD_ID: begin
+                if (i_write) begin
+                    o_status = RSP_ACCESS_DENIED;
+                end else begin
+                    case (i_addr)
+                        REG_INFO_MEM: o_rdata = INFO_MEM;
+                        REG_INFO_FEATURES: o_rdata = INFO_FEATURES;
+                        REG_INFO_CLOCK: o_rdata = word_t'(CLOCK_KHZ);
+                        REG_BUILD_ID: o_rdata = BUILD_ID;
+                        default: o_rdata = '0;
+                    endcase
                 end
             end
 

@@ -83,6 +83,10 @@ def test_batch_arguments_do_not_shadow_real_version_probe(tmp_path):
 
 def test_ip_create_runs_production_tcl_in_runner_prepared_directory(tmp_path, capsys):
     _, action, arguments, target, trace = launch_setup(tmp_path)
+    # Normally written first by the hardware:identity task.
+    identity = tmp_path / 'build/hardware/build_identity.txt'
+    identity.parent.mkdir(parents=True)
+    identity.write_text('BUILD_HASH=12,BUILD_DIRTY=0\n')
     action(*arguments)
     assert target.read_text().startswith('FAKE XPR from executing production Tcl')
     assert 'production Tcl called create_project' in capsys.readouterr().out

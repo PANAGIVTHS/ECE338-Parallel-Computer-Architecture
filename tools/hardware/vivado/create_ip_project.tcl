@@ -62,7 +62,10 @@ set_property file_type {Memory Initialization Files} [get_files [file join $sour
 set_property include_dirs {} [get_filesets sources_1]
 set_property include_dirs {} [get_filesets sim_1]
 set_property top $TOP_NAME [get_filesets sources_1]
-set_property generic "SP_PER_SM=$NUM_CORES INTERFACE_VERSION=$INTERFACE_VERSION" [get_filesets sources_1]
+read_build_identity
+set generics [list "SP_PER_SM=$NUM_CORES"]
+dict for {name value} $HDL_PARAMETERS {lappend generics "$name=$value"}
+set_property generic [join $generics] [get_filesets sources_1]
 # Manual source management retains the explicit interface-first compile order.
 # No board XDC, reference component.xml, external IP repo, TB or experiments.
 close_project
