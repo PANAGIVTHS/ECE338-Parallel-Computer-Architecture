@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
+import sys
 
 import typer
 
@@ -57,7 +59,19 @@ def create_app(*, repo_root: str | Path | None = None) -> typer.Typer:
     return app
 
 
+# Set by the repository launcher (./gpgpu) before it runs this entry point.
+LAUNCHER_ENVIRONMENT = "GPGPU_LAUNCHER"
+
+
 def main() -> None:
+    # The launcher keeps .venv in sync with the dependency files. The console
+    # script of an activated .venv would skip that, so it hands over to the
+    # launcher of the repository this environment belongs to (<root>/.venv).
+    if LAUNCHER_ENVIRONMENT not in os.environ:
+        launcher = Path(sys.prefix).parent / "gpgpu"
+        if not launcher.is_file():
+            raise SystemExit(f"gpgpu must run through the repository launcher, not found: {launcher}")
+        os.execv(launcher, [str(launcher), *sys.argv[1:]])
     create_app()()
 
 

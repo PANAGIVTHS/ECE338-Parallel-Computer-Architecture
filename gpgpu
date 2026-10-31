@@ -4,6 +4,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CLI_PROJECT="$ROOT/tools/gpgpu_cli"
 VENV="$ROOT/.venv"
+# Tells the CLI entry point it already runs through this launcher.
+export GPGPU_LAUNCHER=1
 
 # The environment is resynchronized whenever one of these changes, so pulling a
 # commit that adds a dependency installs it on the next run.

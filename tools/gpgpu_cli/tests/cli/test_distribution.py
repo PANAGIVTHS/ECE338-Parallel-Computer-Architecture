@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import subprocess
 
+import pytest
 import yaml
 
 
@@ -163,3 +164,32 @@ def test_root_launcher_rebuilds_a_relocated_virtualenv_and_runs_requested_comman
     assert result.returncode == 0, result.stderr
     assert "Running first-time initialization" in result.stdout
     assert "executed:run tests:rtl:generate" in result.stdout
+
+
+def test_console_script_hands_over_to_the_repository_launcher(tmp_path: Path, monkeypatch) -> None:
+    import sys
+    from cli import cli
+
+    venv = tmp_path / ".venv"
+    venv.mkdir()
+    launcher = tmp_path / "gpgpu"
+    launcher.write_text("#!/bin/sh\n")
+    calls = []
+    monkeypatch.setattr(sys, "prefix", str(venv))
+    monkeypatch.setattr(sys, "argv", ["gpgpu", "run", "vitis:build:all"])
+    monkeypatch.setattr(cli.os, "execv", lambda path, argv: calls.append((path, argv)))
+    monkeypatch.setattr(cli, "create_app", lambda: (lambda: calls.append("app")))
+
+    monkeypatch.delenv(cli.LAUNCHER_ENVIRONMENT, raising=False)
+    cli.main()
+    assert calls[0] == (launcher, [str(launcher), "run", "vitis:build:all"])
+
+    calls.clear()
+    monkeypatch.setenv(cli.LAUNCHER_ENVIRONMENT, "1")
+    cli.main()
+    assert calls == ["app"]
+
+    monkeypatch.delenv(cli.LAUNCHER_ENVIRONMENT)
+    launcher.unlink()
+    with pytest.raises(SystemExit, match="repository launcher"):
+        cli.main()
