@@ -2,6 +2,7 @@
 module CSRBank 
     import gpu_pkg::*;
     import ControlPkg::*;
+    import MemorySubsystemPkg::*;
 #(
     parameter int unsigned SP_PER_SM = 32,
     parameter int unsigned INTERFACE_VERSION,
@@ -27,12 +28,22 @@ module CSRBank
     input logic i_idle,
     input logic i_running,
     input logic i_stopped,
+    input logic i_faulted,
     input logic i_complete_pulse,
+
+    // Fault capture (SM) and memory subsystem lock-up
+    input logic i_fault,
+    input logic [SP_PER_SM-1:0] i_fault_lanes,
+    input mem_status_kinds_t i_fault_kinds,
+    input pc_t i_fault_pc,
+    input logic i_fatal,
+    input mem_fatal_t i_fatal_code,
 
     // GPU control
     output logic o_start,
     output logic o_stop,
     output logic o_clear_stopped,
+    output logic o_clear_faulted,
     output logic o_irq
 );
 
@@ -126,12 +137,41 @@ module CSRBank
         status[STATUS_IDLE_BIT] = i_idle;
         status[STATUS_RUNNING_BIT] = i_running;
         status[STATUS_STOPPED_BIT] = i_stopped && i_idle;
+        status[STATUS_FAULTED_BIT] = i_faulted;
     end
 
     assign o_clear_stopped =
         i_write_fire &&
         (i_addr == REG_STATUS) &&
         (write_value & STATUS_STOPPED_MASK) != '0;
+
+    assign o_clear_faulted =
+        i_write_fire &&
+        (i_addr == REG_STATUS) &&
+        (write_value & STATUS_FAULTED_MASK) != '0;
+
+    // ========================================================================
+    // CSR: FAULT_INFO, FAULT_LANES, FAULT_PC - Read-Only Fault Report
+    // ========================================================================
+    // Read straight from the SM's captures, which hold until the next START.
+
+    if (SP_PER_SM > XLEN) begin : g_fault_lanes_check
+        $fatal(1, "SP_PER_SM (%0d) must fit FAULT_LANES (%0d bits)", SP_PER_SM, XLEN);
+    end
+
+    if ($bits(fault_cause_t) > FAULT_KINDS_LSB ||
+        FAULT_KINDS_LSB + MEM_STATUS_KINDS > FAULT_FATAL_LSB ||
+        FAULT_FATAL_LSB + $bits(mem_fatal_t) > XLEN) begin : g_fault_info_check
+        $fatal(1, "FAULT_INFO fields overlap or exceed the register");
+    end
+
+    fault_cause_t fault_cause;
+    assign fault_cause = i_fatal ? FAULT_FATAL : i_fault ? FAULT_MEMORY : FAULT_NONE;
+
+    word_t fault_info;
+    assign fault_info = word_t'(fault_cause)
+                      | (word_t'(i_fault_kinds) << FAULT_KINDS_LSB)
+                      | (word_t'(i_fatal_code) << FAULT_FATAL_LSB);
 
     // ========================================================================
     // CSR: IRQ_ENABLE - Interrupt Enable
@@ -226,7 +266,7 @@ module CSRBank
                     o_status = RSP_INVALID_REQUEST;
                 end else if (
                     write_value == CONTROL_START_MASK &&
-                    (!i_idle || i_stopped)
+                    (!i_idle || i_stopped || i_faulted)
                 ) begin
                     o_status = RSP_INVALID_STATE;
                 end
@@ -236,7 +276,7 @@ module CSRBank
                 if (!i_write) begin
                     o_rdata = status;
                 end else if (
-                    (write_value & ~STATUS_STOPPED_MASK) != '0
+                    (write_value & ~(STATUS_STOPPED_MASK | STATUS_FAULTED_MASK)) != '0
                 ) begin
                     o_status = RSP_ACCESS_DENIED;
                 end
@@ -255,6 +295,21 @@ module CSRBank
                     o_rdata = word_t'(irq_status);
                 end else if ((write_value & ~IRQ_ALLOWED_MASK) != '0) begin
                     o_status = RSP_INVALID_REQUEST;
+                end
+            end
+
+            // ---------------- Fault block ----------------
+
+            REG_FAULT_INFO, REG_FAULT_LANES, REG_FAULT_PC: begin
+                if (i_write) begin
+                    o_status = RSP_ACCESS_DENIED;
+                end else begin
+                    case (i_addr)
+                        REG_FAULT_INFO: o_rdata = fault_info;
+                        REG_FAULT_LANES: o_rdata = word_t'(i_fault_lanes);
+                        REG_FAULT_PC: o_rdata = word_t'(i_fault_pc);
+                        default: o_rdata = '0;
+                    endcase
                 end
             end
 

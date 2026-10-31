@@ -18,10 +18,21 @@
 #define GPGPU_MAX_WORDS \
     (GPGPU_IMEM_ENTRIES > GPGPU_DMEM_ENTRIES ? GPGPU_IMEM_ENTRIES : GPGPU_DMEM_ENTRIES)
 
+/* Return codes. Misuse (bad index, GPU not idle, ...) is GPGPU_ERR_STATE. */
+#define GPGPU_OK               0
+#define GPGPU_ERR_STATE      (-1)
+#define GPGPU_ERR_FAULT      (-2)  /* a kernel memory access failed; `clear` to acknowledge */
+#define GPGPU_ERR_FATAL      (-3)  /* the memory subsystem locked up; needs gpgpu_reset() */
+
 int gpgpu_init(void);
 u32 gpgpu_read_status(void);
 void gpgpu_print_status(void);
 int gpgpu_start_and_wait(void);
+
+/* Acknowledge STOPPED and FAULTED (W1C). A fatal fault stays until a reset. */
+void gpgpu_clear(void);
+/* Pulse the PL reset (FCLK_RESET0, which resets the GPU), then gpgpu_init(). */
+int gpgpu_reset(void);
 
 /* Addresses are WORD INDICES, not AXI byte addresses. */
 int gpgpu_write_imem(u32 index, u32 word);

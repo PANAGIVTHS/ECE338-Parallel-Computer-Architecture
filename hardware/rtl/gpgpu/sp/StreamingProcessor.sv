@@ -134,6 +134,7 @@ module StreamingProcessor
     assign o_feedback.mul1 = mul1.hazard;
     assign o_feedback.mul2 = mul2.hazard;
     assign o_feedback.mul3 = mul3.hazard;
+    assign o_feedback.mem_program_counter = exmem.program_counter;
     assign mul_not_ready = (ex_is_mul || mul1.hazard.valid || mul2.hazard.valid) && !mul3.hazard.valid;
 
     assign ex_is_branch = (i_idex.opcode == OP_BEQ);

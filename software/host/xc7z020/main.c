@@ -253,6 +253,8 @@ static void print_help(void) {
     xil_printf("  loaddmem_bin <offset> <count>\r\n");
     xil_printf("  --------- CONTROL ---------\r\n");
     xil_printf("  run\r\n");
+    xil_printf("  clear   (acknowledge STOPPED/FAULTED)\r\n");
+    xil_printf("  reset   (PL reset; needed after a fatal fault)\r\n");
     xil_printf("\r\n");
 }
 
@@ -429,6 +431,15 @@ int main(void) {
 
         } else if (strcmp(cmd, "run") == 0) {
             gpgpu_start_and_wait();
+
+        } else if (strcmp(cmd, "clear") == 0) {
+            gpgpu_clear();
+            gpgpu_print_status();
+
+        } else if (strcmp(cmd, "reset") == 0) {
+            if (gpgpu_reset() != GPGPU_OK)
+                xil_printf("ERROR: GPGPU initialization after reset failed\r\n");
+            gpgpu_print_status();
 
         } else {
             xil_printf("Unknown command: %s\r\n", cmd);

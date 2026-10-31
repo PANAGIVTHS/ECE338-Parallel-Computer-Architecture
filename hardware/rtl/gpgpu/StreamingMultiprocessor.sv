@@ -3,6 +3,7 @@ module StreamingMultiprocessor
     import riscv_pkg::*;
     import alu_pkg::*;
     import pipeline_pkg::*;
+    import MemorySubsystemPkg::*;
 #(
     parameter int unsigned NUM_CORES = 32
 )(
@@ -16,7 +17,13 @@ module StreamingMultiprocessor
 
     MemorySubsystemInterface.requester memory_bus [NUM_CORES],
     
-    output logic o_kernel_complete
+    output logic o_kernel_complete,
+
+    // Fault capture: sticky until the SM reset at START
+    output logic o_fault,
+    output logic [NUM_CORES-1:0] o_fault_lanes,
+    output mem_status_kinds_t o_fault_kinds,
+    output pc_t o_fault_pc
 );
     logic ex_branch_taken;
     imem_idx_t ex_beq_target_idx;
@@ -135,7 +142,55 @@ module StreamingMultiprocessor
 
     logic [NUM_CORES-1:0] mem_response_received;
     logic [NUM_CORES-1:0] mem_is_mem_vec;
-    assign stall = !i_enable || (!(&mem_response_received) && mem_is_mem_vec[0]);
+    // A fault stalls in the cycle its response arrives, so the next
+    // instruction never issues even when that response is the last one.
+    assign stall = !i_enable || (!(&mem_response_received) && mem_is_mem_vec[0]) || o_fault;
+
+    //& ===============
+    //& FAULT CAPTURE
+    //& ===============
+    // A lane faults when its memory response carries a non-OK status. The
+    // captures cover the faulting instruction: nothing issues after a fault,
+    // but lanes already in flight still complete (and may add bits) while the
+    // controller drains.
+    logic [NUM_CORES-1:0] rsp_valid_vec;
+    mem_status_t rsp_status_vec [NUM_CORES];
+    for (genvar i = 0; i < NUM_CORES; i++) begin : g_lane_rsp
+        assign rsp_valid_vec[i] = memory_bus[i].rsp_valid;
+        assign rsp_status_vec[i] = memory_bus[i].rsp.status;
+    end
+
+    logic [NUM_CORES-1:0] lane_fault;
+    mem_status_kinds_t lane_kinds;
+    always_comb begin
+        lane_kinds = '0;
+        for (int i = 0; i < NUM_CORES; i++) begin
+            lane_fault[i] = rsp_valid_vec[i] && (rsp_status_vec[i] != ST_OK);
+            if (lane_fault[i]) begin
+                lane_kinds[rsp_status_vec[i] - 1] = 1'b1;
+            end
+        end
+    end
+
+    logic fault_q;
+    always_ff @(posedge clk) begin
+        if (!rst_n) begin
+            fault_q <= 1'b0;
+            o_fault_lanes <= '0;
+            o_fault_kinds <= '0;
+            o_fault_pc <= pc_t'(INITIAL_PC);
+        end else begin
+            o_fault_lanes <= o_fault_lanes | lane_fault;
+            o_fault_kinds <= o_fault_kinds | lane_kinds;
+            if ((|lane_fault) && !fault_q) begin
+                fault_q <= 1'b1;
+                // Lockstep: every lane is at the same instruction.
+                o_fault_pc <= sp_feedback[0].mem_program_counter;
+            end
+        end
+    end
+
+    assign o_fault = fault_q || (|lane_fault);
 
     generate
         for (genvar i = 0; i < NUM_CORES; i = i + 1) begin : cores

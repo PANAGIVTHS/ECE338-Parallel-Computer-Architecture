@@ -37,11 +37,11 @@ hardware:
       - packages/gpu_pkg.sv
       - packages/riscv_pkg.sv
       - packages/alu_pkg.sv
-      - control/ControlPkg.sv
       - packages/warp_pkg.sv
       - packages/pipeline_pkg.sv
       - memory/MemoryInterface.sv
       - memory/MemorySubsystemPkg.sv
+      - control/ControlPkg.sv
       - memory/MemorySubsystemInterface.sv
   vivado:
     ip_project_name: gpgpu_ip_dev

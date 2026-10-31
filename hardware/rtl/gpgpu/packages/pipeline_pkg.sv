@@ -61,6 +61,7 @@ package pipeline_pkg;
         mul_hazard_t mul1;
         mul_hazard_t mul2;
         mul_hazard_t mul3;
+        gpu_pkg::pc_t mem_program_counter; // instruction in MEM (fault reporting)
     } sp_feedback_t;
 
 endpackage

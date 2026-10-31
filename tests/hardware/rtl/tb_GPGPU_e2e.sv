@@ -288,6 +288,80 @@ module tb_GPGPU_e2e
         end
     endtask
 
+    // ============================================================
+    // Fault checks: short kernels built from these encoders, so the
+    // addresses they use come from gpu_pkg rather than fixed encodings.
+    // ============================================================
+    function automatic logic [31:0] rv_add(input int rd, input int rs1, input int rs2);
+        return {7'd0, 5'(rs2), 5'(rs1), 3'b000, 5'(rd), 7'b0110011};
+    endfunction
+
+    function automatic logic [31:0] rv_addi(input int rd, input int rs1, input int imm);
+        return {12'(imm), 5'(rs1), 3'b000, 5'(rd), 7'b0010011};
+    endfunction
+
+    function automatic logic [31:0] rv_lui(input int rd, input logic [31:0] value);
+        return {value[31:12], 5'(rd), 7'b0110111};
+    endfunction
+
+    function automatic logic [31:0] rv_lw(input int rd, input int rs1, input int imm);
+        return {12'(imm), 5'(rs1), 3'b010, 5'(rd), 7'b0000011};
+    endfunction
+
+    function automatic logic [31:0] rv_sw(input int rs2, input int rs1, input int imm);
+        logic [11:0] offset;
+        offset = 12'(imm);
+        return {offset[11:5], 5'(rs2), 5'(rs1), 3'b010, offset[4:0], 7'b0100011};
+    endfunction
+
+    // Lane masks and FAULT_INFO values
+    function automatic logic [31:0] all_lanes();
+        return 32'((64'd1 << NUM_CORES) - 1);
+    endfunction
+
+    function automatic logic [31:0] fault_kind(input MemorySubsystemPkg::mem_status_t status);
+        return 32'd1 << (FAULT_KINDS_LSB + 32'(status) - 1);
+    endfunction
+
+    // Run a kernel (x31 holds the lane id) to its completion interrupt.
+    task automatic run_kernel(input logic [31:0] kernel[$]);
+        integer cycles;
+        foreach (kernel[k])
+            write_imem(k, kernel[k]);
+        write_word(REG_IRQ_ENABLE, 32'd1);
+        write_word(REG_CONTROL, CONTROL_START_MASK);
+        cycles = 0;
+        while (irq !== 1'b1 && cycles < test_timeout_cycles) begin
+            @(posedge clk_in);
+            cycles = cycles + 1;
+        end
+        if (irq !== 1'b1)
+            $fatal(1, "[ERROR] Fault kernel reached timeout of %0d cycles without IRQ", test_timeout_cycles);
+        write_word(REG_IRQ_STATUS, 32'd1);
+        write_word(REG_IRQ_ENABLE, 32'd0);
+    endtask
+
+    // A faulting kernel ends IDLE with FAULTED set and the fault report;
+    // START is refused until the W1C, which leaves the report readable.
+    task automatic expect_fault(
+        input string name,
+        input logic [31:0] kernel[$],
+        input logic [31:0] info,
+        input logic [31:0] lanes,
+        input logic [31:0] pc
+    );
+        $display("[INFO]  Fault check: %0s", name);
+        run_kernel(kernel);
+        expect_csr(REG_STATUS, STATUS_IDLE_MASK | STATUS_FAULTED_MASK, {name, ": STATUS"});
+        expect_csr(REG_FAULT_INFO, info, {name, ": FAULT_INFO"});
+        expect_csr(REG_FAULT_LANES, lanes, {name, ": FAULT_LANES"});
+        expect_csr(REG_FAULT_PC, pc, {name, ": FAULT_PC"});
+        expect_write_resp(REG_CONTROL, CONTROL_START_MASK, AXI_SLVERR);   // refused while FAULTED
+        write_word(REG_STATUS, STATUS_FAULTED_MASK);                        // W1C
+        expect_csr(REG_STATUS, STATUS_IDLE_MASK, {name, ": STATUS after clear"});
+        expect_csr(REG_FAULT_INFO, info, {name, ": FAULT_INFO after clear"});
+    endtask
+
     task automatic reset_device;
         begin
             aresetn = 1'b0;
@@ -374,6 +448,62 @@ module tb_GPGPU_e2e
                 csr_errors = csr_errors + 1;
             end
         end
+
+        // Fault reporting
+        expect_csr(REG_FAULT_INFO, 32'd0, "FAULT_INFO after reset");
+        expect_csr(REG_FAULT_LANES, 32'd0, "FAULT_LANES after reset");
+        expect_write_resp(REG_FAULT_INFO, 32'd0, AXI_SLVERR);      // fault report is read-only
+        expect_write_resp(REG_FAULT_LANES, 32'd0, AXI_SLVERR);
+        expect_write_resp(REG_FAULT_PC, 32'd0, AXI_SLVERR);
+
+        // All lanes misaligned; the store after the faulting load never issues.
+        write_dmem(0, 32'hDEAD_BEEF);
+        expect_fault("misaligned load", '{
+                rv_addi(6, 0, 'h5A),
+                rv_lw(5, 0, 1),
+                rv_sw(6, 0, 0),
+                ret_instr
+            }, 32'(FAULT_MEMORY) | fault_kind(MemorySubsystemPkg::ST_MISALIGNED), all_lanes(), 32'd4);
+        read_dmem(0, captured_word);
+        if (captured_word !== 32'hDEAD_BEEF) begin
+            $display("  [ERROR] Instruction after a fault executed: DMEM[0] = %h", captured_word);
+            csr_errors = csr_errors + 1;
+        end
+
+        // Address 2 * lane: only the odd lanes are misaligned.
+        expect_fault("odd lanes misaligned", '{
+                rv_add(5, 31, 31),
+                rv_lw(6, 5, 0),
+                ret_instr
+            }, 32'(FAULT_MEMORY) | fault_kind(MemorySubsystemPkg::ST_MISALIGNED),
+            all_lanes() & 32'hAAAA_AAAA, 32'd4);
+
+        // One store, two kinds: from the first 4 KiB boundary after DMEM
+        // (unmapped up to FB0), even lanes are unmapped and odd misaligned.
+        if (gpu_pkg::DMEM_BASE + gpu_pkg::DMEM_SIZE + 'h1000 > FB0_BASE)
+            $fatal(1, "[ERROR] The fault check needs unmapped space between DMEM and FB0");
+        expect_fault("unmapped and misaligned store", '{
+                rv_add(5, 31, 31),
+                rv_lui(6, (gpu_pkg::DMEM_BASE + gpu_pkg::DMEM_SIZE + 'hFFF) & ~32'hFFF),
+                rv_add(5, 5, 6),
+                rv_sw(0, 5, 0),
+                ret_instr
+            }, 32'(FAULT_MEMORY) | fault_kind(MemorySubsystemPkg::ST_UNMAPPED)
+                            | fault_kind(MemorySubsystemPkg::ST_MISALIGNED), all_lanes(), 32'd12);
+
+        expect_fault("store to the read-only texture region", '{
+                rv_lui(5, TEX_BASE),
+                rv_sw(0, 5, 0),
+                ret_instr
+            }, 32'(FAULT_MEMORY) | fault_kind(MemorySubsystemPkg::ST_PERMISSION), all_lanes(), 32'd4);
+
+        // Without the DDR backend a framebuffer store is unmapped, not a hang.
+        if (DDR_ENABLE == 0)
+            expect_fault("framebuffer store without DDR", '{
+                    rv_lui(5, FB0_BASE),
+                    rv_sw(0, 5, 0),
+                    ret_instr
+                }, 32'(FAULT_MEMORY) | fault_kind(MemorySubsystemPkg::ST_UNMAPPED), all_lanes(), 32'd4);
 
         if (csr_errors != 0)
             $fatal(1, "[ERROR] Host interface checks failed with %0d errors", csr_errors);

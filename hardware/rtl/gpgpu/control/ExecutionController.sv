@@ -7,13 +7,17 @@ module ExecutionController
     input logic i_start,
     input logic i_stop,
     input logic i_clear_stopped,
+    input logic i_clear_faulted,
     // Control from SMX
     input logic i_core_complete,
+    input logic i_fault,
     // Memory state
     input logic i_memory_quiet,
+    input logic i_fatal,
 
     output core_state_t o_core_state,
     output logic o_stopped,
+    output logic o_faulted,
     output logic o_complete_pulse
 );
     core_state_t current_state, next_state;
@@ -36,14 +40,15 @@ module ExecutionController
                 next_state = i_stop ? CORE_IDLE : CORE_RUNNING;
             end
             CORE_RUNNING: begin
-                if (i_stop || i_core_complete) begin
+                if (i_stop || i_core_complete || i_fault || i_fatal) begin
                     next_state = CORE_DRAINING;
                 end else begin
                     next_state = CORE_RUNNING;
                 end
             end
             CORE_DRAINING: begin
-                next_state = i_memory_quiet ? CORE_IDLE : CORE_DRAINING;
+                // A fatal subsystem may never become quiet: leave without draining.
+                next_state = (i_memory_quiet || i_fatal) ? CORE_IDLE : CORE_DRAINING;
             end
             default: next_state = CORE_IDLE;
         endcase
@@ -87,5 +92,24 @@ module ExecutionController
     end
 
     assign o_stopped = stopped && (o_core_state == CORE_IDLE);
+
+    // FAULTED latches a kernel fault or a fatal subsystem error. The host
+    // clears it (W1C), except while the subsystem is fatal: that needs a reset.
+    // Like STOPPED, it is only visible once the FSM is back in IDLE. The SM's
+    // capture is sticky until it is reset during CORE_RESET, so a fault only
+    // counts in RUNNING or DRAINING.
+    logic faulted;
+    always_ff @(posedge clk) begin
+        if (!rst_n) begin
+            faulted <= '0;
+        end else if (i_fatal || (i_fault && (o_core_state == CORE_RUNNING ||
+                                             o_core_state == CORE_DRAINING))) begin
+            faulted <= '1;
+        end else if (i_clear_faulted) begin
+            faulted <= '0;
+        end
+    end
+
+    assign o_faulted = faulted && (o_core_state == CORE_IDLE);
 
 endmodule

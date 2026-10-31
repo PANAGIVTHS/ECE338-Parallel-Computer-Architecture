@@ -15,6 +15,11 @@ package ControlPkg;
     (* host *) localparam gpu_pkg::word_t REG_IRQ_ENABLE = 'h0028;
     (* host *) localparam gpu_pkg::word_t REG_IRQ_STATUS = 'h002C;
 
+    // Fault block (0x040-0x05C)
+    (* host *) localparam gpu_pkg::word_t REG_FAULT_INFO = 'h0040;
+    (* host *) localparam gpu_pkg::word_t REG_FAULT_LANES = 'h0044;
+    (* host *) localparam gpu_pkg::word_t REG_FAULT_PC = 'h0048;
+
     // Memory windows
     (* host *) localparam gpu_pkg::word_t IMEM_BASE = 'h2000;
     (* host *) localparam gpu_pkg::word_t DMEM_BASE = 'h4000;
@@ -27,6 +32,7 @@ package ControlPkg;
     localparam int unsigned STATUS_IDLE_BIT = 0;
     localparam int unsigned STATUS_RUNNING_BIT = 1;
     localparam int unsigned STATUS_STOPPED_BIT = 2;
+    localparam int unsigned STATUS_FAULTED_BIT = 3;
 
     //! GPU interrupt bits
     localparam int unsigned IRQ_COMPLETE_BIT = 0;
@@ -45,9 +51,27 @@ package ControlPkg;
     (* host *) localparam gpu_pkg::word_t STATUS_IDLE_MASK = gpu_pkg::word_t'(1) << STATUS_IDLE_BIT;
     (* host *) localparam gpu_pkg::word_t STATUS_RUNNING_MASK = gpu_pkg::word_t'(1) << STATUS_RUNNING_BIT;
     (* host *) localparam gpu_pkg::word_t STATUS_STOPPED_MASK = gpu_pkg::word_t'(1) << STATUS_STOPPED_BIT;
+    (* host *) localparam gpu_pkg::word_t STATUS_FAULTED_MASK = gpu_pkg::word_t'(1) << STATUS_FAULTED_BIT;
     (* host *) localparam gpu_pkg::word_t FEATURE_DDR_MASK = gpu_pkg::word_t'(1) << FEATURE_DDR_BIT;
     (* host *) localparam gpu_pkg::word_t BUILD_HASH_MASK = (gpu_pkg::word_t'(1) << BUILD_HASH_BITS) - 1;
     (* host *) localparam gpu_pkg::word_t BUILD_DIRTY_MASK = gpu_pkg::word_t'(1) << BUILD_DIRTY_BIT;
+
+    //! FAULT_INFO: [cause], [kinds] (bit k-1 = some lane got ST code k) and
+    //! [fatal] (the subsystem's mem_fatal_t)
+    (* host *) typedef enum logic [3:0] {
+        FAULT_NONE         = 4'd0,
+        FAULT_MEMORY       = 4'd1, // a kernel access failed: see kinds and FAULT_LANES
+        FAULT_POSTED_WRITE = 4'd2, // reserved: posted DDR write error (lane unknown)
+        FAULT_FATAL        = 4'd3  // the memory subsystem locked up: see fatal; needs a reset
+    } fault_cause_t;
+    (* host *) localparam int unsigned FAULT_KINDS_LSB = 4;
+    (* host *) localparam int unsigned FAULT_FATAL_LSB = 16;
+    (* host *) localparam gpu_pkg::word_t FAULT_CAUSE_MASK =
+        (gpu_pkg::word_t'(1) << $bits(fault_cause_t)) - 1;
+    (* host *) localparam gpu_pkg::word_t FAULT_KINDS_MASK =
+        ((gpu_pkg::word_t'(1) << MemorySubsystemPkg::MEM_STATUS_KINDS) - 1) << FAULT_KINDS_LSB;
+    (* host *) localparam gpu_pkg::word_t FAULT_FATAL_MASK =
+        ((gpu_pkg::word_t'(1) << $bits(MemorySubsystemPkg::mem_fatal_t)) - 1) << FAULT_FATAL_LSB;
 
     typedef enum logic [1:0] {
         CORE_IDLE = 2'b00,

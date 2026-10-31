@@ -12,6 +12,19 @@
 #define GPGPU_IMEM_ENTRIES                 2048U
 #define GPGPU_DMEM_ENTRIES                 2048U
 
+/* MemorySubsystemPkg */
+#define GPGPU_ST_OK                        0U
+#define GPGPU_ST_UNMAPPED                  1U
+#define GPGPU_ST_PERMISSION                2U
+#define GPGPU_ST_MISALIGNED                3U
+#define GPGPU_ST_SLVERR                    4U
+#define GPGPU_ST_DECERR                    5U
+#define GPGPU_FATAL_NONE                   0U
+#define GPGPU_FATAL_RLAST                  1U
+#define GPGPU_FATAL_UNEXPECTED             2U
+#define GPGPU_FATAL_TIMEOUT                3U
+#define GPGPU_FATAL_INTERNAL               4U
+
 /* ControlPkg */
 #define GPGPU_REG_INFO                     0x00000000U
 #define GPGPU_REG_INFO_MEM                 0x00000004U
@@ -22,6 +35,9 @@
 #define GPGPU_REG_STATUS                   0x00000024U
 #define GPGPU_REG_IRQ_ENABLE               0x00000028U
 #define GPGPU_REG_IRQ_STATUS               0x0000002CU
+#define GPGPU_REG_FAULT_INFO               0x00000040U
+#define GPGPU_REG_FAULT_LANES              0x00000044U
+#define GPGPU_REG_FAULT_PC                 0x00000048U
 #define GPGPU_IMEM_BASE                    0x00002000U
 #define GPGPU_DMEM_BASE                    0x00004000U
 #define GPGPU_CONTROL_START_MASK           0x00000001U
@@ -29,17 +45,19 @@
 #define GPGPU_STATUS_IDLE_MASK             0x00000001U
 #define GPGPU_STATUS_RUNNING_MASK          0x00000002U
 #define GPGPU_STATUS_STOPPED_MASK          0x00000004U
+#define GPGPU_STATUS_FAULTED_MASK          0x00000008U
 #define GPGPU_FEATURE_DDR_MASK             0x00000001U
 #define GPGPU_BUILD_HASH_MASK              0x0FFFFFFFU
 #define GPGPU_BUILD_DIRTY_MASK             0x10000000U
-
-/* MemorySubsystemPkg */
-#define GPGPU_ST_OK                        0U
-#define GPGPU_ST_UNMAPPED                  1U
-#define GPGPU_ST_PERMISSION                2U
-#define GPGPU_ST_MISALIGNED                3U
-#define GPGPU_ST_SLVERR                    4U
-#define GPGPU_ST_DECERR                    5U
+#define GPGPU_FAULT_NONE                   0U
+#define GPGPU_FAULT_MEMORY                 1U
+#define GPGPU_FAULT_POSTED_WRITE           2U
+#define GPGPU_FAULT_FATAL                  3U
+#define GPGPU_FAULT_KINDS_LSB              4U
+#define GPGPU_FAULT_FATAL_LSB              16U
+#define GPGPU_FAULT_CAUSE_MASK             0x0000000FU
+#define GPGPU_FAULT_KINDS_MASK             0x000007F0U
+#define GPGPU_FAULT_FATAL_MASK             0x00070000U
 
 /* Completion wait: PS interrupt or IRQ_STATUS polling (software.host). */
 #define GPGPU_USE_IRQ                      1

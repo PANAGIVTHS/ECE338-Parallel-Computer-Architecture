@@ -1,7 +1,9 @@
 module PortController
     import MemorySubsystemPkg::*;
     import gpu_pkg::*;
-(
+#(
+    parameter bit DDR_ENABLE
+) (
     input logic clk,
     input logic rst_n,
     input logic en,
@@ -32,7 +34,7 @@ module PortController
     } port_ctrl_state_t;
 
     decode_t decoded;
-    assign decoded = decode_access(req.addr, req.write);
+    assign decoded = decode_access(req.addr, req.write, DDR_ENABLE);
 
     port_ctrl_state_t current_state, next_state;
     always_ff @(posedge clk) begin
@@ -40,6 +42,20 @@ module PortController
             current_state <= IDLE;
         end else begin
             current_state <= next_state;
+        end
+    end
+
+    // IMM_RSP status, registered on entry (the decode error, or ST_OK for a
+    // BRAM store) so the address decode stays off the requester's fault ->
+    // stall path.
+    mem_status_t status_q;
+    always_ff @(posedge clk) begin
+        if (!rst_n) begin
+            status_q <= ST_OK;
+        end else if (err) begin
+            status_q <= decoded.status;
+        end else if (bram_accept) begin
+            status_q <= ST_OK;
         end
     end
 
@@ -121,7 +137,7 @@ module PortController
 
             IMM_RSP: begin
                 rsp_valid = 1'b1;
-                rsp.status = decoded.status;
+                rsp.status = status_q;
             end
 
             default: begin end

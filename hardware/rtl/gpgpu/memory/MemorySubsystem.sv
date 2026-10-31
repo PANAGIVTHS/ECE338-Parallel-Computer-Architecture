@@ -4,7 +4,8 @@ import MemorySubsystemPkg::*;
 module MemorySubsystem #(
     parameter int unsigned NUM_REQ = 32,
     parameter BRAM_INIT = "",
-    parameter bit ARB_RR = 1'b0
+    parameter bit ARB_RR = 1'b0,
+    parameter bit DDR_ENABLE
 ) (
     input logic clk,
     input logic rst_n,
@@ -12,7 +13,9 @@ module MemorySubsystem #(
 
     MemorySubsystemInterface.responder memory_if [NUM_REQ],
 
-    output logic o_idle
+    output logic o_idle,
+    output logic o_fatal,
+    output mem_fatal_t o_fatal_code
 );
     // Elaboration-time checks
     if (ARB_RR != 1'b0) begin : g_arb_rr_check
@@ -26,6 +29,10 @@ module MemorySubsystem #(
 
     if (!map_disjoint()) begin : g_map_overlap_check
         $fatal(1, "Memory map regions (DMEM, FB0, FB1, TEX) must not overlap");
+    end
+
+    if (DDR_ENABLE) begin : g_ddr_check
+        $fatal(1, "DDR_ENABLE=1: the DDR backend is not implemented yet");
     end
 
     mem_req_t [NUM_REQ-1:0] req;
@@ -46,7 +53,9 @@ module MemorySubsystem #(
     end
 
     for (genvar i = 0; i < NUM_REQ; i++) begin : gen_port_controllers
-        PortController portControllers (
+        PortController #(
+            .DDR_ENABLE(DDR_ENABLE)
+        ) portControllers (
             .clk(clk),
             .rst_n(rst_n),
             .en(i_req_enable),
@@ -81,5 +90,9 @@ module MemorySubsystem #(
     );
 
     assign o_idle = (&is_idle) & ~bram_busy;
+
+    // Only the DDR backend can lock the subsystem up.
+    assign o_fatal = 1'b0;
+    assign o_fatal_code = FATAL_NONE;
 
 endmodule

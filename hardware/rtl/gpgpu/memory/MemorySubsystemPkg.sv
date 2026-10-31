@@ -17,6 +17,19 @@ package MemorySubsystemPkg;
         ST_DECERR     = 3'd5  // AXI DECERR; store effect undefined
     } mem_status_t;
 
+    // One bit per non-OK status code: bit k-1 is ST code k (fault reporting).
+    localparam int unsigned MEM_STATUS_KINDS = (1 << $bits(mem_status_t)) - 1;
+    typedef logic [MEM_STATUS_KINDS-1:0] mem_status_kinds_t;
+
+    // Why the subsystem locked up (o_fatal_code); sticky until rst_n.
+    (* host *) typedef enum logic [2:0] {
+        FATAL_NONE       = 3'd0,
+        FATAL_RLAST      = 3'd1, // RLAST early or missing
+        FATAL_UNEXPECTED = 3'd2, // B/R with nothing outstanding, or wrong ID
+        FATAL_TIMEOUT    = 3'd3, // no AXI progress for AXI_TIMEOUT cycles
+        FATAL_INTERNAL   = 3'd4  // invariant violation
+    } mem_fatal_t;
+
     typedef enum logic [1:0] {
         TGT_ERR = 2'd0,
         TGT_BRAM = 2'd1,
@@ -44,7 +57,9 @@ package MemorySubsystemPkg;
         return (a >= base) && (a - base < size);
     endfunction
 
-    function automatic decode_t decode_access(word_t addr, logic write);
+    // ddr_enable = 0: the DDR backend is absent, so an access the map would
+    // send to DDR is unmapped. Permission rules still apply first.
+    function automatic decode_t decode_access(word_t addr, logic write, bit ddr_enable);
         decode_t d;
         d = '{
             target: TGT_ERR,
@@ -67,6 +82,11 @@ package MemorySubsystemPkg;
                 d.status = ST_PERMISSION;
         end else
             d.status = ST_UNMAPPED;
+
+        if (d.target == TGT_DDR && !ddr_enable) begin
+            d.target = TGT_ERR;
+            d.status = ST_UNMAPPED;
+        end
 
         return d;
     endfunction

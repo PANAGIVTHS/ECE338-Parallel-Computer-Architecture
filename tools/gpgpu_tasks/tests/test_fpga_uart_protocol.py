@@ -134,3 +134,49 @@ def test_vm_driver_consumes_bulk_load_prompt_before_readback(tmp_path, remote_en
         worker.join(2)
         os.close(master)
         os.close(slave)
+
+
+def load_module(name, relative):
+    spec = importlib.util.spec_from_file_location(name, ROOT / relative)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+MONITOR_STATUS = """INFO = 0x00020020
+STATUS = 0x{status:08x}
+  idle = 1
+  running = 0
+  stopped = 0
+  faulted = {faulted}
+  irq_enabled = 0
+  irq_pending = 0
+FAULT_INFO = 0x00000031
+FAULT_LANES = 0xaaaaaaaa
+FAULT_PC = 0x00000004
+"""
+
+
+def test_status_parser_reads_faulted_and_the_fault_report():
+    uart = load_module('uart_status', 'tools/board/xc7z020/uart.py')
+    status = uart.parse_status(MONITOR_STATUS.format(status=0x9, faulted=1))
+    assert status['faulted'] == 1
+    assert (status['fault_info'], status['fault_lanes'], status['fault_pc']) == (0x31, 0xAAAAAAAA, 4)
+
+
+@pytest.mark.parametrize('faulted', [0, 1])
+def test_checked_state_refuses_a_faulted_gpu_with_its_report(faulted):
+    uart = load_module('uart_status', 'tools/board/xc7z020/uart.py')
+    driver = load_module('vm_fault_guard', 'tools/hardware/fpga/program_uart.py')
+
+    class Monitor:
+        def status(self):
+            return uart.parse_status(MONITOR_STATUS.format(status=0x1 | faulted << 3, faulted=faulted))
+
+    if not faulted:
+        assert driver.checked_state(Monitor()) == 'idle'
+        return
+    with pytest.raises(RuntimeError, match=r'FAULTED: fault_info=0x00000031, fault_lanes=0xaaaaaaaa, '
+                                           r'fault_pc=0x00000004.*clear'):
+        driver.checked_state(Monitor())
