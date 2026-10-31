@@ -434,6 +434,7 @@ int main(void) {
 
         } else if (strcmp(cmd, "clear") == 0) {
             gpgpu_clear();
+            xil_printf("Acknowledged the STOPPED and FAULTED latches (a fatal fault needs `reset`).\r\n");
             gpgpu_print_status();
 
         } else if (strcmp(cmd, "reset") == 0) {

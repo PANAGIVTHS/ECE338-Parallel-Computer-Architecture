@@ -49,6 +49,13 @@
 #define GPGPU_FEATURE_DDR_MASK             0x00000001U
 #define GPGPU_BUILD_HASH_MASK              0x0FFFFFFFU
 #define GPGPU_BUILD_DIRTY_MASK             0x10000000U
+#define GPGPU_IRQ_COMPLETE_MASK            0x00000001U
+#define GPGPU_INFO_VERSION_LSB             16U
+#define GPGPU_INFO_VERSION_MASK            0xFFFF0000U
+#define GPGPU_INFO_SP_COUNT_MASK           0x0000FFFFU
+#define GPGPU_INFO_MEM_IMEM_LSB            16U
+#define GPGPU_INFO_MEM_IMEM_MASK           0xFFFF0000U
+#define GPGPU_INFO_MEM_DMEM_MASK           0x0000FFFFU
 #define GPGPU_FAULT_NONE                   0U
 #define GPGPU_FAULT_MEMORY                 1U
 #define GPGPU_FAULT_POSTED_WRITE           2U

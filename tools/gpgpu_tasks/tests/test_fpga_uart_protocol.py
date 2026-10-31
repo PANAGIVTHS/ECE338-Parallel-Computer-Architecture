@@ -144,17 +144,21 @@ def load_module(name, relative):
     return module
 
 
-MONITOR_STATUS = """INFO = 0x00020020
-STATUS = 0x{status:08x}
+MONITOR_STATUS = """INFO          = 0x00020020  interface v2 (driver v2), 32 SPs per SM
+INFO_MEM      = 0x08000800  IMEM 2048 words, DMEM 2048 words
+STATUS        = 0x{status:08x}  idle
   idle = 1
   running = 0
   stopped = 0
   faulted = {faulted}
+IRQ_ENABLE    = 0x00000000  completion interrupt disabled
   irq_enabled = 0
+IRQ_STATUS    = 0x00000000  no completion pending
   irq_pending = 0
-FAULT_INFO = 0x00000031
-FAULT_LANES = 0xaaaaaaaa
-FAULT_PC = 0x00000004
+FAULT_INFO    = 0x00000031  cause 1 (memory): a kernel memory access failed
+  misaligned: the address is not word-aligned
+FAULT_LANES   = 0xaaaaaaaa  16 lane(s) faulted: 1,3,5,7,9,11,13,15,17,19,21,23,25,27,29,31
+FAULT_PC      = 0x00000004  faulting instruction, IMEM word 1
 """
 
 

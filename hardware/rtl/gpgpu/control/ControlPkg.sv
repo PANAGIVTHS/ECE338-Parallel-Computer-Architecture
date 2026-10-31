@@ -45,6 +45,11 @@ package ControlPkg;
     localparam int unsigned BUILD_HASH_BITS = 28;
     localparam int unsigned BUILD_DIRTY_BIT = BUILD_HASH_BITS;
 
+    //! INFO = {interface version, SPs per SM} and INFO_MEM = {IMEM words,
+    //! DMEM words}: two half-word fields each
+    localparam int unsigned INFO_FIELD_WIDTH = gpu_pkg::XLEN / 2;
+    localparam gpu_pkg::word_t INFO_FIELD_MASK = (gpu_pkg::word_t'(1) << INFO_FIELD_WIDTH) - 1;
+
     //! Derive masks from bit positions
     (* host *) localparam gpu_pkg::word_t CONTROL_START_MASK = gpu_pkg::word_t'(1) << CONTROL_START_BIT;
     (* host *) localparam gpu_pkg::word_t CONTROL_STOP_MASK = gpu_pkg::word_t'(1) << CONTROL_STOP_BIT;
@@ -55,6 +60,13 @@ package ControlPkg;
     (* host *) localparam gpu_pkg::word_t FEATURE_DDR_MASK = gpu_pkg::word_t'(1) << FEATURE_DDR_BIT;
     (* host *) localparam gpu_pkg::word_t BUILD_HASH_MASK = (gpu_pkg::word_t'(1) << BUILD_HASH_BITS) - 1;
     (* host *) localparam gpu_pkg::word_t BUILD_DIRTY_MASK = gpu_pkg::word_t'(1) << BUILD_DIRTY_BIT;
+    (* host *) localparam gpu_pkg::word_t IRQ_COMPLETE_MASK = gpu_pkg::word_t'(1) << IRQ_COMPLETE_BIT;
+    (* host *) localparam int unsigned INFO_VERSION_LSB = INFO_FIELD_WIDTH;
+    (* host *) localparam gpu_pkg::word_t INFO_VERSION_MASK = INFO_FIELD_MASK << INFO_VERSION_LSB;
+    (* host *) localparam gpu_pkg::word_t INFO_SP_COUNT_MASK = INFO_FIELD_MASK;
+    (* host *) localparam int unsigned INFO_MEM_IMEM_LSB = INFO_FIELD_WIDTH;
+    (* host *) localparam gpu_pkg::word_t INFO_MEM_IMEM_MASK = INFO_FIELD_MASK << INFO_MEM_IMEM_LSB;
+    (* host *) localparam gpu_pkg::word_t INFO_MEM_DMEM_MASK = INFO_FIELD_MASK;
 
     //! FAULT_INFO: [cause], [kinds] (bit k-1 = some lane got ST code k) and
     //! [fatal] (the subsystem's mem_fatal_t)

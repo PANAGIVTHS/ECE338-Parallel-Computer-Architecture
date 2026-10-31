@@ -50,8 +50,7 @@ module CSRBank
     localparam int unsigned XLEN = $bits(word_t);
     localparam int unsigned STRB_WIDTH = $bits(strb_t);
     localparam int unsigned BYTE_WIDTH = XLEN / STRB_WIDTH;
-    localparam word_t IRQ_ALLOWED_MASK =
-        word_t'(1) << IRQ_COMPLETE_BIT;
+    localparam word_t IRQ_ALLOWED_MASK = IRQ_COMPLETE_MASK;
 
     initial begin
         assert (STRB_WIDTH > 0)
@@ -87,8 +86,6 @@ module CSRBank
     // ========================================================================
     // CSR: INFO - Read-Only Device Information
     // ========================================================================
-    
-    localparam int unsigned INFO_FIELD_WIDTH = XLEN / 2;
 
     if (INTERFACE_VERSION == 0 || INTERFACE_VERSION >= (1 << INFO_FIELD_WIDTH)) begin : g_version_check
         $fatal(1, "INTERFACE_VERSION must be in 1..%0d", (1 << INFO_FIELD_WIDTH) - 1);

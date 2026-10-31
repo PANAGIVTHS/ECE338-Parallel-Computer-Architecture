@@ -1,5 +1,6 @@
 #include "gpgpu_driver.h"
 #include <stddef.h>
+#include <string.h>
 
 #include "sleep.h"
 #include "xil_exception.h"
@@ -42,40 +43,227 @@ u32 gpgpu_read_status(void)
     return gpu_read(GPGPU_REG_STATUS);
 }
 
-void gpgpu_print_status(void)
-{
-    const u32 info = gpu_read(GPGPU_REG_INFO);
-    const u32 status = gpgpu_read_status();
-    const u32 irq_en = gpu_read(GPGPU_REG_IRQ_ENABLE);
-    const u32 irq_st = gpu_read(GPGPU_REG_IRQ_STATUS);
+/* Name and meaning of a register value or field code. */
+typedef struct {
+    const char *name;
+    const char *meaning;
+} gpgpu_text_t;
 
-    xil_printf("INFO = 0x%08x\r\n", (unsigned int)info);
-    xil_printf("STATUS = 0x%08x\r\n", (unsigned int)status);
-    xil_printf("  idle = %u\r\n", (unsigned int)!!(status & GPGPU_STATUS_IDLE_MASK));
-    xil_printf("  running = %u\r\n", (unsigned int)!!(status & GPGPU_STATUS_RUNNING_MASK));
-    xil_printf("  stopped = %u\r\n", (unsigned int)!!(status & GPGPU_STATUS_STOPPED_MASK));
-    xil_printf("  faulted = %u\r\n", (unsigned int)!!(status & GPGPU_STATUS_FAULTED_MASK));
-    xil_printf("  irq_enabled = %u\r\n", (unsigned int)(irq_en & 1U));
-    xil_printf("  irq_pending = %u\r\n", (unsigned int)(irq_st & 1U));
-    xil_printf("INFO_MEM = 0x%08x\r\n", (unsigned int)gpu_read(GPGPU_REG_INFO_MEM));
-    xil_printf("INFO_FEATURES = 0x%08x\r\n", (unsigned int)gpu_read(GPGPU_REG_INFO_FEATURES));
-    xil_printf("INFO_CLOCK = %u kHz\r\n", (unsigned int)gpu_read(GPGPU_REG_INFO_CLOCK));
-    xil_printf("BUILD_ID = 0x%08x\r\n", (unsigned int)gpu_read(GPGPU_REG_BUILD_ID));
-    xil_printf("FAULT_INFO = 0x%08x\r\n", (unsigned int)gpu_read(GPGPU_REG_FAULT_INFO));
-    xil_printf("FAULT_LANES = 0x%08x\r\n", (unsigned int)gpu_read(GPGPU_REG_FAULT_LANES));
-    xil_printf("FAULT_PC = 0x%08x\r\n", (unsigned int)gpu_read(GPGPU_REG_FAULT_PC));
-}
-
-static const char *status_kind_name(u32 code)
+static gpgpu_text_t status_kind_text(u32 code)
 {
     switch (code) {
-    case GPGPU_ST_UNMAPPED:   return "unmapped";
-    case GPGPU_ST_PERMISSION: return "permission";
-    case GPGPU_ST_MISALIGNED: return "misaligned";
-    case GPGPU_ST_SLVERR:     return "slverr";
-    case GPGPU_ST_DECERR:     return "decerr";
-    default:                  return "unknown";
+    case GPGPU_ST_UNMAPPED:
+        return (gpgpu_text_t){"unmapped", "the address is in no memory region"};
+    case GPGPU_ST_PERMISSION:
+        return (gpgpu_text_t){"permission", "the region does not allow this access (e.g. a store to TEX)"};
+    case GPGPU_ST_MISALIGNED:
+        return (gpgpu_text_t){"misaligned", "the address is not word-aligned"};
+    case GPGPU_ST_SLVERR:
+        return (gpgpu_text_t){"slverr", "the AXI slave returned SLVERR; a store may have happened"};
+    case GPGPU_ST_DECERR:
+        return (gpgpu_text_t){"decerr", "the AXI interconnect returned DECERR; a store may have happened"};
+    default:
+        return (gpgpu_text_t){"unknown", "status code not known to this driver"};
     }
+}
+
+static gpgpu_text_t fatal_code_text(u32 code)
+{
+    switch (code) {
+    case GPGPU_FATAL_RLAST:
+        return (gpgpu_text_t){"rlast", "an AXI read burst ended early or ran past its length"};
+    case GPGPU_FATAL_UNEXPECTED:
+        return (gpgpu_text_t){"unexpected", "an AXI response arrived with nothing outstanding or a wrong ID"};
+    case GPGPU_FATAL_TIMEOUT:
+        return (gpgpu_text_t){"timeout", "the AXI bus made no progress"};
+    case GPGPU_FATAL_INTERNAL:
+        return (gpgpu_text_t){"internal", "a memory subsystem invariant was violated"};
+    default:
+        return (gpgpu_text_t){"unknown", "fatal code not known to this driver"};
+    }
+}
+
+static gpgpu_text_t fault_cause_text(u32 cause)
+{
+    switch (cause) {
+    case GPGPU_FAULT_NONE:
+        return (gpgpu_text_t){"none", "no fault since the last START"};
+    case GPGPU_FAULT_MEMORY:
+        return (gpgpu_text_t){"memory", "a kernel memory access failed"};
+    case GPGPU_FAULT_POSTED_WRITE:
+        return (gpgpu_text_t){"posted write", "a posted DDR write failed (lane unknown)"};
+    case GPGPU_FAULT_FATAL:
+        return (gpgpu_text_t){"fatal", "the memory subsystem locked up; `reset` required"};
+    default:
+        return (gpgpu_text_t){"unknown", "cause not known to this driver"};
+    }
+}
+
+/* One line per error kind in FAULT_INFO: kind bit k-1 reports status code k. */
+static void print_fault_kinds(u32 fault_info)
+{
+    u32 kinds = (fault_info & GPGPU_FAULT_KINDS_MASK) >> GPGPU_FAULT_KINDS_LSB;
+
+    for (u32 code = 1U; kinds != 0U; ++code, kinds >>= 1) {
+        if ((kinds & 1U) != 0U) {
+            const gpgpu_text_t kind = status_kind_text(code);
+            xil_printf("  %s: %s\r\n", kind.name, kind.meaning);
+        }
+    }
+}
+
+static u32 fatal_code(u32 fault_info)
+{
+    return (fault_info & GPGPU_FAULT_FATAL_MASK) >> GPGPU_FAULT_FATAL_LSB;
+}
+
+/* "NAME = 0xVALUE  " with the explanations aligned in one column. */
+static void print_register(const char *name, u32 value)
+{
+    static const size_t name_column = sizeof("INFO_FEATURES") - 1U; /* longest name */
+
+    xil_printf("%s", name);
+    for (size_t i = strlen(name); i < name_column; ++i)
+        xil_printf(" ");
+    xil_printf(" = 0x%08x  ", (unsigned int)value);
+}
+
+static u32 count_bits(u32 mask)
+{
+    u32 count = 0U;
+    for (; mask != 0U; mask &= mask - 1U)
+        ++count;
+    return count;
+}
+
+/* The set bits of mask as lane ranges, e.g. "0-3,8,10-11". */
+static void print_lanes(u32 mask)
+{
+    const char *separator = "";
+    u32 lane = 0U;
+
+    while (mask != 0U) {
+        if ((mask & 1U) == 0U) {
+            mask >>= 1;
+            ++lane;
+            continue;
+        }
+        const u32 first = lane;
+        while ((mask & 1U) != 0U) {
+            mask >>= 1;
+            ++lane;
+        }
+        if (lane - 1U == first)
+            xil_printf("%s%u", separator, (unsigned int)first);
+        else
+            xil_printf("%s%u-%u", separator, (unsigned int)first, (unsigned int)(lane - 1U));
+        separator = ",";
+    }
+}
+
+static void print_identity(void)
+{
+    const u32 info = gpu_read(GPGPU_REG_INFO);
+    const u32 version = (info & GPGPU_INFO_VERSION_MASK) >> GPGPU_INFO_VERSION_LSB;
+    print_register("INFO", info);
+    xil_printf("interface v%u (driver v%u), %u SPs per SM\r\n", (unsigned int)version,
+               (unsigned int)GPGPU_INTERFACE_VERSION,
+               (unsigned int)(info & GPGPU_INFO_SP_COUNT_MASK));
+
+    const u32 info_mem = gpu_read(GPGPU_REG_INFO_MEM);
+    print_register("INFO_MEM", info_mem);
+    xil_printf("IMEM %u words, DMEM %u words\r\n",
+               (unsigned int)((info_mem & GPGPU_INFO_MEM_IMEM_MASK) >> GPGPU_INFO_MEM_IMEM_LSB),
+               (unsigned int)(info_mem & GPGPU_INFO_MEM_DMEM_MASK));
+
+    const u32 features = gpu_read(GPGPU_REG_INFO_FEATURES);
+    print_register("INFO_FEATURES", features);
+    xil_printf("DDR backend %s\r\n",
+               (features & GPGPU_FEATURE_DDR_MASK) != 0U ? "present" : "absent");
+
+    const u32 khz = gpu_read(GPGPU_REG_INFO_CLOCK);
+    print_register("INFO_CLOCK", khz);
+    xil_printf("%u kHz = %u.%03u MHz fabric clock\r\n", (unsigned int)khz,
+               (unsigned int)(khz / 1000U), (unsigned int)(khz % 1000U));
+
+    const u32 build = gpu_read(GPGPU_REG_BUILD_ID);
+    print_register("BUILD_ID", build);
+    xil_printf("RTL commit %07x%s\r\n", (unsigned int)(build & GPGPU_BUILD_HASH_MASK),
+               (build & GPGPU_BUILD_DIRTY_MASK) != 0U ? " plus uncommitted RTL changes (dirty)" : "");
+}
+
+static void print_control(void)
+{
+    const u32 status = gpgpu_read_status();
+    const unsigned int idle = !!(status & GPGPU_STATUS_IDLE_MASK);
+    const unsigned int running = !!(status & GPGPU_STATUS_RUNNING_MASK);
+    const unsigned int stopped = !!(status & GPGPU_STATUS_STOPPED_MASK);
+    const unsigned int faulted = !!(status & GPGPU_STATUS_FAULTED_MASK);
+
+    print_register("STATUS", status);
+    xil_printf("%s\r\n", running            ? "running a kernel"
+                         : !idle            ? "busy: starting or draining a kernel"
+                         : stopped || faulted ? "idle, but START is refused until the latch below is acknowledged"
+                                            : "idle: ready for START, memories accessible");
+    xil_printf("  idle = %u\r\n", idle);
+    xil_printf("  running = %u\r\n", running);
+    xil_printf("  stopped = %u%s\r\n", stopped,
+               stopped ? "   the host STOPPED the last run; `clear` acknowledges it" : "");
+    xil_printf("  faulted = %u%s\r\n", faulted,
+               faulted ? "   the last run faulted; see FAULT_INFO" : "");
+
+    const u32 irq_en = gpu_read(GPGPU_REG_IRQ_ENABLE);
+    const u32 irq_st = gpu_read(GPGPU_REG_IRQ_STATUS);
+    print_register("IRQ_ENABLE", irq_en);
+    xil_printf("completion interrupt %s\r\n",
+               (irq_en & GPGPU_IRQ_COMPLETE_MASK) != 0U ? "enabled" : "disabled");
+    xil_printf("  irq_enabled = %u\r\n", (unsigned int)!!(irq_en & GPGPU_IRQ_COMPLETE_MASK));
+    print_register("IRQ_STATUS", irq_st);
+    xil_printf("%s\r\n", (irq_st & GPGPU_IRQ_COMPLETE_MASK) != 0U
+                             ? "a kernel completed and is not acknowledged"
+                             : "no completion pending");
+    xil_printf("  irq_pending = %u\r\n", (unsigned int)!!(irq_st & GPGPU_IRQ_COMPLETE_MASK));
+}
+
+static void print_fault(void)
+{
+    const u32 info = gpu_read(GPGPU_REG_FAULT_INFO);
+    const u32 cause = info & GPGPU_FAULT_CAUSE_MASK;
+    const gpgpu_text_t cause_text = fault_cause_text(cause);
+
+    print_register("FAULT_INFO", info);
+    xil_printf("cause %u (%s): %s\r\n", (unsigned int)cause, cause_text.name, cause_text.meaning);
+    print_fault_kinds(info);
+    if (cause == GPGPU_FAULT_FATAL) {
+        const gpgpu_text_t fatal = fatal_code_text(fatal_code(info));
+        xil_printf("  fatal %u (%s): %s\r\n", (unsigned int)fatal_code(info), fatal.name, fatal.meaning);
+    }
+
+    /* The lane mask and PC describe a memory fault; otherwise they hold their
+     * reset values. */
+    const u32 lanes = gpu_read(GPGPU_REG_FAULT_LANES);
+    print_register("FAULT_LANES", lanes);
+    if (cause == GPGPU_FAULT_MEMORY) {
+        xil_printf("%u lane(s) faulted: ", (unsigned int)count_bits(lanes));
+        print_lanes(lanes);
+        xil_printf("\r\n");
+    } else {
+        xil_printf("no memory fault\r\n");
+    }
+
+    const u32 pc = gpu_read(GPGPU_REG_FAULT_PC);
+    print_register("FAULT_PC", pc);
+    if (cause == GPGPU_FAULT_MEMORY)
+        xil_printf("faulting instruction, IMEM word %u\r\n", (unsigned int)(pc / 4U));
+    else
+        xil_printf("no memory fault\r\n");
+}
+
+void gpgpu_print_status(void)
+{
+    print_identity();
+    print_control();
+    print_fault();
 }
 
 /* Print the fault report of a FAULTED GPU and return its error code. */
@@ -85,21 +273,20 @@ static int report_fault(void)
     const u32 cause = info & GPGPU_FAULT_CAUSE_MASK;
 
     if (cause == GPGPU_FAULT_FATAL) {
-        xil_printf("ERROR: GPU memory subsystem fatal error, code %u: reset required\r\n",
-                   (unsigned int)((info & GPGPU_FAULT_FATAL_MASK) >> GPGPU_FAULT_FATAL_LSB));
+        const gpgpu_text_t fatal = fatal_code_text(fatal_code(info));
+        xil_printf("ERROR: GPU memory subsystem fatal error (%s): %s. Run `reset`.\r\n",
+                   fatal.name, fatal.meaning);
         return GPGPU_ERR_FATAL;
     }
 
-    const u32 kinds = (info & GPGPU_FAULT_KINDS_MASK) >> GPGPU_FAULT_KINDS_LSB;
-    xil_printf("ERROR: kernel fault (cause %u) at pc 0x%08x: lanes 0x%08x,",
-               (unsigned int)cause, (unsigned int)gpu_read(GPGPU_REG_FAULT_PC),
-               (unsigned int)gpu_read(GPGPU_REG_FAULT_LANES));
-    /* Kind bit k-1 reports status code k. */
-    for (u32 code = 1U; (kinds >> (code - 1U)) != 0U; ++code) {
-        if ((kinds & (1U << (code - 1U))) != 0U)
-            xil_printf(" %s", status_kind_name(code));
-    }
-    xil_printf("\r\nRun `clear` to acknowledge the fault before the next run.\r\n");
+    const u32 lanes = gpu_read(GPGPU_REG_FAULT_LANES);
+    xil_printf("ERROR: kernel %s fault at IMEM word %u, %u lane(s): ",
+               fault_cause_text(cause).name, (unsigned int)(gpu_read(GPGPU_REG_FAULT_PC) / 4U),
+               (unsigned int)count_bits(lanes));
+    print_lanes(lanes);
+    xil_printf("\r\n");
+    print_fault_kinds(info);
+    xil_printf("Run `status` for the registers, `clear` to acknowledge before the next run.\r\n");
     return GPGPU_ERR_FAULT;
 }
 
@@ -201,7 +388,7 @@ static void gpgpu_interrupt_handler(void *ref)
 {
     (void)ref;
     /* Level-sensitive IRQ: clear its source before returning to the GIC. */
-    gpu_write(GPGPU_REG_IRQ_STATUS, 1U);
+    gpu_write(GPGPU_REG_IRQ_STATUS, GPGPU_IRQ_COMPLETE_MASK);
     (void)gpu_read(GPGPU_REG_IRQ_STATUS); /* Read back to drain the AXI write. */
     gpu_finished = 1U;
 }
@@ -243,32 +430,38 @@ int gpgpu_init(void)
                                  (Xil_ExceptionHandler)gpgpu_data_abort_handler, NULL);
 
     const u32 info = gpu_read(GPGPU_REG_INFO);
-    if ((info >> 16) != GPGPU_INTERFACE_VERSION) {
-        xil_printf("ERROR: unsupported GPU MMIO version: INFO=0x%08x\r\n",
-                   (unsigned int)info);
+    const u32 version = (info & GPGPU_INFO_VERSION_MASK) >> GPGPU_INFO_VERSION_LSB;
+    if (version != GPGPU_INTERFACE_VERSION) {
+        xil_printf("ERROR: GPU MMIO interface v%u (INFO=0x%08x), but this driver speaks v%u: "
+                   "rebuild the host against the bitstream's RTL\r\n", (unsigned int)version,
+                   (unsigned int)info, (unsigned int)GPGPU_INTERFACE_VERSION);
         return GPGPU_ERR_STATE;
     }
 
     /* The bitstream and this driver must come from the same RTL: the memory
      * sizes compiled in from gpgpu_platform.h must match the hardware's. */
     const u32 info_mem = gpu_read(GPGPU_REG_INFO_MEM);
-    if ((info_mem >> 16) != GPGPU_IMEM_ENTRIES || (info_mem & 0xFFFFU) != GPGPU_DMEM_ENTRIES) {
-        xil_printf("ERROR: GPU memory sizes INFO_MEM=0x%08x do not match this driver "
-                   "(IMEM %u, DMEM %u words)\r\n", (unsigned int)info_mem,
-                   (unsigned int)GPGPU_IMEM_ENTRIES, (unsigned int)GPGPU_DMEM_ENTRIES);
+    const u32 imem = (info_mem & GPGPU_INFO_MEM_IMEM_MASK) >> GPGPU_INFO_MEM_IMEM_LSB;
+    const u32 dmem = info_mem & GPGPU_INFO_MEM_DMEM_MASK;
+    if (imem != GPGPU_IMEM_ENTRIES || dmem != GPGPU_DMEM_ENTRIES) {
+        xil_printf("ERROR: the GPU has IMEM %u / DMEM %u words (INFO_MEM=0x%08x), but this "
+                   "driver was built for IMEM %u / DMEM %u: rebuild the host against the "
+                   "bitstream's RTL\r\n", (unsigned int)imem, (unsigned int)dmem,
+                   (unsigned int)info_mem, (unsigned int)GPGPU_IMEM_ENTRIES,
+                   (unsigned int)GPGPU_DMEM_ENTRIES);
         return GPGPU_ERR_STATE;
     }
 
     const u32 build = gpu_read(GPGPU_REG_BUILD_ID);
-    xil_printf("GPU: RTL %07x%s, %u cores, %u kHz, IMEM %u / DMEM %u words, DDR %s\r\n",
+    xil_printf("GPU: RTL %07x%s, %u SPs, %u kHz, IMEM %u / DMEM %u words, DDR %s\r\n",
                (unsigned int)(build & GPGPU_BUILD_HASH_MASK),
                (build & GPGPU_BUILD_DIRTY_MASK) != 0U ? "-dirty" : "",
-               (unsigned int)(info & 0xFFFFU), (unsigned int)gpu_read(GPGPU_REG_INFO_CLOCK),
-               (unsigned int)GPGPU_IMEM_ENTRIES, (unsigned int)GPGPU_DMEM_ENTRIES,
+               (unsigned int)(info & GPGPU_INFO_SP_COUNT_MASK),
+               (unsigned int)gpu_read(GPGPU_REG_INFO_CLOCK), (unsigned int)imem, (unsigned int)dmem,
                (gpu_read(GPGPU_REG_INFO_FEATURES) & GPGPU_FEATURE_DDR_MASK) != 0U ? "on" : "off");
 
     gpu_write(GPGPU_REG_IRQ_ENABLE, 0U);
-    gpu_write(GPGPU_REG_IRQ_STATUS, 1U); /* W1C pending completion. */
+    gpu_write(GPGPU_REG_IRQ_STATUS, GPGPU_IRQ_COMPLETE_MASK); /* W1C pending completion. */
 
 #if GPGPU_USE_IRQ
     if (initialize_interrupts() != 0) {
@@ -314,10 +507,10 @@ int gpgpu_start_and_wait(void)
      * with IRQ_ENABLE=0, so polling uses this sticky event rather than IDLE,
      * which may already be high when the START AXI write completes. */
     gpu_write(GPGPU_REG_IRQ_ENABLE, 0U);
-    gpu_write(GPGPU_REG_IRQ_STATUS, 1U);
+    gpu_write(GPGPU_REG_IRQ_STATUS, GPGPU_IRQ_COMPLETE_MASK);
 #if GPGPU_USE_IRQ
     gpu_finished = 0U;
-    gpu_write(GPGPU_REG_IRQ_ENABLE, 1U);
+    gpu_write(GPGPU_REG_IRQ_ENABLE, GPGPU_IRQ_COMPLETE_MASK);
 #endif
 
     xil_printf("Starting core...\r\n");
@@ -330,9 +523,9 @@ int gpgpu_start_and_wait(void)
     }
     gpu_write(GPGPU_REG_IRQ_ENABLE, 0U);
 #else
-    while ((gpu_read(GPGPU_REG_IRQ_STATUS) & 1U) == 0U) {
+    while ((gpu_read(GPGPU_REG_IRQ_STATUS) & GPGPU_IRQ_COMPLETE_MASK) == 0U) {
     }
-    gpu_write(GPGPU_REG_IRQ_STATUS, 1U);
+    gpu_write(GPGPU_REG_IRQ_STATUS, GPGPU_IRQ_COMPLETE_MASK);
 #endif
 
     status = gpgpu_read_status();
