@@ -39,13 +39,13 @@ module DDRWriteAssembler
     end
 
     //& =============================================
-    //& BYTE LANES: highest-index writer wins
+    //& BYTE LANES: lowest-index writer wins
     //& =============================================
     for (genvar L = 0; L < AXI_STRB_W; L++) begin : g_lane
         localparam int unsigned WORD = L / WORD_BYTES;
         localparam int unsigned BYTE = L % WORD_BYTES;
 
-        logic [NUM_REQ-1:0] lane, lane_reversed, top_reversed, top;
+        logic [NUM_REQ-1:0] lane, top;
         logic [7:0] lane_byte;
 
         always_comb begin
@@ -55,21 +55,17 @@ module DDRWriteAssembler
             end
         end
 
-        // Highest set bit = lowest set bit of the reversed vector
-        assign lane_reversed = {<<{lane}};
-
+        // Same-cycle stores to one byte: which one wins is unspecified (§5.6)
         ArbiterMLowest #(
             .N(NUM_REQ),
             .M(1)
-        ) highest_writer (
-            .req    (lane_reversed),
+        ) writer (
+            .req    (lane),
             .grant  (),
-            .win_oh (top_reversed),
+            .win_oh (top),
             .win_vld(w_strb[L]),
             .win_idx()
         );
-
-        assign top = {<<{top_reversed}};
 
         // One-hot AND-OR mux
         always_comb begin
