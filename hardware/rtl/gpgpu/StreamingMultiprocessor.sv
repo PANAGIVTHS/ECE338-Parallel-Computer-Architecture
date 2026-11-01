@@ -164,7 +164,7 @@ module StreamingMultiprocessor
     mem_status_kinds_t lane_kinds;
     always_comb begin
         lane_kinds = '0;
-        for (int i = 0; i < NUM_CORES; i++) begin
+        for (int unsigned i = 0; i < NUM_CORES; i++) begin
             lane_fault[i] = rsp_valid_vec[i] && (rsp_status_vec[i] != ST_OK);
             if (lane_fault[i]) begin
                 lane_kinds[rsp_status_vec[i] - 1] = 1'b1;

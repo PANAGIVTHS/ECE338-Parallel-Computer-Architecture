@@ -33,4 +33,8 @@ package gpu_pkg;
         if (addr == TXD_REGISTER) return word_t'(core_id);
         return '0;
     endfunction
+
+    function automatic int unsigned max(int unsigned a, int unsigned b);
+        return a > b ? a : b;
+    endfunction
 endpackage

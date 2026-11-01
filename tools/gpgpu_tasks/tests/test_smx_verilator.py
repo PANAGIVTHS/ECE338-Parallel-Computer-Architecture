@@ -96,7 +96,7 @@ def test_e2e_builds_axi_top_and_aggregate_requires_both_suites():
     command = graph["tests:rtl:e2e:build"]["actions"][0][1][0]
     assert command[command.index("--top-module") + 1] == "tb_GPGPU_e2e"
     assert command[-1] == str(repo / "tests/hardware/rtl/tb_GPGPU_e2e.sv")
-    for source in ("interfaces/AXI4LiteSlave.sv", "interfaces/AXI4LiteTop.v"):
+    for source in ("interfaces/AXI4LiteSlave.sv", "interfaces/AXI4Top.v"):
         assert str(root / source) in command
         assert str(root / source) in graph["tests:rtl:e2e:build"]["file_dep"]
     assert str(root / "interfaces/HostControllerProcessor.sv") not in command

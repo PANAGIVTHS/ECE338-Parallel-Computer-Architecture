@@ -181,7 +181,7 @@ def test_package_validation_fails_closed(tmp_path, mutation):
                      if f.findtext('s:name', namespaces=ns).endswith(consumer))
         entry.find('s:name', ns).text = 'nested/' + consumer
     elif mutation=='missing_memory': (root/'src/empty.mem').unlink()
-    elif mutation=='missing_source': (root/'src/AXI4LiteTop.v').unlink()
+    elif mutation=='missing_source': (root/'src/AXI4Top.v').unlink()
     elif mutation=='external_metadata':
         extension=ET.SubElement(r,q('vendorExtensions'));ET.SubElement(extension,'projectPath').text='/external/project'
     elif mutation=='external_include':

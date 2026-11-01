@@ -27,7 +27,7 @@ def test_production_discovery_includes_headers_control_interfaces(tmp_path):
     cfg = config(tmp_path)
     graph = {t['name']: t for t in tasks.create_tasks(cfg)}
     deps = graph['vivado:ip:create']['file_dep']
-    for file in ('constants.svh', 'control/MMIOController.sv', 'interfaces/AXI4LiteTop.v', 'memory/MemoryInterface.sv'):
+    for file in ('constants.svh', 'control/MMIOController.sv', 'interfaces/AXI4Top.v', 'memory/MemoryInterface.sv'):
         assert str(ROOT / 'hardware/rtl/gpgpu' / file) in deps
     assert not any('experimental' in f for f in deps)
     assert not any(f.endswith('.xdc') for f in deps)

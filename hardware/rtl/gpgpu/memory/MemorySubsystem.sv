@@ -12,6 +12,7 @@ module MemorySubsystem #(
     input logic i_req_enable,
 
     MemorySubsystemInterface.responder memory_if [NUM_REQ],
+    AXI4FullInterface.master axi_if,
 
     output logic o_idle,
     output logic o_fatal,
@@ -42,7 +43,8 @@ module MemorySubsystem #(
     logic [NUM_REQ-1:0] is_idle;
 
     BRAMBackendInterface bram_if [NUM_REQ] ();
-    logic bram_busy;
+    DDRBackendInterface ddr_if [NUM_REQ] ();
+    logic bram_busy, ddr_busy;
 
     for (genvar i = 0; i < NUM_REQ; i++) begin : gen_reqs
         assign req[i] = memory_if[i].req;
@@ -64,6 +66,7 @@ module MemorySubsystem #(
             .req(req[i]),
             .rsp(memory_if[i].rsp),
             .bram_if(bram_if[i]),
+            .ddr_if(ddr_if[i]),
             .is_idle(is_idle[i])
         );
     end
@@ -82,10 +85,10 @@ module MemorySubsystem #(
     DDRBackend #(
         .NUM_REQ(NUM_REQ)
     ) ddrBackend (
-        
+        .axi_if(axi_if)
     );
 
-    assign o_idle = (&is_idle) & ~bram_busy;
+    assign o_idle = (&is_idle) & ~bram_busy & ~ddr_busy;
 
     // Only the DDR backend can lock the subsystem up.
     assign o_fatal = 1'b0;

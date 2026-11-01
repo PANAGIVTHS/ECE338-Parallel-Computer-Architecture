@@ -1,5 +1,6 @@
 module PortController
     import MemorySubsystemPkg::*;
+    import AXI4FullPkg::*;
     import DDRBackendPkg::*;
 #(
     parameter bit DDR_ENABLE
@@ -89,13 +90,13 @@ module PortController
             end
 
             DDR_RD: begin
-                if (rsp_ready && ddr_if.rd_sel) begin
+                if (rsp_ready && ddr_if.rd_valid) begin
                     next_state = IDLE;
                 end
             end
 
             DDR_WR: begin
-                if (rsp_ready && ddr_if.wr_bdone) begin
+                if (rsp_ready && ddr_if.wr_valid) begin
                     next_state = IDLE;
                 end
             end
@@ -118,10 +119,10 @@ module PortController
         rsp.rdata = '0;
         rsp.status = ST_OK;
         bram_if.take = '0;
-        ddr_if.rd_member = '0;
-        ddr_if.rd_take = '0;
-        ddr_if.wr_member = '0;
-        ddr_if.wr_take = '0;
+        ddr_if.is_rd_member = '0;
+        ddr_if.rd_ready = '0;
+        ddr_if.is_wr_member = '0;
+        ddr_if.wr_ready = '0;
 
         case (current_state)
             BRAM_RD: begin
@@ -132,17 +133,17 @@ module PortController
 
             DDR_RD: begin
                 rsp.rdata = beat_offset ? ddr_if.rd_beat[0] : ddr_if.rd_beat[1];
-                rsp.status = ddrToMemStatus(ddr_if.rd_resp);
-                rsp_valid = ddr_if.rd_sel;
-                ddr_if.rd_take = rsp_ready;
-                ddr_if.rd_member = 1'b1;
+                rsp.status = axiToMemStatus(ddr_if.rd_status);
+                rsp_valid = ddr_if.rd_valid;
+                ddr_if.rd_ready = rsp_ready;
+                ddr_if.is_rd_member = 1'b1;
             end
 
             DDR_WR: begin
-                rsp.status = ddrToMemStatus(ddr_if.wr_bresp);
-                rsp_valid = ddr_if.wr_bdone;
-                ddr_if.wr_take = rsp_ready;
-                ddr_if.wr_member = 1'b1;
+                rsp.status = axiToMemStatus(ddr_if.wr_status);
+                rsp_valid = ddr_if.wr_valid;
+                ddr_if.wr_ready = rsp_ready;
+                ddr_if.is_wr_member = 1'b1;
             end
 
             IMM_RSP: begin

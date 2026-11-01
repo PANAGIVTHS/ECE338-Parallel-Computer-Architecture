@@ -51,7 +51,7 @@ def make_repo(tmp_path):
     root = tmp_path / "hardware/rtl/gpgpu"
     for relative in ("constants.svh", "GPGPU.sv", "memory/MemoryInterface.sv",
                      "memory/Memory.sv", "control/Controller.sv", "sp/Processor.sv",
-                     "interfaces/AXI4LiteTop.v"):
+                     "interfaces/AXI4Top.v"):
         path = root / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("// rtl\n")
@@ -99,9 +99,9 @@ def test_current_layout_generation_and_build_dependencies(tmp_path):
     assert run["actions"][0][1][0] == build["targets"]
     assert run["uptodate"] == [False]
     rtl_root = tmp_path / "hardware/rtl/gpgpu"
-    assert str(rtl_root / "interfaces/AXI4LiteTop.v") not in command
+    assert str(rtl_root / "interfaces/AXI4Top.v") not in command
     e2e = tasks["tests:rtl:e2e:build"]["actions"][0][1][0]
-    assert str(rtl_root / "interfaces/AXI4LiteTop.v") in e2e
+    assert str(rtl_root / "interfaces/AXI4Top.v") in e2e
     assert e2e[e2e.index("--top-module") + 1] == "tb_GPGPU_e2e"
 
 

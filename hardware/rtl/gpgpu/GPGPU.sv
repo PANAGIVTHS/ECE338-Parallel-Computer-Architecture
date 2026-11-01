@@ -4,6 +4,7 @@ module GPGPU
     import gpu_pkg::*;
     import ControlPkg::*;
     import MemorySubsystemPkg::*;
+    import AXI4FullPkg::*;
 #(
     parameter int unsigned SP_PER_SM = 32,
     parameter string MEMORY_INIT = "empty.mem",
@@ -19,7 +20,7 @@ module GPGPU
     output logic o_core_idle,
     output logic o_core_running,
 
-    // Request signals
+    // Host request signals
     input logic i_req_valid,
     output logic o_req_ready,
     input logic i_req_write,
@@ -27,13 +28,56 @@ module GPGPU
     input word_t i_req_wdata,
     input strb_t i_req_wstrb,
 
-    // Response signals
+    // Host response signals
     output logic o_rsp_valid,
     input logic i_rsp_ready,
     output word_t o_rsp_rdata,
     output rsp_status_t o_rsp_status,
 
-    output logic o_irq
+    output logic o_irq,
+
+    // DDR AXI4 master, flat so the IP wrapper can expose it as m00_axi
+    output axi_id_t    m_axi_awid,
+    output axi_addr_t  m_axi_awaddr,
+    output logic [7:0] m_axi_awlen,
+    output logic [2:0] m_axi_awsize,
+    output logic [1:0] m_axi_awburst,
+    output logic       m_axi_awlock,
+    output logic [3:0] m_axi_awcache,
+    output logic [2:0] m_axi_awprot,
+    output logic [3:0] m_axi_awqos,
+    output logic       m_axi_awvalid,
+    input  logic       m_axi_awready,
+
+    output axi_data_t  m_axi_wdata,
+    output axi_strb_t  m_axi_wstrb,
+    output logic       m_axi_wlast,
+    output logic       m_axi_wvalid,
+    input  logic       m_axi_wready,
+
+    input  axi_id_t    m_axi_bid,
+    input  logic [1:0] m_axi_bresp,
+    input  logic       m_axi_bvalid,
+    output logic       m_axi_bready,
+
+    output axi_id_t    m_axi_arid,
+    output axi_addr_t  m_axi_araddr,
+    output logic [7:0] m_axi_arlen,
+    output logic [2:0] m_axi_arsize,
+    output logic [1:0] m_axi_arburst,
+    output logic       m_axi_arlock,
+    output logic [3:0] m_axi_arcache,
+    output logic [2:0] m_axi_arprot,
+    output logic [3:0] m_axi_arqos,
+    output logic       m_axi_arvalid,
+    input  logic       m_axi_arready,
+
+    input  axi_id_t    m_axi_rid,
+    input  axi_data_t  m_axi_rdata,
+    input  logic [1:0] m_axi_rresp,
+    input  logic       m_axi_rlast,
+    input  logic       m_axi_rvalid,
+    output logic       m_axi_rready
 );
     // tdb was here...
 
@@ -179,6 +223,57 @@ module GPGPU
         end
     end
 
+    //! DDR AXI4 master: the subsystem's interface, flattened onto the ports
+
+    AXI4FullInterface axi_if ();
+
+    // AW
+    assign m_axi_awid    = axi_if.aw.id;
+    assign m_axi_awaddr  = axi_if.aw.addr;
+    assign m_axi_awlen   = axi_if.aw.len;
+    assign m_axi_awsize  = axi_if.aw.size;
+    assign m_axi_awburst = axi_if.aw.burst;
+    assign m_axi_awlock  = axi_if.aw.lock;
+    assign m_axi_awcache = axi_if.aw.cache;
+    assign m_axi_awprot  = axi_if.aw.prot;
+    assign m_axi_awqos   = axi_if.aw.qos;
+    assign m_axi_awvalid = axi_if.aw_valid;
+    assign axi_if.aw_ready = m_axi_awready;
+
+    // W
+    assign m_axi_wdata  = axi_if.w.data;
+    assign m_axi_wstrb  = axi_if.w.strb;
+    assign m_axi_wlast  = axi_if.w.last;
+    assign m_axi_wvalid = axi_if.w_valid;
+    assign axi_if.w_ready = m_axi_wready;
+
+    // B
+    assign axi_if.b.id   = m_axi_bid;
+    assign axi_if.b.resp = axi_resp_t'(m_axi_bresp);
+    assign axi_if.b_valid = m_axi_bvalid;
+    assign m_axi_bready  = axi_if.b_ready;
+
+    // AR
+    assign m_axi_arid    = axi_if.ar.id;
+    assign m_axi_araddr  = axi_if.ar.addr;
+    assign m_axi_arlen   = axi_if.ar.len;
+    assign m_axi_arsize  = axi_if.ar.size;
+    assign m_axi_arburst = axi_if.ar.burst;
+    assign m_axi_arlock  = axi_if.ar.lock;
+    assign m_axi_arcache = axi_if.ar.cache;
+    assign m_axi_arprot  = axi_if.ar.prot;
+    assign m_axi_arqos   = axi_if.ar.qos;
+    assign m_axi_arvalid = axi_if.ar_valid;
+    assign axi_if.ar_ready = m_axi_arready;
+
+    // R
+    assign axi_if.r.id   = m_axi_rid;
+    assign axi_if.r.data = m_axi_rdata;
+    assign axi_if.r.resp = axi_resp_t'(m_axi_rresp);
+    assign axi_if.r.last = m_axi_rlast;
+    assign axi_if.r_valid = m_axi_rvalid;
+    assign m_axi_rready  = axi_if.r_ready;
+
     MemorySubsystem #(
         .NUM_REQ(SP_PER_SM),
         .DDR_ENABLE(DDR_ENABLE)
@@ -187,6 +282,7 @@ module GPGPU
         .rst_n(rst_n),
         .i_req_enable(o_core_running | o_core_idle),
         .memory_if(dmem_if),
+        .axi_if(axi_if),
         .o_idle(memory_quiet),
         .o_fatal(memory_fatal),
         .o_fatal_code(memory_fatal_code)

@@ -1,32 +1,14 @@
 package DDRBackendPkg;
-
-    import gpu_pkg::*;
-    import MemorySubsystemPkg::*;
-
-    // AXI burst geometry: a window is the longest HP burst, so a burst never
-    // crosses a window and every DDR region must be window-aligned.
-    localparam int unsigned AXI_DATA_W = 64;
-    localparam int unsigned MAX_BEATS = 16;
-    localparam int unsigned WINDOW_BYTES = MAX_BEATS * (AXI_DATA_W / 8);
-    localparam int unsigned XLEN = $bits(word_t);
-    localparam int WORD_SELECT_BIT = $clog2(BYTES_PER_WORD);
     
-    typedef logic [$clog2(MAX_BEATS)-1:0] ring_index_t;
+    import gpu_pkg::*;
+    import AXI4FullPkg::*;
+    
+    localparam int unsigned XLEN = $bits(word_t);
+    localparam int unsigned WINDOW_BYTES = AXI_MAX_BEATS_PER_BURST * (AXI_DATA_W / 8);
+    localparam int WORD_SELECT_BIT = $clog2(XLEN / 8);
+
+    typedef logic [max(AXI_MAX_OUTSTANDING_READS, AXI_MAX_OUTSTANDING_WRITES)-1:0] ring_index_t;
     typedef logic [AXI_DATA_W/XLEN-1:0][XLEN-1:0] beat_rdata_t;
-    typedef logic [1:0] ddr_resp_t;
-
-    function automatic mem_status_t ddrToMemStatus(logic [1:0] rd_resp);
-        mem_status_t status;
-
-        case (rd_resp)
-            2'b01: status = ST_OK; // AXI: EXOKAY -> ST_OK
-            2'b10: status = ST_SLVERR;
-            2'b11: status = ST_DECERR;
-            default: status = ST_OK;
-        endcase
-        
-        return status;
-    endfunction
 
     // Elaboration-time map checks.
     function automatic bit window_aligned(int unsigned value);
