@@ -2,7 +2,6 @@ interface DDRBackendInterface;
 
     import gpu_pkg::*;
     import DDRBackendPkg::*;
-    import MemorySubsystemPkg::*;
     import AXI4FullPkg::*;
 
     logic cand;

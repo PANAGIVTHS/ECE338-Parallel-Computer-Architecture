@@ -1,7 +1,6 @@
 package AXI4FullPkg;
 
     import gpu_pkg::*;
-    import MemorySubsystemPkg::*;
 
     // AXI burst geometry: a window is the longest HP burst, so a burst never
     // crosses a window and every DDR region must be window-aligned.
@@ -12,7 +11,6 @@ package AXI4FullPkg;
     localparam int unsigned AXI_MAX_BEATS_PER_BURST = 16;
     localparam int unsigned AXI_MAX_OUTSTANDING_READS = 16;
     localparam int unsigned AXI_MAX_OUTSTANDING_WRITES = 8;
-    localparam int unsigned XLEN = $bits(word_t);
 
     typedef logic [AXI_ADDR_W-1:0] axi_addr_t;
     typedef logic [AXI_DATA_W-1:0] axi_data_t;
@@ -65,18 +63,5 @@ package AXI4FullPkg;
         axi_resp_t resp;
         logic      last;
     } axi_r_t;
-
-    function automatic mem_status_t axiToMemStatus(axi_resp_t axi_resp);
-        mem_status_t status;
-
-        case (axi_resp)
-            AXI_RESP_EXOKAY: status = ST_OK; // AXI: EXOKAY -> ST_OK
-            AXI_RESP_SLVERR: status = ST_SLVERR;
-            AXI_RESP_DECERR: status = ST_DECERR;
-            default: status = ST_OK;
-        endcase
-        
-        return status;
-    endfunction
     
 endpackage

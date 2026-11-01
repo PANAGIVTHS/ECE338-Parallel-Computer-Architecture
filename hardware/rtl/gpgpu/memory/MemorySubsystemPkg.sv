@@ -1,6 +1,8 @@
 package MemorySubsystemPkg;
 
     import gpu_pkg::*;
+    import AXI4FullPkg::*;
+    import DDRBackendPkg::*;
 
     (* host *) typedef enum logic [2:0] {
         ST_OK         = 3'd0,
@@ -83,6 +85,44 @@ package MemorySubsystemPkg;
         end
 
         return d;
+    endfunction
+
+    function automatic mem_status_t axiToMemStatus(axi_resp_t axi_resp);
+        mem_status_t status;
+
+        case (axi_resp)
+            AXI_RESP_EXOKAY: status = ST_OK; // AXI: EXOKAY -> ST_OK
+            AXI_RESP_SLVERR: status = ST_SLVERR;
+            AXI_RESP_DECERR: status = ST_DECERR;
+            default: status = ST_OK;
+        endcase
+        
+        return status;
+    endfunction
+
+    // Elaboration-time map checks.
+    function automatic bit window_aligned(int unsigned value);
+        return (value % WINDOW_BYTES) == 0;
+    endfunction
+
+    // 64-bit sums so a region ending at 2^32 cannot wrap.
+    function automatic bit disjoint(int unsigned a_base, a_size, b_base, b_size);
+        return (longint'(a_base) + longint'(a_size) <= longint'(b_base))
+            || (longint'(b_base) + longint'(b_size) <= longint'(a_base));
+    endfunction
+
+    function automatic bit ddr_map_aligned();
+        return window_aligned(FB0_BASE) && window_aligned(FB1_BASE) && window_aligned(FB_SIZE)
+            && window_aligned(TEX_BASE) && window_aligned(TEX_SIZE);
+    endfunction
+
+    function automatic bit map_disjoint();
+        return disjoint(DMEM_BASE, DMEM_SIZE, FB0_BASE, FB_SIZE)
+            && disjoint(DMEM_BASE, DMEM_SIZE, FB1_BASE, FB_SIZE)
+            && disjoint(DMEM_BASE, DMEM_SIZE, TEX_BASE, TEX_SIZE)
+            && disjoint(FB0_BASE, FB_SIZE, FB1_BASE, FB_SIZE)
+            && disjoint(FB0_BASE, FB_SIZE, TEX_BASE, TEX_SIZE)
+            && disjoint(FB1_BASE, FB_SIZE, TEX_BASE, TEX_SIZE);
     endfunction
 
 endpackage

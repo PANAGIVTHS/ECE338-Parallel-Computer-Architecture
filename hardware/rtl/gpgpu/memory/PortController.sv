@@ -1,7 +1,8 @@
 module PortController
+    import gpu_pkg::*;
     import MemorySubsystemPkg::*;
-    import AXI4FullPkg::*;
     import DDRBackendPkg::*;
+    import AXI4FullPkg::*;
 #(
     parameter bit DDR_ENABLE
 ) (
@@ -132,7 +133,7 @@ module PortController
             end
 
             DDR_RD: begin
-                rsp.rdata = beat_offset ? ddr_if.rd_beat[0] : ddr_if.rd_beat[1];
+                rsp.rdata = ddr_if.rd_beat[req.addr[WORD_SELECT_BIT +: $clog2(AXI_DATA_W/XLEN)]];
                 rsp.status = axiToMemStatus(ddr_if.rd_status);
                 o_rsp_valid = ddr_if.rd_valid;
                 ddr_if.rd_ready = i_rsp_ready;

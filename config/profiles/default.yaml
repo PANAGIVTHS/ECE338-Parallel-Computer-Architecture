@@ -40,13 +40,13 @@ hardware:
       - packages/warp_pkg.sv
       - packages/pipeline_pkg.sv
       - memory/MemoryInterface.sv
-      - memory/MemorySubsystemPkg.sv
       - control/ControlPkg.sv
-      - memory/MemorySubsystemInterface.sv
       - memory/ddr/AXI4FullPkg.sv
       - memory/ddr/AXI4FullInterface.sv
       - memory/ddr/DDRBackendPkg.sv
       - memory/ddr/DDRBackendInterface.sv
+      - memory/MemorySubsystemPkg.sv
+      - memory/MemorySubsystemInterface.sv
   vivado:
     ip_project_name: gpgpu_ip_dev
     project_name: gpgpu_system
