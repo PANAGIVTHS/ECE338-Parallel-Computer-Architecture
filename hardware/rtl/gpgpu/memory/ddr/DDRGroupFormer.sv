@@ -35,11 +35,9 @@ module DDRGroupFormer
     logic [NUM_REQ-1:0] eligible;
     // Selected candidates that can be served
     logic [NUM_REQ-1:0] selected;
-    logic [IDX_W-1:0] seed_idx;
+    logic [NUM_REQ-1:0] seed_oh;
     word_t seed_addr;
     logic seed_write;
-    assign seed_addr = req[seed_idx].addr;
-    assign seed_write = req[seed_idx].write;
     assign group_address = group_of(seed_addr);
 
     ArbiterMLowest #(
@@ -48,14 +46,28 @@ module DDRGroupFormer
      ) arbiterMLowest (
         .req(eligible),
         .grant(),
-        .win_oh(),
+        .win_oh(seed_oh),
         .win_vld(group_found),
-        .win_idx(seed_idx)
+        .win_idx()
     );
+
+    always_comb begin
+        seed_addr  = '0;
+        seed_write = 1'b0;
+        for (int unsigned i = 0; i < NUM_REQ; i++) begin
+            seed_addr  |= {XLEN{seed_oh[i]}} & req[i].addr;
+            seed_write |= seed_oh[i] & req[i].write;
+        end
+    end
 
     always_comb begin
         for (int unsigned i = 0; i < NUM_REQ; i++) begin
             eligible[i] = cand[i] & (req[i].write ? wr_ring_free : rd_ring_free);
+        end
+    end
+
+    always_comb begin
+        for (int unsigned i = 0; i < NUM_REQ; i++) begin
             selected[i] = group_found & cand[i] 
             & (group_of(req[i].addr) == group_of(seed_addr)) & (req[i].write == seed_write);
         end
@@ -114,11 +126,6 @@ module DDRGroupFormer
     //& =============================================
     assign push_rd = group_found & rd_ring_free & ~seed_write;
     assign push_wr = group_found & wr_ring_free & seed_write;
-    
-    always_comb begin
-        for (int unsigned i = 0; i < NUM_REQ; i++) begin
-            accept[i] = selected[i];
-        end
-    end
+    assign accept = selected;
 
 endmodule

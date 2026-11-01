@@ -25,8 +25,8 @@ module MemorySubsystem
     end
 
     if (!ddr_map_aligned()) begin : g_ddr_align_check
-        $fatal(1, "Every DDR region base and size must be a multiple of WINDOW_BYTES (%0d)",
-            WINDOW_BYTES);
+        $fatal(1, "Every DDR region base and size must be a multiple of GROUP_BYTES (%0d)",
+            GROUP_BYTES);
     end
 
     if (!map_disjoint()) begin : g_map_overlap_check

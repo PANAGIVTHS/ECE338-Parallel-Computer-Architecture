@@ -109,7 +109,7 @@ module DDRBackend
         .alloc        (alloc),
         .busy         (busy),
         .fatal        (fatal),
-        .fatal_code   (fatal_code),
+        .fatal_code   (fatal_code)
     );
     
     //! Note: Remember to make o_fatal along with o_fatal_code sticky on a register

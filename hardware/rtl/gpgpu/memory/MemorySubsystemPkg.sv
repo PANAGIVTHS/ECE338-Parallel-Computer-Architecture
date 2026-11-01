@@ -101,8 +101,8 @@ package MemorySubsystemPkg;
     endfunction
 
     // Elaboration-time map checks.
-    function automatic bit window_aligned(int unsigned value);
-        return (value % WINDOW_BYTES) == 0;
+    function automatic bit group_aligned(int unsigned value);
+        return (value % GROUP_BYTES) == 0;
     endfunction
 
     // 64-bit sums so a region ending at 2^32 cannot wrap.
@@ -112,8 +112,8 @@ package MemorySubsystemPkg;
     endfunction
 
     function automatic bit ddr_map_aligned();
-        return window_aligned(FB0_BASE) && window_aligned(FB1_BASE) && window_aligned(FB_SIZE)
-            && window_aligned(TEX_BASE) && window_aligned(TEX_SIZE);
+        return group_aligned(FB0_BASE) && group_aligned(FB1_BASE) && group_aligned(FB_SIZE)
+            && group_aligned(TEX_BASE) && group_aligned(TEX_SIZE);
     endfunction
 
     function automatic bit map_disjoint();
