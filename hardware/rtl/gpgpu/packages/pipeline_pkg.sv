@@ -21,6 +21,7 @@ package pipeline_pkg;
         logic [6:0] imm_31_25;
         logic [2:0] funct3;
         logic wen;
+        logic is_ecall;
     } id_ex_t;
 
     typedef struct packed {
@@ -41,7 +42,6 @@ package pipeline_pkg;
         gpu_pkg::reg_addr_t rd;
         logic mul3_valid;
         logic wen;
-        logic core_complete;
     } ex_mem_t;
 
     typedef struct packed {
@@ -62,6 +62,8 @@ package pipeline_pkg;
         mul_hazard_t mul2;
         mul_hazard_t mul3;
         gpu_pkg::pc_t mem_program_counter; // instruction in MEM (fault reporting)
+        logic exit_requested;
+        logic pipeline_busy;
     } sp_feedback_t;
 
 endpackage

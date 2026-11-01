@@ -5,4 +5,5 @@ sw   x2, 0(x1)  # mem[0] = 1, mem[1] = 2
 lw   x3, 0(x1)
 addi x3, x2, 1
 mul  x3, x3, x3
-jalr x0, 0(x1)  # return
+addi x17, x0, 0  # Kernel complete: ECALL service 0
+ecall

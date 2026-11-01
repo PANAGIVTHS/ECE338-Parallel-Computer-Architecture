@@ -292,11 +292,13 @@ def generate_expected_memories(asm_text, num_cores=2, initial_memory=None):
                 if rd != 0 and rd != 31:
                     registers[rd] = ((pc + 1) * 4) & 0xFFFFFFFF
 
-                # convention: jalr x0, 0(x1) is reserved as the stop signal.
-                if rd == 0 and rs1 == 1 and imm == 0:
+                next_pc = (target_byte_addr // 4) % MEM_DEPTH
+
+            elif op == 'ecall':
+                # The current warp is lockstep: every participating lane must
+                # request service 0. Unsupported/mixed services are no-ops.
+                if all(regs[17] == 0 for regs in regfiles):
                     state['halted'] = True
-                else:
-                    next_pc = (target_byte_addr // 4) % MEM_DEPTH
                         
             # Update PC
             state['pc'] = next_pc

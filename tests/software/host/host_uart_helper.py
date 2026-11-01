@@ -69,7 +69,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("load-imem", help="Load a .mem file into IMEM")
     p.add_argument("file", type=Path)
     p.add_argument("--offset", type=int, default=0)
-    p.add_argument("--trim", action="store_true", help="Stop loading after RET instruction")
+    p.add_argument("--trim", action="store_true", help="Deprecated no-op; always load the full linked image")
     p.add_argument("--mode", choices=("bin", "ascii"), default="bin", help="UART load protocol (default: bin)")
 
     p = sub.add_parser("load-dmem", help="Load a .mem file into DMEM")

@@ -26,7 +26,7 @@ def test_random_program_generation_is_reproducible_from_global_seed(
 
     assert first.read_text(encoding="utf-8") == second.read_text(encoding="utf-8")
     assert first.read_text(encoding="utf-8") != different.read_text(encoding="utf-8")
-    assert first.read_text(encoding="utf-8").endswith("jalr x0, 0(x1)\n")
+    assert first.read_text(encoding="utf-8").endswith("addi x17, x0, 0\necall\n")
 
 
 def configure_native_run(tmp_path, monkeypatch, *, output="[SUCCESS] native", status=0):

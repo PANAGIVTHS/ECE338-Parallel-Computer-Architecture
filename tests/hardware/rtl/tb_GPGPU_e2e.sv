@@ -66,7 +66,7 @@ module tb_GPGPU_e2e
     integer csr_errors;
     integer cycle_count;
     integer program_words;
-    bit found_ret;
+
 
     reg [31:0] captured_word;
     reg [1:0] resp;
@@ -84,7 +84,7 @@ module tb_GPGPU_e2e
     integer reset_cycles;
     integer test_timeout_cycles;
     integer axi_timeout_cycles;
-    reg [31:0] ret_instr;
+
     reg [31:0] unmapped_addr;
     bit settings_ready = 1'b0;
 
@@ -395,7 +395,7 @@ module tb_GPGPU_e2e
         `REQUIRE_PLUSARG("RESET_CYCLES=%d", reset_cycles)
         `REQUIRE_PLUSARG("TEST_TIMEOUT_CYCLES=%d", test_timeout_cycles)
         `REQUIRE_PLUSARG("AXI_TIMEOUT_CYCLES=%d", axi_timeout_cycles)
-        `REQUIRE_PLUSARG("RET_INSTR=%h", ret_instr)
+
         `REQUIRE_PLUSARG("UNMAPPED_ADDR=%h", unmapped_addr)
         settings_ready = 1'b1;
 
@@ -462,7 +462,7 @@ module tb_GPGPU_e2e
                 rv_addi(6, 0, 'h5A),
                 rv_lw(5, 0, 1),
                 rv_sw(6, 0, 0),
-                ret_instr
+                rv_addi(17, 0, 0), riscv_pkg::ECALL_INSTR
             }, 32'(FAULT_MEMORY) | fault_kind(MemorySubsystemPkg::ST_MISALIGNED), all_lanes(), 32'd4);
         read_dmem(0, captured_word);
         if (captured_word !== 32'hDEAD_BEEF) begin
@@ -474,7 +474,7 @@ module tb_GPGPU_e2e
         expect_fault("odd lanes misaligned", '{
                 rv_add(5, 31, 31),
                 rv_lw(6, 5, 0),
-                ret_instr
+                rv_addi(17, 0, 0), riscv_pkg::ECALL_INSTR
             }, 32'(FAULT_MEMORY) | fault_kind(MemorySubsystemPkg::ST_MISALIGNED),
             all_lanes() & 32'hAAAA_AAAA, 32'd4);
 
@@ -487,14 +487,14 @@ module tb_GPGPU_e2e
                 rv_lui(6, (gpu_pkg::DMEM_BASE + gpu_pkg::DMEM_SIZE + 'hFFF) & ~32'hFFF),
                 rv_add(5, 5, 6),
                 rv_sw(0, 5, 0),
-                ret_instr
+                rv_addi(17, 0, 0), riscv_pkg::ECALL_INSTR
             }, 32'(FAULT_MEMORY) | fault_kind(MemorySubsystemPkg::ST_UNMAPPED)
                             | fault_kind(MemorySubsystemPkg::ST_MISALIGNED), all_lanes(), 32'd12);
 
         expect_fault("store to the read-only texture region", '{
                 rv_lui(5, TEX_BASE),
                 rv_sw(0, 5, 0),
-                ret_instr
+                rv_addi(17, 0, 0), riscv_pkg::ECALL_INSTR
             }, 32'(FAULT_MEMORY) | fault_kind(MemorySubsystemPkg::ST_PERMISSION), all_lanes(), 32'd4);
 
         // Without the DDR backend a framebuffer store is unmapped, not a hang.
@@ -502,7 +502,7 @@ module tb_GPGPU_e2e
             expect_fault("framebuffer store without DDR", '{
                     rv_lui(5, FB0_BASE),
                     rv_sw(0, 5, 0),
-                    ret_instr
+                    rv_addi(17, 0, 0), riscv_pkg::ECALL_INSTR
                 }, 32'(FAULT_MEMORY) | fault_kind(MemorySubsystemPkg::ST_UNMAPPED), all_lanes(), 32'd4);
 
         if (csr_errors != 0)
@@ -550,22 +550,8 @@ module tb_GPGPU_e2e
             $readmemh(prog_file, expected_imem);
             $readmemh(data_file, expected_dmem);
 
-            // Only load up to (and including) the kernel's RET.
+            // Load the full linked image: functions may follow RET or ECALL.
             program_words = IMEM_ENTRIES;
-            found_ret = 0;
-            for (i = 0; i < IMEM_ENTRIES; i = i + 1) begin
-                if (!found_ret && expected_imem[i] == ret_instr) begin
-                    program_words = i + 1;
-                    found_ret = 1;
-                end
-            end
-
-            if (!found_ret)
-                $display("[WARNING] No RET instruction 0x%08h found in %0s. Loading full IMEM.",
-                         ret_instr, prog_file);
-            else
-                $display("[INFO]  Program length detected: %0d words. RET at IMEM[%0d].",
-                         program_words, program_words - 1);
 
             // ----------------------------------------------------
             // Reset (BRAM contents survive reset)

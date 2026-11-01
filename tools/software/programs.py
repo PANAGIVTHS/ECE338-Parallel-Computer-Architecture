@@ -112,7 +112,11 @@ def write_disassembly(command: list[str], output: Path) -> None:
 
 
 def write_program_assembly(disassembly: Path, output: Path) -> None:
-    """Extract instruction mnemonics and operands from an objdump listing."""
+    """Extract all instruction mnemonics and operands from an objdump listing.
+
+    RET and ECALL are instructions, not image boundaries: linked callees may
+    follow either instruction in address order and must remain in the image.
+    """
 
     output.parent.mkdir(parents=True, exist_ok=True)
     lines = []
@@ -124,7 +128,7 @@ def write_program_assembly(disassembly: Path, output: Path) -> None:
 
 
 def write_instruction_memory(disassembly: Path, output: Path) -> None:
-    """Extract 32-bit instruction words from an objdump listing."""
+    """Extract every 32-bit instruction word, including code after RET/ECALL."""
 
     output.parent.mkdir(parents=True, exist_ok=True)
     words = []

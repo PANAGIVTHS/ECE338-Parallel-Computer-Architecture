@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from pathlib import Path
+import os
 import shutil
+import subprocess
 
 import pytest
 from doit.tools import config_changed
@@ -76,6 +78,8 @@ def test_create_tasks_preserves_makefile_build_graph_and_flags(tmp_path: Path) -
     assert "-mabi=ilp32" in elf_command
     assert "-DGPGPU_NUM_CORES=8" in elf_command
     assert "-ffixed-x31" in elf_command
+    assert "-ffixed-x17" not in elf_command
+    assert "-ffixed-a7" not in elf_command
     assert "-mno-relax" in elf_command
     assert f"-Wl,-T,{tmp_path / 'software/programs/gpgpu.ld'}" in elf_command
     assert f"-Wl,-Map,{tmp_path / 'build/software/programs/example/example.map'}" in elf_command
@@ -139,6 +143,98 @@ not an instruction
         "00000513\n"
         "00b50533\n"
     )
+
+
+@pytest.mark.parametrize(
+    ("word", "instruction"),
+    [("00008067", "ret"), ("00008067", "jalr x0,0(x1)"), ("00000073", "ecall")],
+)
+def test_images_keep_linked_code_after_return_or_ecall(
+    tmp_path: Path, word: str, instruction: str
+) -> None:
+    dump = tmp_path / "linked.asm"
+    dump.write_text(
+        "00000000 <_start>:\n"
+        "   0: 00000893 addi x17,x0,0\n"
+        f"   4: {word} {instruction}\n"
+        "00000008 <helper>:\n"
+        "   8: 00150513 addi x10,x10,1\n"
+        "   c: 00008067 jalr x0,0(x1)\n"
+        "00000010 <kernel>:\n"
+        "  10: ff9ff0ef jal x1,8 <helper>\n"
+        "  14: 00008067 jalr x0,0(x1)\n",
+        encoding="utf-8",
+    )
+    assembly = tmp_path / "program.asm"
+    memory = tmp_path / "instructions.mem"
+
+    programs.write_program_assembly(dump, assembly)
+    programs.write_instruction_memory(dump, memory)
+
+    assert assembly.read_text(encoding="utf-8").splitlines() == [
+        "addi x17,x0,0", instruction, "addi x10,x10,1", "jalr x0,0(x1)",
+        "jal x1,8 <helper>", "jalr x0,0(x1)",
+    ]
+    assert memory.read_text(encoding="utf-8").splitlines() == [
+        "00000893", word, "00150513", "00008067", "ff9ff0ef", "00008067",
+    ]
+
+
+def test_compiled_runtime_exits_with_ecall_and_keeps_subroutines(tmp_path: Path) -> None:
+    compiler = os.environ.get("RISCV_GCC") or next(
+        (path for name in ("riscv64-unknown-elf-gcc", "riscv-none-elf-gcc", "riscv64-elf-gcc")
+         if (path := shutil.which(name))),
+        None,
+    )
+    if compiler is None:
+        pytest.skip("RISC-V GCC is not installed (or set RISCV_GCC)")
+    programs_dir = Path(__file__).resolve().parents[3] / "software/programs"
+    source = tmp_path / "runtime.c"
+    source.write_text(
+        '#include "gpgpu_runtime.h"\n'
+        '__attribute__((noinline, used)) unsigned int helper(unsigned int x) {\n'
+        '    return x + 1;\n'
+        '}\n'
+        '__attribute__((noinline, used)) void kernel(void) {\n'
+        '    GPGPU_ARGS[0] = helper(gpgpu_thread_id());\n'
+        '    __asm__ volatile("li a7,37" ::: "a7");\n'
+        '}\n'
+        'GPGPU_START(kernel)\n',
+        encoding="utf-8",
+    )
+    elf = tmp_path / "runtime.elf"
+    subprocess.run(
+        [compiler, "-march=rv32im", "-mabi=ilp32", *programs._RISCV_CFLAGS,
+         "-I", str(programs_dir), str(source), *programs._RISCV_LDFLAGS,
+         f"-Wl,-T,{programs_dir / 'gpgpu.ld'}", "-o", str(elf)],
+        check=True,
+    )
+    dump = tmp_path / "runtime.asm"
+    programs.write_disassembly(
+        [programs._objdump_for(compiler), "-d", "-M", "no-aliases,numeric", str(elf)], dump
+    )
+    text = dump.read_text(encoding="utf-8")
+    assert "00000000 <_start>:" in text
+    start = text.split("<_start>:", 1)[1].split("\n\n", 1)[0]
+    start_words = [fields[0] for line in start.splitlines()
+                   if (fields := programs._instruction_fields(line)) is not None]
+    # The kernel may clobber a7; service zero must be loaded after the call.
+    assert start_words[-3:] == ["00000893", "00000073", "0000006f"]
+    assert "jal\tx1," in start and "<kernel>" in start
+    assert text.index("<helper>:") > text.index("ecall")
+    assert text.index("<kernel>:") > text.index("ecall")
+
+    assembly = tmp_path / "program.asm"
+    memory = tmp_path / "instructions.mem"
+    programs.write_program_assembly(dump, assembly)
+    programs.write_instruction_memory(dump, memory)
+    words = [fields[0] for line in text.splitlines()
+             if (fields := programs._instruction_fields(line)) is not None]
+    assert memory.read_text(encoding="utf-8").splitlines() == words
+    assert words.count("00008067") == 2  # Both normal function returns survive.
+    instructions = assembly.read_text(encoding="utf-8").splitlines()
+    assert len(instructions) == len(words)
+    assert "jalr\tx0,0(x1)" in instructions[instructions.index("ecall") + 1:]
 
 
 def test_non_program_directories_are_ignored(tmp_path: Path) -> None:

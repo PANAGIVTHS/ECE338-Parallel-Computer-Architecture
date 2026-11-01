@@ -145,7 +145,7 @@ tests:
         RESET_CYCLES: 20
         TEST_TIMEOUT_CYCLES: 10000  # launch to completion IRQ
         AXI_TIMEOUT_CYCLES: 1000    # per AXI channel handshake
-        RET_INSTR: "00008067"       # hex; kernel end, IMEM is loaded up to it
+
         UNMAPPED_ADDR: "00008000"   # hex; must decode to no CSR/IMEM/DMEM
     random:
       iterations: 100

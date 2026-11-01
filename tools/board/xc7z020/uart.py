@@ -99,13 +99,12 @@ def write_mem_file(path: str | Path, words: dict[int, int | str] | Iterable[int 
 
 
 def trim_program_at_ret(words: Iterable[str]) -> list[str]:
-    result: list[str] = []
-    for word in words:
-        w = normalize_word(word)
-        result.append(w)
-        if w == RET_INSTR:
-            break
-    return result
+    """Legacy helper name: normalize the FULL image without trimming.
+
+    Functions may be linked after either RET or the runtime's ECALL. Neither
+    instruction marks the end of an image, so truncation is never safe.
+    """
+    return [normalize_word(word) for word in words]
 
 
 def _check_index(index: int) -> None:
