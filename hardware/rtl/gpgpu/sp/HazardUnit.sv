@@ -17,6 +17,13 @@ module HazardUnit
     output logic o_data_hazard,
     output logic o_flush
 );
+    logic multiplier_busy, independent_multiply;
+    assign multiplier_busy = i_ex_is_mul || i_mul1.valid || i_mul2.valid || i_mul3.valid;
+    assign independent_multiply = i_id_is_mul &&
+        (i_id_rs1 != i_idex_rd && i_id_rs2 != i_idex_rd) &&
+        (!i_mul1.valid || (i_id_rs1 != i_mul1.rd && i_id_rs2 != i_mul1.rd)) &&
+        (!i_mul2.valid || (i_id_rs1 != i_mul2.rd && i_id_rs2 != i_mul2.rd)) &&
+        (!i_mul3.valid || (i_id_rs1 != i_mul3.rd && i_id_rs2 != i_mul3.rd));
 
     always_comb begin
         o_data_hazard = 1'b0;
@@ -31,24 +38,9 @@ module HazardUnit
         end else if (i_branch_taken) begin
             o_data_hazard = 1'b1;
             o_flush = 1'b1;
-            //! When there is a mul in EX stall, EXCEPT when the id stage is
-            //! a multiplication that has no dependency on the muls that are
-            //! inside EX.
-        end else if ((i_ex_is_mul || i_mul1.valid || i_mul2.valid || i_mul3.valid) && !(
-            i_id_is_mul &&
-            
-            //! 1. Check dependency against the MUL currently in the EX stage
-            (i_id_rs1 != i_idex_rd) && (i_id_rs2 != i_idex_rd) &&
-
-            //! 2. Check dependency against the MUL in the first DSP stage
-            (!i_mul1.valid || ((i_id_rs1 != i_mul1.rd) && (i_id_rs2 != i_mul1.rd))) &&
-
-            //! 3. Check dependency against the MUL in the second DSP stage
-            (!i_mul2.valid || ((i_id_rs1 != i_mul2.rd) && (i_id_rs2 != i_mul2.rd))) &&
-
-            //! 4. Check dependency against the MUL in the third DSP stage
-            (!i_mul3.valid || ((i_id_rs1 != i_mul3.rd) && (i_id_rs2 != i_mul3.rd)))
-        )) begin
+        end else if (multiplier_busy && !independent_multiply) begin
+            //! Only a multiply independent of EX and every tracked MUL stage
+            //! may enter while the multiplier pipeline is occupied.
             o_data_hazard = 1'b1;
         end
     end

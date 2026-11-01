@@ -1,5 +1,7 @@
 package pipeline_pkg;
 
+    import riscv_pkg::*;
+
     //! Forwarding select signals ForwardingUnit/StreamingProcessor
     typedef enum logic [1:0] {
         NO_DEP = 2'b00,
@@ -16,10 +18,10 @@ package pipeline_pkg;
         gpu_pkg::reg_addr_t rs1;
         gpu_pkg::reg_addr_t rs2;
         gpu_pkg::reg_addr_t rd;
-        logic [19:0] imm_31_12;
-        logic [11:0] imm_31_20;
-        logic [6:0] imm_31_25;
-        logic [2:0] funct3;
+        imm20_t imm_31_12;
+        imm12_t imm_31_20;
+        funct7_t imm_31_25;
+        funct3_t funct3;
         logic wen;
         logic is_ecall;
     } id_ex_t;
@@ -65,5 +67,20 @@ package pipeline_pkg;
         logic exit_requested;
         logic pipeline_busy;
     } sp_feedback_t;
+
+    // Defaults match reset; issued ID/EX bubbles retain their PC and use INVALID.
+    function automatic id_ex_t idex_bubble(gpu_pkg::pc_t pc = gpu_pkg::pc_t'(gpu_pkg::INITIAL_PC));
+        return '{program_counter: pc, opcode: OP_INVALID,
+                 instr_type: INSTR_TYPE_R, alu_op: alu_pkg::ALU_OP_INVALID, default: '0};
+    endfunction
+
+    function automatic ex_mem_t exmem_bubble();
+        return '{program_counter: gpu_pkg::pc_t'(gpu_pkg::INITIAL_PC),
+                 opcode: OP_INVALID, default: '0};
+    endfunction
+
+    function automatic mem_wb_t memwb_bubble();
+        return '{program_counter: gpu_pkg::pc_t'(gpu_pkg::INITIAL_PC), default: '0};
+    endfunction
 
 endpackage

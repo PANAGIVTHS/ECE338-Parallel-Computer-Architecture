@@ -47,4 +47,107 @@ package riscv_pkg;
         INSTR_TYPE_U = 2'b11
     } instr_type_t;
 
+    //! Encoded instruction layouts. Packed order follows the instruction word.
+    localparam int unsigned IMM_I_W = 12;
+    localparam int unsigned IMM_U_W = gpu_pkg::XLEN - IMM_I_W;
+    typedef logic [2:0] funct3_t;
+    typedef logic [6:0] funct7_t;
+    typedef logic [IMM_I_W-1:0] imm12_t;
+    typedef logic [IMM_U_W-1:0] imm20_t;
+
+    typedef struct packed {
+        funct7_t funct7;
+        gpu_pkg::reg_addr_t rs2;
+        gpu_pkg::reg_addr_t rs1;
+        funct3_t funct3;
+        gpu_pkg::reg_addr_t rd;
+        opcode_t opcode;
+    } instruction_r_t;
+
+    typedef struct packed {
+        imm12_t imm;
+        gpu_pkg::reg_addr_t rs1;
+        funct3_t funct3;
+        gpu_pkg::reg_addr_t rd;
+        opcode_t opcode;
+    } instruction_i_t;
+
+    typedef struct packed {
+        funct7_t imm_hi;
+        gpu_pkg::reg_addr_t rs2;
+        gpu_pkg::reg_addr_t rs1;
+        funct3_t funct3;
+        logic [4:0] imm_lo;
+        opcode_t opcode;
+    } instruction_s_t;
+
+    typedef struct packed {
+        logic imm_12;
+        logic [5:0] imm_10_5;
+        gpu_pkg::reg_addr_t rs2;
+        gpu_pkg::reg_addr_t rs1;
+        funct3_t funct3;
+        logic [3:0] imm_4_1;
+        logic imm_11;
+        opcode_t opcode;
+    } instruction_b_t;
+
+    typedef struct packed {
+        imm20_t imm;
+        gpu_pkg::reg_addr_t rd;
+        opcode_t opcode;
+    } instruction_u_t;
+
+    typedef struct packed {
+        logic imm_20;
+        logic [9:0] imm_10_1;
+        logic imm_11;
+        logic [7:0] imm_19_12;
+        gpu_pkg::reg_addr_t rd;
+        opcode_t opcode;
+    } instruction_j_t;
+
+    typedef union packed {
+        gpu_pkg::word_t bits;
+        instruction_r_t r;
+        instruction_i_t i;
+        instruction_s_t s;
+        instruction_b_t b;
+        instruction_u_t u;
+        instruction_j_t j;
+    } instruction_t;
+
+    function automatic gpu_pkg::word_t immediate_i(imm12_t immediate);
+        return gpu_pkg::word_t'($signed(immediate));
+    endfunction
+
+    function automatic gpu_pkg::word_t immediate_s(funct7_t upper, gpu_pkg::reg_addr_t lower);
+        return immediate_i({upper, lower});
+    endfunction
+
+    function automatic gpu_pkg::word_t immediate_u(imm20_t immediate);
+        return {immediate, {IMM_I_W{1'b0}}};
+    endfunction
+
+    function automatic gpu_pkg::word_t immediate_b(funct7_t upper, gpu_pkg::reg_addr_t lower);
+        instruction_t encoding;
+        logic [12:0] displacement;
+        encoding = '0;
+        encoding.r.funct7 = upper;
+        encoding.r.rd = lower;
+        displacement = {encoding.b.imm_12, encoding.b.imm_11,
+                        encoding.b.imm_10_5, encoding.b.imm_4_1, 1'b0};
+        return gpu_pkg::word_t'($signed(displacement));
+    endfunction
+
+    function automatic gpu_pkg::word_t immediate_j(imm20_t immediate);
+        instruction_t encoding;
+        logic [20:0] displacement;
+        encoding = '0;
+        encoding.u.imm = immediate;
+        displacement = {encoding.j.imm_20, encoding.j.imm_19_12,
+                        encoding.j.imm_11, encoding.j.imm_10_1, 1'b0};
+        return gpu_pkg::word_t'($signed(displacement));
+    endfunction
+
 endpackage

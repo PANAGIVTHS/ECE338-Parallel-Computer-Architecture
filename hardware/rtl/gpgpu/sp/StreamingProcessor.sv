@@ -51,9 +51,9 @@ module StreamingProcessor
     word_t wb_wdata;
 
     assign ex_is_mul = (i_idex.opcode == OP_R_TYPE) && (i_idex.imm_31_25 == FUNCT7_MULDIV); //! WARNING when adding DIV mul would be confused with div 
-    assign ex_imm_i_type = {{20{i_idex.imm_31_20[11]}}, i_idex.imm_31_20};
-    assign ex_imm_s_type = {{20{i_idex.imm_31_25[6]}}, i_idex.imm_31_25, i_idex.rd};
-    assign ex_imm_u_type = {i_idex.imm_31_12, 12'b0};
+    assign ex_imm_i_type = immediate_i(i_idex.imm_31_20);
+    assign ex_imm_s_type = immediate_s(i_idex.imm_31_25, i_idex.rd);
+    assign ex_imm_u_type = immediate_u(i_idex.imm_31_12);
 
     (* dont_touch = `DEBUG *)
     Regfile #(
@@ -157,35 +157,28 @@ module StreamingProcessor
         1'b0;
     assign o_feedback.branch_taken = (ex_is_branch && ex_branch_condition_met) || ex_is_jal || ex_is_jalr;
 
-    assign ex_beq_offset = {{20{i_idex.imm_31_25[6]}}, i_idex.rd[0], i_idex.imm_31_25[5:0], i_idex.rd[4:1], 1'b0};
-    assign ex_jal_offset = {{12{i_idex.imm_31_12[19]}}, i_idex.imm_31_12[7:0], i_idex.imm_31_12[8], i_idex.imm_31_12[18:9], 1'b0};
+    assign ex_beq_offset = immediate_b(i_idex.imm_31_25, i_idex.rd);
+    assign ex_jal_offset = immediate_j(i_idex.imm_31_12);
     assign ex_jalr_target_addr = ex_alu_out & 32'hFFFF_FFFE;
 
-    assign ex_branch_operand_a = ex_is_jalr ? i_idex.program_counter : i_idex.program_counter[$clog2(IMEM_ENTRIES)+1:2];
-    assign ex_branch_operand_b = ex_is_jalr ? 32'd4 : (ex_is_jal ? ex_jal_offset[31:2] : ex_beq_offset[31:2]);
+    //TODO check that the params used are correct
+    assign ex_branch_operand_a = ex_is_jalr ? i_idex.program_counter : i_idex.program_counter[IMEM_AW+1:PC_OFFSET_W];
+    assign ex_branch_operand_b = ex_is_jalr ? 32'd4 : (ex_is_jal ? ex_jal_offset[XLEN-1:PC_OFFSET_W] : ex_beq_offset[XLEN-1:PC_OFFSET_W]);
     assign ex_branch_target_addr = ex_branch_operand_a + ex_branch_operand_b;
     assign o_feedback.branch_target_idx = ex_is_jalr
-        ? ex_jalr_target_addr[$clog2(IMEM_ENTRIES)+1:2]
-        : ex_branch_target_addr;
+        ? ex_jalr_target_addr[IMEM_AW+1:PC_OFFSET_W]
+        : imem_idx_t'(ex_branch_target_addr);
 
     //* =========================================================================
     //* PIPELINE REGISTER 3: EXECUTE -> MEMORY
     //* =========================================================================
     always_ff @(posedge clk) begin
         if (!rst_n) begin
-            exmem <= pipeline_pkg::ex_mem_t'{
-                program_counter: INITIAL_PC,
-                opcode: OP_INVALID,
-                default: '0
-            };
+            exmem <= exmem_bubble();
         end else if (i_stall) begin
             // Retain state during memory stall
         end else if (mul_not_ready) begin
-            exmem <= '{
-                program_counter: INITIAL_PC,
-                opcode: OP_INVALID,
-                default: '0
-            };
+            exmem <= exmem_bubble();
         end else begin
             exmem <= '{
                 alu_out: (ex_is_jalr) ? ex_branch_target_addr : ex_alu_out,
@@ -234,10 +227,7 @@ module StreamingProcessor
     //! =========================================================================
     always_ff @(posedge clk) begin
         if (!rst_n) begin
-            memwb <= '{
-                program_counter: INITIAL_PC,
-                default: '0
-            };
+            memwb <= memwb_bubble();
         end else if (i_stall) begin
             // Retain state during memory stall
         end else begin

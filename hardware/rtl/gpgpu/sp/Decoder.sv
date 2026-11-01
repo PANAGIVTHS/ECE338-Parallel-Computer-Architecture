@@ -1,4 +1,3 @@
-
 module Decoder
     import gpu_pkg::*;
     import riscv_pkg::*;
@@ -9,31 +8,25 @@ module Decoder
     input pc_t i_program_counter,
     output id_ex_t o_decoded
 );
-    wire [2:0] funct3 = i_instr[14:12];
-    wire [6:0] funct7 = i_instr[31:25];
+    instruction_t instruction;
+    assign instruction.bits = i_instr;
 
-    //! Extract fields from instruction
-    opcode_t opcode;
-    assign opcode = opcode_t'(i_instr[6:0]);
-
-    //! Determine ALU operation based on opcode and funct fields
     always_comb begin
-
         o_decoded = '0;
         o_decoded.program_counter = i_program_counter;
-        o_decoded.opcode = opcode;
-        o_decoded.rs1 = i_instr[19:15];
-        o_decoded.rs2 = i_instr[24:20];
-        o_decoded.rd = i_instr[11:7];
-        o_decoded.imm_31_12 = i_instr[31:12];
-        o_decoded.imm_31_25 = i_instr[31:25];
-        o_decoded.imm_31_20 = i_instr[31:20];
-        o_decoded.funct3 = funct3;
-        o_decoded.wen = (i_instr[11:7] != 5'b0); 
+        o_decoded.opcode = instruction.r.opcode;
+        o_decoded.rs1 = instruction.r.rs1;
+        o_decoded.rs2 = instruction.r.rs2;
+        o_decoded.rd = instruction.r.rd;
+        o_decoded.imm_31_12 = instruction.u.imm;
+        o_decoded.imm_31_20 = instruction.i.imm;
+        o_decoded.imm_31_25 = instruction.r.funct7;
+        o_decoded.funct3 = instruction.r.funct3;
+        o_decoded.wen = (instruction.r.rd != '0);
 
-        case (opcode)
+        case (instruction.r.opcode)
             OP_R_TYPE: begin
-                case ({funct7, funct3}) 
+                case ({instruction.r.funct7, instruction.r.funct3})
                     {FUNCT7_ADD, FUNCT3_ADD_SUB_MUL}: o_decoded.alu_op = ALU_OP_ADD;
                     {FUNCT7_SUB, FUNCT3_ADD_SUB_MUL}: o_decoded.alu_op = ALU_OP_SUB;
                     {FUNCT7_MULDIV, FUNCT3_ADD_SUB_MUL}: o_decoded.alu_op = ALU_OP_MUL;
@@ -51,13 +44,13 @@ module Decoder
                 endcase
                 o_decoded.instr_type = INSTR_TYPE_R;
             end
-            OP_LW: begin 
+            OP_LW, OP_JALR: begin 
                 o_decoded.alu_op = ALU_OP_ADD;
                 o_decoded.instr_type = INSTR_TYPE_I;
             end
             OP_ADDI: begin
                 o_decoded.instr_type = INSTR_TYPE_I;
-                case (funct3)
+                case (instruction.r.funct3)
                     FUNCT3_AND: o_decoded.alu_op = ALU_OP_AND;
                     FUNCT3_XOR: o_decoded.alu_op = ALU_OP_XOR;
                     FUNCT3_OR: o_decoded.alu_op = ALU_OP_OR;
@@ -65,7 +58,7 @@ module Decoder
                     FUNCT3_SLT: o_decoded.alu_op = ALU_OP_SLT;
                     FUNCT3_SLTU: o_decoded.alu_op = ALU_OP_SLTU;                    
                     FUNCT3_SRL: begin
-                        if (funct7 == FUNCT7_SUB)
+                        if (instruction.r.funct7 == FUNCT7_SUB)
                             o_decoded.alu_op = ALU_OP_SRA;
                         else
                             o_decoded.alu_op = ALU_OP_SRL;
@@ -73,20 +66,17 @@ module Decoder
                     default: o_decoded.alu_op = ALU_OP_ADD;
                 endcase
             end
-            OP_SW: begin 
+            OP_SW: begin
                 o_decoded.alu_op = ALU_OP_ADD;
                 o_decoded.instr_type = INSTR_TYPE_S;
                 o_decoded.wen = 0;
             end
             OP_BEQ: begin 
                 o_decoded.instr_type = INSTR_TYPE_S;
-                case (funct3)
-                    FUNCT3_BEQ: o_decoded.alu_op = ALU_OP_SUB;
-                    FUNCT3_BNE: o_decoded.alu_op = ALU_OP_SUB;
-                    FUNCT3_BLT: o_decoded.alu_op = ALU_OP_SLT;
-                    FUNCT3_BGE: o_decoded.alu_op = ALU_OP_SLT;
-                    FUNCT3_BLTU: o_decoded.alu_op = ALU_OP_SLTU;
-                    FUNCT3_BGEU: o_decoded.alu_op = ALU_OP_SLTU;
+                case (instruction.r.funct3)
+                    FUNCT3_BEQ, FUNCT3_BNE: o_decoded.alu_op = ALU_OP_SUB;
+                    FUNCT3_BLT, FUNCT3_BGE: o_decoded.alu_op = ALU_OP_SLT;
+                    FUNCT3_BLTU, FUNCT3_BGEU: o_decoded.alu_op = ALU_OP_SLTU;
                     default: o_decoded.alu_op = ALU_OP_SUB;
                 endcase
                 o_decoded.wen = 0;
@@ -95,16 +85,12 @@ module Decoder
                 o_decoded.alu_op = ALU_OP_ADD;
                 o_decoded.instr_type = INSTR_TYPE_U;
             end
-            OP_JALR: begin
-                o_decoded.alu_op = ALU_OP_ADD;
-                o_decoded.instr_type = INSTR_TYPE_I;
-            end
             OP_LUI: begin
                 o_decoded.alu_op = ALU_OP_LUI;
                 o_decoded.instr_type = INSTR_TYPE_U;
             end
             OP_SYSTEM: begin
-                o_decoded.is_ecall = (i_instr == ECALL_INSTR);
+                o_decoded.is_ecall = (instruction.bits == ECALL_INSTR);
 
                 //! Set ecall service register as it is not encoded by ECALL itself
                 o_decoded.rs1 = o_decoded.is_ecall ? ECALL_SERVICE_REGISTER : '0; 

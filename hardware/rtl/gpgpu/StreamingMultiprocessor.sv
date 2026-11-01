@@ -61,8 +61,13 @@ module StreamingMultiprocessor
     pc_t program_counter;
     imem_idx_t instr_idx;
 
-    GUCounter #(.BITS(IMEM_AW)) 
-        programCounter (.clk(clk), .i_set_reset({rst_n, ex_branch_taken}), .i_count_enable(issue_enabled && !data_hazard && !stall), .i_count_set(ex_beq_target_idx + 1'b1), .o_count_cur(instr_idx));
+    GUCounter #(.BITS(IMEM_AW)) programCounter (
+        .clk(clk),
+        .i_set_reset({rst_n, ex_branch_taken}),
+        .i_count_enable(issue_enabled && !data_hazard && !stall),
+        .i_count_set(ex_beq_target_idx + 1'b1),
+        .o_count_cur(instr_idx)
+    );
 
     assign program_counter = {instr_idx, 2'b00};
     assign o_imem_ren = issue_enabled && ((!data_hazard && !stall) | flush);
@@ -74,7 +79,7 @@ module StreamingMultiprocessor
     pc_t ifid_program_counter;
     always_ff @(posedge clk) begin
         if (!rst_n) begin
-            ifid_program_counter <= INITIAL_PC;
+            ifid_program_counter <= pc_t'(INITIAL_PC);
         end else if (stall) begin
             // Retain state during memory stall
         end else if (flush) begin 
@@ -112,14 +117,11 @@ module StreamingMultiprocessor
     //* =========================================================================
     always_ff @(posedge clk) begin
         if (!rst_n) begin
-            idex <= '0;
-            idex.program_counter <= INITIAL_PC;
+            idex <= idex_bubble();
         end else if (stall) begin
             // Retain state during memory stall
         end else if (!issue_enabled || !decode_enabled || data_hazard) begin
-            idex <= '0;
-            idex.program_counter <= ifid_program_counter;
-            idex.alu_op <= ALU_OP_INVALID;
+            idex <= idex_bubble(ifid_program_counter);
         end else begin
             idex <= decoded;
         end

@@ -2,6 +2,8 @@ package gpu_pkg;
 
     localparam int unsigned XLEN = 32;
     localparam int unsigned BYTES_PER_WORD = XLEN / 8;
+    localparam int unsigned INSTR_BYTES = BYTES_PER_WORD;
+    localparam int unsigned PC_OFFSET_W = $clog2(INSTR_BYTES);
     localparam int unsigned REG_COUNT = 32;
     (* host *) localparam int unsigned IMEM_ENTRIES = 2048;
     (* host *) localparam int unsigned DMEM_ENTRIES = 2048;
