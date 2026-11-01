@@ -112,9 +112,6 @@ module PortController
         endcase
     end
 
-    logic beat_offset;
-    assign beat_offset = req.addr[WORD_SELECT_BIT];
-
     always_comb begin
         o_rsp_valid = '0;
         rsp.rdata = '0;
@@ -161,7 +158,7 @@ module PortController
         if (~rst_n) begin
             ddr_if.idx <= '0;
         end else if (ddr_if.accept) begin
-            ddr_if.idx <= req.write ? ddr_if.alloc_wr : ddr_if.alloc_rd;
+            ddr_if.idx <= ddr_if.alloc;
         end
     end
 

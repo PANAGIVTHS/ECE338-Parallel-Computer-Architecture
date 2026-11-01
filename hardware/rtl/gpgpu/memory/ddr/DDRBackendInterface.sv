@@ -7,21 +7,20 @@ interface DDRBackendInterface;
     logic cand;
     logic accept;
     ring_index_t idx;
+    ring_index_t alloc;
 
     // Read
     logic is_rd_member;
     logic rd_ready;
     logic rd_valid;
     beat_rdata_t rd_beat;
-    axi_resp_t rd_status;
-    ring_index_t alloc_rd; // read ring ptr
+    axi_resp_t rd_status; // read ring ptr
 
     // Write
     logic is_wr_member;
     logic wr_ready;
     logic wr_valid;
     axi_resp_t wr_status; 
-    ring_index_t alloc_wr; // write ring ptr
 
     modport requester (
         output cand,
@@ -32,8 +31,7 @@ interface DDRBackendInterface;
         output wr_ready,
 
         input accept,
-        input alloc_rd,
-        input alloc_wr,
+        input alloc,
         input rd_valid,
         input rd_beat,
         input rd_status,
@@ -50,8 +48,7 @@ interface DDRBackendInterface;
         input wr_ready,
 
         output accept,
-        output alloc_rd,
-        output alloc_wr,
+        output alloc,
         output rd_valid,
         output rd_beat,
         output rd_status,
