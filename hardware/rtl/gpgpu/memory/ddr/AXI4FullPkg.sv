@@ -16,6 +16,7 @@ package AXI4FullPkg;
     typedef logic [AXI_DATA_W-1:0] axi_data_t;
     typedef logic [AXI_STRB_W-1:0] axi_strb_t;
     typedef logic [AXI_ID_W-1:0] axi_id_t;
+    typedef logic [7:0] axi_len_t;
 
     typedef enum logic [1:0] {
         AXI_BURST_FIXED = 2'b00,
@@ -34,7 +35,7 @@ package AXI4FullPkg;
     typedef struct packed {
         axi_id_t    id;
         axi_addr_t  addr;
-        logic [7:0] len;    // beats - 1
+        axi_len_t   len;    // beats - 1
         logic [2:0] size;   // log2(bytes per beat)
         axi_burst_t burst;
         logic       lock;
@@ -63,5 +64,11 @@ package AXI4FullPkg;
         axi_resp_t resp;
         logic      last;
     } axi_r_t;
+
+    typedef struct packed {
+        logic       valid;
+        axi_addr_t  addr;
+        axi_len_t   len;
+    } cmd_t;
     
 endpackage
