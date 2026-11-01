@@ -1,8 +1,8 @@
-import gpu_pkg::*;
-import AXI4FullPkg::*;
-import MemorySubsystemPkg::*;
-
-module DDRBackend #(
+module DDRBackend 
+    import gpu_pkg::*;
+    import AXI4FullPkg::*;
+    import MemorySubsystemPkg::*;
+#(
     parameter int unsigned NUM_REQ = 32
 ) (
     input logic clk,

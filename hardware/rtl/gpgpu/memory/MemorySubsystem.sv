@@ -1,7 +1,7 @@
-import DDRBackendPkg::*;
-import MemorySubsystemPkg::*;
-
-module MemorySubsystem #(
+module MemorySubsystem 
+    import DDRBackendPkg::*;
+    import MemorySubsystemPkg::*;
+#(
     parameter int unsigned NUM_REQ = 32,
     parameter BRAM_INIT = "",
     parameter bit ARB_RR = 1'b0,
@@ -58,7 +58,7 @@ module MemorySubsystem #(
         ) portControllers (
             .clk(clk),
             .rst_n(rst_n),
-            .i_en(i_req_enable),
+            .i_en(i_req_enable & ~o_fatal),
             .i_req_valid(req_valid[i]),
             .o_req_ready(memory_if[i].req_ready),
             .o_rsp_valid(memory_if[i].rsp_valid),
@@ -95,6 +95,6 @@ module MemorySubsystem #(
         .o_fatal_code(o_fatal_code)
     );
 
-    assign o_idle = (&port_idle) & ~bram_busy & ~ddr_busy;
+    assign o_idle = (&port_idle) & ~bram_busy & ~ddr_busy & ~o_fatal;
 
 endmodule
