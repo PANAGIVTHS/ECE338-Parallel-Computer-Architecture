@@ -9,6 +9,8 @@ package DDRBackendPkg;
     localparam int unsigned WORD_SELECT_BIT = $clog2(XLEN / 8);
 
     localparam int unsigned AXI_MAX_OUTSTANDING = max(AXI_MAX_OUTSTANDING_READS, AXI_MAX_OUTSTANDING_WRITES);
+    // Cycles the slave may owe progress before FATAL_TIMEOUT; 0 disables it.
+    localparam int unsigned AXI_TIMEOUT = 1 << 20;
     localparam int unsigned RING_INDEX_W = AXI_MAX_OUTSTANDING > 1 ? $clog2(AXI_MAX_OUTSTANDING) : 1;
 
     typedef logic [RING_INDEX_W-1:0] ring_index_t;

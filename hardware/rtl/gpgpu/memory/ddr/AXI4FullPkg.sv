@@ -18,6 +18,11 @@ package AXI4FullPkg;
     typedef logic [AXI_ID_W-1:0] axi_id_t;
     typedef logic [7:0] axi_len_t;
 
+    // The one transaction ID: responses return in issue order.
+    localparam axi_id_t AXI_ID = '0;
+    // AxCACHE: bufferable, modifiable
+    localparam logic [3:0] AXI_CACHE = 4'b0011;
+
     typedef enum logic [1:0] {
         AXI_BURST_FIXED = 2'b00,
         AXI_BURST_INCR  = 2'b01,
