@@ -7,4 +7,5 @@ lui  x8, 0xFF0          # 0x00FF0000
 add  x8, x8, x31        # color = 0x00FF0000 + lane
 sw   x8, 0(x7)
 sw   x8, 0(x6)          # DMEM copy
-jalr x0, 0(x1)
+addi x17, x0, 0  # Kernel complete: ECALL service 0
+ecall

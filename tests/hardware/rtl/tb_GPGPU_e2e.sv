@@ -104,7 +104,7 @@ module tb_GPGPU_e2e
                 rv_addi(6, 0, 'h5A),
                 rv_lw(5, 0, 1),
                 rv_sw(6, 0, 0),
-                ret_instr
+                rv_addi(17, 0, 0), riscv_pkg::ECALL_INSTR
             }, 32'(FAULT_MEMORY) | fault_kind(MemorySubsystemPkg::ST_MISALIGNED), all_lanes(), 32'd4);
         read_dmem(0, captured_word);
         if (captured_word !== 32'hDEAD_BEEF) begin
@@ -116,7 +116,7 @@ module tb_GPGPU_e2e
         expect_fault("odd lanes misaligned", '{
                 rv_add(5, 31, 31),
                 rv_lw(6, 5, 0),
-                ret_instr
+                rv_addi(17, 0, 0), riscv_pkg::ECALL_INSTR
             }, 32'(FAULT_MEMORY) | fault_kind(MemorySubsystemPkg::ST_MISALIGNED),
             all_lanes() & 32'hAAAA_AAAA, 32'd4);
 
@@ -129,14 +129,14 @@ module tb_GPGPU_e2e
                 rv_lui(6, (gpu_pkg::DMEM_BASE + gpu_pkg::DMEM_SIZE + 'hFFF) & ~32'hFFF),
                 rv_add(5, 5, 6),
                 rv_sw(0, 5, 0),
-                ret_instr
+                rv_addi(17, 0, 0), riscv_pkg::ECALL_INSTR
             }, 32'(FAULT_MEMORY) | fault_kind(MemorySubsystemPkg::ST_UNMAPPED)
                             | fault_kind(MemorySubsystemPkg::ST_MISALIGNED), all_lanes(), 32'd12);
 
         expect_fault("store to the read-only texture region", '{
                 rv_lui(5, TEX_BASE),
                 rv_sw(0, 5, 0),
-                ret_instr
+                rv_addi(17, 0, 0), riscv_pkg::ECALL_INSTR
             }, 32'(FAULT_MEMORY) | fault_kind(MemorySubsystemPkg::ST_PERMISSION), all_lanes(), 32'd4);
 
         // Without the DDR backend a framebuffer store is unmapped, not a hang,
@@ -145,7 +145,7 @@ module tb_GPGPU_e2e
             expect_fault("framebuffer store without DDR", '{
                     rv_lui(5, FB0_BASE),
                     rv_sw(0, 5, 0),
-                    ret_instr
+                    rv_addi(17, 0, 0), riscv_pkg::ECALL_INSTR
                 }, 32'(FAULT_MEMORY) | fault_kind(MemorySubsystemPkg::ST_UNMAPPED), all_lanes(), 32'd4);
             if (ddr_mem.aw_count != 0 || ddr_mem.ar_count != 0) begin
                 $display("  [ERROR] DDR disabled, but %0d AW and %0d AR bursts were issued",

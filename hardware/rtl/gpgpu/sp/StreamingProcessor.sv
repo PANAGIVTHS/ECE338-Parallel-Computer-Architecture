@@ -28,8 +28,7 @@ module StreamingProcessor
     output logic mem_is_mem,
 
     //! Control
-    input i_stall,
-    output logic o_core_complete
+    input i_stall
 );
 
     ex_mem_t exmem;
@@ -130,6 +129,22 @@ module StreamingProcessor
         mul_not_ready &= !mul_out.hazard.valid;
     end
 
+    // Check if at least one mul stage is busy
+    logic mul_busy;
+    always_comb begin
+        mul_busy = 1'b0;
+        for (int stage = 0; stage < MUL_LATENCY; stage++) begin
+            mul_busy |= o_mul_hazards[stage].valid;
+        end
+    end
+
+    assign o_feedback.exit_requested = i_idex.is_ecall && (ex_actual_alu_in_a == '0);
+
+    //! Memory remains busy until its response has arrived and MEM advances.
+    //! A request grant alone is not a completed load/store.
+    assign o_feedback.pipeline_busy = i_idex.wen || i_idex.is_ecall ||
+        exmem.wen || mem_is_mem || memwb.wen || mul_busy;
+
     assign ex_is_branch = (i_idex.opcode == OP_BEQ);
     assign ex_is_jal = (i_idex.opcode == OP_JAL);
     assign ex_is_jalr = (i_idex.opcode == OP_JALR);
@@ -181,10 +196,6 @@ module StreamingProcessor
                 rd: mul_out.hazard.valid ? mul_out.hazard.rd : i_idex.rd,
                 opcode: mul_out.hazard.valid ? OP_R_TYPE : i_idex.opcode,
                 wen: mul_out.hazard.valid ? (mul_out.hazard.rd != '0) : (i_idex.wen && i_idex.rd != '0),
-                core_complete: ex_is_jalr &&
-                               (i_idex.rd == '0) &&
-                               (i_idex.rs1 == 5'd1) &&
-                               (ex_imm_i_type == '0),
                 program_counter: mul_out.hazard.valid ? mul_out.program_counter : i_idex.program_counter
             };
         end
@@ -207,7 +218,6 @@ module StreamingProcessor
 
     assign memory_if.rsp_ready = 'b1;
 
-    assign o_core_complete = exmem.core_complete;
 
     always_ff @(posedge clk) begin
         if (!rst_n) begin

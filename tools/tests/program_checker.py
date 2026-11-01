@@ -47,7 +47,7 @@ def analyze_multicore_assembly(source_code, num_cores=4):
         'addi', 'andi', 'ori', 'xori', 'slli', 'srli', 'srai', 'slti', 'sltiu',
         'lw', 'sw', 
         'beq', 'bne', 'blt', 'bge', 'bltu', 'bgeu', 
-        'jal', 'jalr', 'lui'
+        'jal', 'jalr', 'lui', 'ecall'
     }
 
     # 1. Clean code, validate support, and extract labels
@@ -203,6 +203,22 @@ def analyze_multicore_assembly(source_code, num_cores=4):
             pc = resolve_control_target(target, pc, labels, has_objdump_symbol(parts, 2))
 
         elif op == 'jalr':
+            rd = parts[1]
+            if '(' in parts[2]:
+                imm, rs1 = parse_mem_operand(parts[2])
+            else:
+                rs1, imm = parts[2], parse_imm(parts[3])
+            targets = [(get_reg(core, rs1) + imm) & 0xFFFFFFFE for core in cores]
+            if len(set(targets)) != 1:
+                print(f"[FAIL] DIVERGENCE DETECTED at PC {pc}: '{inst_str}'")
+                return False
+            for core in cores:
+                set_reg(core, rd, (pc + 1) * 4)
+            pc = targets[0] // 4
+
+        elif op == 'ecall':
+            if all(get_reg(core, 'x17') == 0 for core in cores):
+                break
             pc += 1
 
         else:

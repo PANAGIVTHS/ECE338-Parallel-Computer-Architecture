@@ -6,12 +6,14 @@ Each program lives in `software/programs/<program>/` and keeps only source input
 
 ```c
 #ifdef __riscv
-int _start(void) {
-    int threadIdx_x;
-    __asm__ volatile("mv %0, x31" : "=r"(threadIdx_x));
+#include "../gpgpu_runtime.h"
 
-    // RISC-V kernel code
+void kernel_main(void) {
+    unsigned int tid = gpgpu_thread_id();
+
+    // RISC-V kernel code; ordinary C returns to the wrapper.
 }
+GPGPU_START(kernel_main)
 #else
 #include <stdio.h>
 int main(void) {
@@ -19,6 +21,19 @@ int main(void) {
 }
 #endif
 ```
+
+`GPGPU_START` places `_start` at PC 0, initializes a private per-lane stack,
+then calls the kernel as a normal function. After it returns, the wrapper loads
+`a7` (`x17`) with service number 0 and executes `ecall` to complete the kernel;
+a defensive infinite loop follows. Other service numbers are currently no-ops.
+`a7` remains an ordinary caller-saved ABI register, not a fixed/reserved
+register. A `ret` / `jalr x0,0(x1)` only returns from a function and does not
+signal completion. Custom entrypoints must use the same service-0 ECALL
+sequence at their real termination sites.
+
+Assembly and IMEM generation retain the complete linked instruction listing,
+including subroutines after RET or ECALL instructions; neither instruction is
+an image boundary.
 
 ## Build
 

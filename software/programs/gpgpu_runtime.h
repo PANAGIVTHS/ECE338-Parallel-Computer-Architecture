@@ -32,8 +32,10 @@ static inline __attribute__((always_inline)) unsigned int gpgpu_thread_id(void)
  *   GPGPU_START(kernel_main)
  *
  * The wrapper runs at PC 0, gives every lane a private 64-byte stack slice at
- * the top of DMEM, calls kernel_main(), then returns to the host-controller
- * completion convention with jalr x0, 0(x1).
+ * the top of DMEM, calls kernel_main(), then requests completion with ECALL
+ * service 0 (x17/a7 = 0). Ordinary RET/JALR instructions remain function returns.
+ * a7 is caller-saved, not reserved: load the selector after kernel_main returns.
+ * Other ECALL services currently do (nops)
  */
 #define GPGPU_START(kernel_fn)                                                 \
     __attribute__((naked, noreturn, section(".text.start"))) void _start(void) \
@@ -45,8 +47,8 @@ static inline __attribute__((always_inline)) unsigned int gpgpu_thread_id(void)
             "addi sp, sp, %lo(__stack_top)\n"                                  \
             "sub sp, sp, x6\n"                                                 \
             "jal x1, " #kernel_fn "\n"                                         \
-            "1:\n"                                                             \
-            "jal x0, 1b\n"                                                     \
+            "li a7, 0\n"                                                       \
+            "ecall\n"                                                          \
         );                                                                     \
         __builtin_unreachable();                                               \
     }
