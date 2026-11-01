@@ -67,7 +67,7 @@ def test_real_checkout_verilator_sources_and_core_count():
     identity = config.build_root / "hardware/build_identity.txt"
     assert all(Path(p).is_file() for p in build["file_dep"] if Path(p) != identity)
     assert str(identity) in build["file_dep"]
-    for flag in ("--binary", "--timing", "--assert", "--autoflush", "-GNUM_CORES=8",
+    for flag in ("--binary", "--timing", "--assert", "--autoflush", "-Werror-USERFATAL", "-GNUM_CORES=8",
                  "-GINTERFACE_VERSION=2", "-GCLOCK_KHZ=35000", "-GDDR_ENABLE=0"):
         assert flag in command
     assert command[command.index("--top-module") + 1] == "tb_GPGPU_smx_only"

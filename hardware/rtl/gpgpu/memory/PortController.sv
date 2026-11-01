@@ -22,7 +22,7 @@ module PortController
     DDRBackendInterface.requester ddr_if,
 
     input beat_rdata_t i_ddr_rd_beat,
-    input axi_resp_t i_ddr_rd_status,
+    input axi_resp_t i_ddr_rd_resp,
     input ring_index_t i_ddr_alloc,
 
     output logic o_idle
@@ -135,16 +135,16 @@ module PortController
 
             DDR_RD: begin
                 rsp.rdata = i_ddr_rd_beat[req.addr[WORD_SELECT_BIT +: $clog2(AXI_DATA_W/XLEN)]];
-                rsp.status = axiToMemStatus(i_ddr_rd_status);
+                rsp.status = axiToMemStatus(i_ddr_rd_resp);
                 o_rsp_valid = ddr_if.rd_sel;
-                ddr_if.rd_take = i_rsp_ready;
+                ddr_if.rd_take = ddr_if.rd_sel & i_rsp_ready;
                 ddr_if.rd_member = 1'b1;
             end
 
             DDR_WR: begin
                 rsp.status = axiToMemStatus(ddr_if.wr_bresp);
                 o_rsp_valid = ddr_if.wr_bdone;
-                ddr_if.wr_take = i_rsp_ready;
+                ddr_if.wr_take = ddr_if.wr_bdone & i_rsp_ready;
                 ddr_if.wr_member = 1'b1;
             end
 

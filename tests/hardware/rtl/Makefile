@@ -41,7 +41,8 @@ _REST    := $(filter-out $(_ORDERED),$(shell find $(SRC_DIR) -name '*.sv' $(_PRU
 VERILOG_SOURCES := $(_ORDERED) $(_REST)
 
 # Keep existing datapath warnings visible; they must not prevent simulation.
-VERILATOR_FLAGS := --binary --timing --assert --trace -Wno-fatal \
+# An elaboration-time $fatal (USERFATAL) still stops the build.
+VERILATOR_FLAGS := --binary --timing --assert --trace -Wno-fatal -Werror-USERFATAL \
     --timescale 1ns/1ps -I$(SRC_DIR)
 
 UART_PORT ?= /dev/ttyACM0

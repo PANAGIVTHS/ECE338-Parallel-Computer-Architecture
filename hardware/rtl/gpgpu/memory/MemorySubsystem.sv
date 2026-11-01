@@ -46,7 +46,7 @@ module MemorySubsystem
     BRAMBackendInterface bram_if [NUM_REQ] ();
     DDRBackendInterface ddr_if [NUM_REQ] ();
     beat_rdata_t ddr_rd_beat;
-    axi_resp_t   ddr_rd_status;
+    axi_resp_t   ddr_rd_resp;
     ring_index_t ddr_alloc;
     logic bram_busy, ddr_busy;
 
@@ -72,7 +72,7 @@ module MemorySubsystem
             .bram_if(bram_if[i]),
             .ddr_if(ddr_if[i]),
             .i_ddr_rd_beat(ddr_rd_beat),
-            .i_ddr_rd_status(ddr_rd_status),
+            .i_ddr_rd_resp(ddr_rd_resp),
             .i_ddr_alloc(ddr_alloc),
             .o_idle(port_idle[i])
         );
@@ -98,7 +98,7 @@ module MemorySubsystem
         .axi_if(axi_if),
         .ddr_if(ddr_if),
         .o_rd_beat(ddr_rd_beat),
-        .o_rd_status(ddr_rd_status),
+        .o_rd_resp(ddr_rd_resp),
         .o_alloc(ddr_alloc),
         .o_busy(ddr_busy),
         .o_fatal(o_fatal),

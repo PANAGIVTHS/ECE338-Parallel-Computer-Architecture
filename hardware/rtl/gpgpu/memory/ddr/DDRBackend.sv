@@ -15,7 +15,7 @@ module DDRBackend
     DDRBackendInterface.responder ddr_if [NUM_REQ],
 
     output beat_rdata_t o_rd_beat,
-    output axi_resp_t o_rd_status,
+    output axi_resp_t o_rd_resp,
     output ring_index_t o_alloc,
 
     output logic o_busy,
@@ -23,10 +23,13 @@ module DDRBackend
     output mem_fatal_t o_fatal_code
 );
 
-    initial begin
-        assert(XLEN > 0 && AXI_DATA_W >= XLEN && (AXI_DATA_W % XLEN == 0))
-            else $fatal(1, "Invalid AXI_DATA_W/XLEN configuration");
+    // A beat holds several words: PortController selects one by address bits.
+    if (AXI_DATA_W <= XLEN || AXI_DATA_W % XLEN != 0) begin : g_beat_check
+        $fatal(1, "AXI_DATA_W (%0d) must be a multiple of XLEN (%0d) larger than it",
+            AXI_DATA_W, XLEN);
     end
+
+    //! Note: Remember to make o_fatal along with o_fatal_code sticky on a register
 
     // word_t seed_addr, seed_write;
     // assign ddr_accept = <ring has free slot>;

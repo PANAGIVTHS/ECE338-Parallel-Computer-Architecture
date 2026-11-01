@@ -266,7 +266,10 @@ def create_tasks(config: ResolvedConfig) -> list[dict[str, Any]]:
         build_task = f"tests:rtl:{suite}:build"
         run_task = f"tests:rtl:{suite}:run"
         compile_command = [
+            # Warnings stay non-fatal, except an elaboration-time $fatal
+            # (USERFATAL): the RTL's parameter checks must stop the build.
             verilator, "--binary", "--timing", "--assert", "--autoflush", "-Wno-fatal",
+            "-Werror-USERFATAL",
             "--timescale", "1ns/1ps", f"-I{rtl_src_root}", "-DSIM",
             "--top-module", testbench_tops[suite], f"-GNUM_CORES={num_cores}",
             *(f"-G{name}={value}" for name, value in parameters.items()),

@@ -52,15 +52,12 @@ module CSRBank
     localparam int unsigned BYTE_WIDTH = XLEN / STRB_WIDTH;
     localparam word_t IRQ_ALLOWED_MASK = IRQ_COMPLETE_MASK;
 
-    initial begin
-        assert (STRB_WIDTH > 0)
-        else $fatal(1, "STRB_WIDTH must be greater than zero");
+    if (STRB_WIDTH == 0 || (XLEN % STRB_WIDTH) != 0) begin : g_strb_check
+        $fatal(1, "XLEN (%0d) must be divisible by a non-zero STRB_WIDTH (%0d)", XLEN, STRB_WIDTH);
+    end
 
-        assert ((XLEN % STRB_WIDTH) == 0)
-        else $fatal(1, "XLEN must be divisible by STRB_WIDTH");
-
-        assert (BYTE_WIDTH == 8)
-        else $fatal(1, "Each strobe must correspond to 8 bits");
+    if (BYTE_WIDTH != 8) begin : g_byte_check
+        $fatal(1, "Each strobe must correspond to 8 bits, not %0d", BYTE_WIDTH);
     end
 
     // ========================================================================
