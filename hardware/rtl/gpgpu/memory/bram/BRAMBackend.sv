@@ -113,13 +113,13 @@ module BRAMBackend
             if (portA_load) begin 
                 busy[0] <= 1'b1; 
                 owners[0] <= portA_idx; 
-            end else if (busy[0] & take[0]) 
+            end else if (busy[0] & take[owners[0]]) 
                 busy[0] <= 1'b0;
             
             if (portB_load) begin 
                 busy[1] <= 1'b1;
                 owners[1] <= portB_idx; 
-            end else if (busy[1] & take[1]) 
+            end else if (busy[1] & take[owners[1]]) 
                 busy[1] <= 1'b0;
         end
     end
