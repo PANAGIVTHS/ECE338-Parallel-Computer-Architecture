@@ -2,6 +2,7 @@ module DDRBackend
     import gpu_pkg::*;
     import AXI4FullPkg::*;
     import MemorySubsystemPkg::*;
+    import DDRBackendPkg::*;
 #(
     parameter int unsigned NUM_REQ = 32
 ) (
@@ -12,6 +13,10 @@ module DDRBackend
 
     AXI4FullInterface.master axi_if,
     DDRBackendInterface.responder ddr_if [NUM_REQ],
+
+    output beat_rdata_t o_rd_beat,
+    output axi_resp_t o_rd_status,
+    output ring_index_t o_alloc,
 
     output logic o_busy,
     output logic o_fatal,

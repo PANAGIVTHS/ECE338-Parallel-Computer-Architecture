@@ -1,6 +1,7 @@
 module MemorySubsystem 
     import DDRBackendPkg::*;
     import MemorySubsystemPkg::*;
+    import AXI4FullPkg::*;
 #(
     parameter int unsigned NUM_REQ = 32,
     parameter BRAM_INIT = "",
@@ -44,6 +45,9 @@ module MemorySubsystem
 
     BRAMBackendInterface bram_if [NUM_REQ] ();
     DDRBackendInterface ddr_if [NUM_REQ] ();
+    beat_rdata_t ddr_rd_beat;
+    axi_resp_t   ddr_rd_status;
+    ring_index_t ddr_alloc;
     logic bram_busy, ddr_busy;
 
     for (genvar i = 0; i < NUM_REQ; i++) begin : gen_reqs
@@ -67,6 +71,9 @@ module MemorySubsystem
             .rsp(memory_if[i].rsp),
             .bram_if(bram_if[i]),
             .ddr_if(ddr_if[i]),
+            .i_ddr_rd_beat(ddr_rd_beat),
+            .i_ddr_rd_status(ddr_rd_status),
+            .i_ddr_alloc(ddr_alloc),
             .o_idle(port_idle[i])
         );
     end
@@ -90,6 +97,9 @@ module MemorySubsystem
         .req(req),
         .axi_if(axi_if),
         .ddr_if(ddr_if),
+        .o_rd_beat(ddr_rd_beat),
+        .o_rd_status(ddr_rd_status),
+        .o_alloc(ddr_alloc),
         .o_busy(ddr_busy),
         .o_fatal(o_fatal),
         .o_fatal_code(o_fatal_code)

@@ -21,6 +21,10 @@ module PortController
     BRAMBackendInterface.requester bram_if,
     DDRBackendInterface.requester ddr_if,
 
+    input beat_rdata_t i_ddr_rd_beat,
+    input axi_resp_t i_ddr_rd_status,
+    input ring_index_t i_ddr_alloc,
+
     output logic o_idle
 );
     typedef enum logic [2:0] {
@@ -91,13 +95,13 @@ module PortController
             end
 
             DDR_RD: begin
-                if (i_rsp_ready && ddr_if.rd_valid) begin
+                if (i_rsp_ready && ddr_if.rd_sel) begin
                     next_state = IDLE;
                 end
             end
 
             DDR_WR: begin
-                if (i_rsp_ready && ddr_if.wr_valid) begin
+                if (i_rsp_ready && ddr_if.wr_bdone) begin
                     next_state = IDLE;
                 end
             end
@@ -117,10 +121,10 @@ module PortController
         rsp.rdata = '0;
         rsp.status = ST_OK;
         bram_if.take = '0;
-        ddr_if.is_rd_member = '0;
-        ddr_if.rd_ready = '0;
-        ddr_if.is_wr_member = '0;
-        ddr_if.wr_ready = '0;
+        ddr_if.rd_member = '0;
+        ddr_if.rd_take = '0;
+        ddr_if.wr_member = '0;
+        ddr_if.wr_take = '0;
 
         case (current_state)
             BRAM_RD: begin
@@ -130,18 +134,18 @@ module PortController
             end
 
             DDR_RD: begin
-                rsp.rdata = ddr_if.rd_beat[req.addr[WORD_SELECT_BIT +: $clog2(AXI_DATA_W/XLEN)]];
-                rsp.status = axiToMemStatus(ddr_if.rd_status);
-                o_rsp_valid = ddr_if.rd_valid;
-                ddr_if.rd_ready = i_rsp_ready;
-                ddr_if.is_rd_member = 1'b1;
+                rsp.rdata = i_ddr_rd_beat[req.addr[WORD_SELECT_BIT +: $clog2(AXI_DATA_W/XLEN)]];
+                rsp.status = axiToMemStatus(i_ddr_rd_status);
+                o_rsp_valid = ddr_if.rd_sel;
+                ddr_if.rd_take = i_rsp_ready;
+                ddr_if.rd_member = 1'b1;
             end
 
             DDR_WR: begin
-                rsp.status = axiToMemStatus(ddr_if.wr_status);
-                o_rsp_valid = ddr_if.wr_valid;
-                ddr_if.wr_ready = i_rsp_ready;
-                ddr_if.is_wr_member = 1'b1;
+                rsp.status = axiToMemStatus(ddr_if.wr_bresp);
+                o_rsp_valid = ddr_if.wr_bdone;
+                ddr_if.wr_take = i_rsp_ready;
+                ddr_if.wr_member = 1'b1;
             end
 
             IMM_RSP: begin
@@ -158,7 +162,7 @@ module PortController
         if (~rst_n) begin
             ddr_if.idx <= '0;
         end else if (ddr_if.accept) begin
-            ddr_if.idx <= ddr_if.alloc;
+            ddr_if.idx <= i_ddr_alloc;
         end
     end
 
