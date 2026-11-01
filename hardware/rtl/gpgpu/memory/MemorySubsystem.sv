@@ -40,7 +40,7 @@ module MemorySubsystem #(
     mem_req_t [NUM_REQ-1:0] req;
     logic [NUM_REQ-1:0] req_valid;
     logic [NUM_REQ-1:0] rsp_ready;
-    logic [NUM_REQ-1:0] is_idle;
+    logic [NUM_REQ-1:0] port_idle;
 
     BRAMBackendInterface bram_if [NUM_REQ] ();
     DDRBackendInterface ddr_if [NUM_REQ] ();
@@ -58,16 +58,16 @@ module MemorySubsystem #(
         ) portControllers (
             .clk(clk),
             .rst_n(rst_n),
-            .en(i_req_enable),
-            .req_valid(req_valid[i]),
-            .req_ready(memory_if[i].req_ready),
-            .rsp_valid(memory_if[i].rsp_valid),
-            .rsp_ready(rsp_ready[i]),
+            .i_en(i_req_enable),
+            .i_req_valid(req_valid[i]),
+            .o_req_ready(memory_if[i].req_ready),
+            .o_rsp_valid(memory_if[i].rsp_valid),
+            .i_rsp_ready(rsp_ready[i]),
             .req(req[i]),
             .rsp(memory_if[i].rsp),
             .bram_if(bram_if[i]),
             .ddr_if(ddr_if[i]),
-            .is_idle(is_idle[i])
+            .o_idle(port_idle[i])
         );
     end
 
@@ -79,19 +79,22 @@ module MemorySubsystem #(
         .rst_n(rst_n),
         .req(req),
         .bram_if(bram_if),
-        .bram_busy(bram_busy)
+        .o_busy(bram_busy)
     );
 
     DDRBackend #(
         .NUM_REQ(NUM_REQ)
     ) ddrBackend (
-        .axi_if(axi_if)
+        .clk(clk),
+        .rst_n(rst_n),
+        .req(req),
+        .axi_if(axi_if),
+        .ddr_if(ddr_if),
+        .o_busy(ddr_busy),
+        .o_fatal(o_fatal),
+        .o_fatal_code(o_fatal_code)
     );
 
-    assign o_idle = (&is_idle) & ~bram_busy & ~ddr_busy;
-
-    // Only the DDR backend can lock the subsystem up.
-    assign o_fatal = 1'b0;
-    assign o_fatal_code = FATAL_NONE;
+    assign o_idle = (&port_idle) & ~bram_busy & ~ddr_busy;
 
 endmodule

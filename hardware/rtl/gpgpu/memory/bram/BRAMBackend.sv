@@ -12,7 +12,7 @@ module BRAMBackend
     input mem_req_t [NUM_REQ-1:0] req,
     BRAMBackendInterface.responder bram_if [NUM_REQ],
 
-    output logic bram_busy
+    output logic o_busy
 );
 
     //& =============================================
@@ -40,7 +40,7 @@ module BRAMBackend
         assign hold[i] = busy[i] & ~take[owners[i]];
     end
 
-    assign bram_busy = busy[0] | busy[1];
+    assign o_busy = busy[0] | busy[1];
 
     //& =============================================
     //& PICK REQUESTS TO SERVE

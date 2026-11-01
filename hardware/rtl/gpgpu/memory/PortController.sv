@@ -7,20 +7,20 @@ module PortController
 ) (
     input logic clk,
     input logic rst_n,
-    input logic en,
+    input logic i_en,
 
-    input logic rsp_ready,
-    input logic req_valid,
+    input logic i_rsp_ready,
+    input logic i_req_valid,
     input mem_req_t req,
 
-    output logic req_ready,
-    output logic rsp_valid,
+    output logic o_req_ready,
+    output logic o_rsp_valid,
     output mem_rsp_t rsp,
 
     BRAMBackendInterface.requester bram_if,
     DDRBackendInterface.requester ddr_if,
 
-    output logic is_idle
+    output logic o_idle
 );
     typedef enum logic [2:0] {
         IDLE,
@@ -35,14 +35,14 @@ module PortController
     assign decoded = decode_access(req.addr, req.write, DDR_ENABLE);
 
     // Claim: a presented request in IDLE becomes a candidate while enabled.
-    // req_ready is high only when it is actually taken (claim = issue).
+    // o_req_ready is high only when it is actually taken (claim = issue).
     logic cand, err;
-    assign cand = req_valid & (current_state == IDLE) & en;
+    assign cand = i_req_valid & (current_state == IDLE) & i_en;
     assign err = cand & (decoded.target == TGT_ERR);
     assign bram_if.cand = cand & (decoded.target == TGT_BRAM);
     assign ddr_if.cand = cand & (decoded.target == TGT_DDR);
-    assign req_ready = err | bram_if.accept | ddr_if.accept;
-    assign is_idle = current_state == IDLE;
+    assign o_req_ready = err | bram_if.accept | ddr_if.accept;
+    assign o_idle = current_state == IDLE;
 
     // IMM_RSP status, registered on entry (the decode error, or ST_OK for a
     // BRAM store) so the address decode stays off the requester's fault ->
@@ -84,25 +84,25 @@ module PortController
             end
 
             BRAM_RD: begin
-                if (rsp_ready) begin
+                if (i_rsp_ready) begin
                     next_state = IDLE;
                 end
             end
 
             DDR_RD: begin
-                if (rsp_ready && ddr_if.rd_valid) begin
+                if (i_rsp_ready && ddr_if.rd_valid) begin
                     next_state = IDLE;
                 end
             end
 
             DDR_WR: begin
-                if (rsp_ready && ddr_if.wr_valid) begin
+                if (i_rsp_ready && ddr_if.wr_valid) begin
                     next_state = IDLE;
                 end
             end
 
             IMM_RSP: begin
-                if (rsp_ready) begin
+                if (i_rsp_ready) begin
                     next_state = IDLE;
                 end
             end
@@ -115,7 +115,7 @@ module PortController
     assign beat_offset = req.addr[WORD_SELECT_BIT];
 
     always_comb begin
-        rsp_valid = '0;
+        o_rsp_valid = '0;
         rsp.rdata = '0;
         rsp.status = ST_OK;
         bram_if.take = '0;
@@ -126,28 +126,28 @@ module PortController
 
         case (current_state)
             BRAM_RD: begin
-                bram_if.take = rsp_ready;
+                bram_if.take = i_rsp_ready;
                 rsp.rdata = bram_if.rdata;
-                rsp_valid = 1'b1;
+                o_rsp_valid = 1'b1;
             end
 
             DDR_RD: begin
                 rsp.rdata = beat_offset ? ddr_if.rd_beat[0] : ddr_if.rd_beat[1];
                 rsp.status = axiToMemStatus(ddr_if.rd_status);
-                rsp_valid = ddr_if.rd_valid;
-                ddr_if.rd_ready = rsp_ready;
+                o_rsp_valid = ddr_if.rd_valid;
+                ddr_if.rd_ready = i_rsp_ready;
                 ddr_if.is_rd_member = 1'b1;
             end
 
             DDR_WR: begin
                 rsp.status = axiToMemStatus(ddr_if.wr_status);
-                rsp_valid = ddr_if.wr_valid;
-                ddr_if.wr_ready = rsp_ready;
+                o_rsp_valid = ddr_if.wr_valid;
+                ddr_if.wr_ready = i_rsp_ready;
                 ddr_if.is_wr_member = 1'b1;
             end
 
             IMM_RSP: begin
-                rsp_valid = 1'b1;
+                o_rsp_valid = 1'b1;
                 rsp.status = status_q;
             end
 
