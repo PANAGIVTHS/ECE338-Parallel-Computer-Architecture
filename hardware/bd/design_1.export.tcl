@@ -317,19 +317,19 @@ proc create_root_design { parentCell } {
   ] $v_axi4s_vid_out_0
 
 
-  # Create instance: ilconcat_0, and set properties
-  set ilconcat_0 [ create_bd_cell -type inline_hdl -vlnv xilinx.com:inline_hdl:ilconcat:1.0 ilconcat_0 ]
+  # Create instance: irq_concat, and set properties
+  set irq_concat [ create_bd_cell -type inline_hdl -vlnv xilinx.com:inline_hdl:ilconcat:1.0 irq_concat ]
 
-  # Create instance: irq, and set properties
-  set irq [ create_bd_cell -type inline_hdl -vlnv xilinx.com:inline_hdl:ilconstant:1.0 irq ]
+  # Create instance: irq_zero, and set properties
+  set irq_zero [ create_bd_cell -type inline_hdl -vlnv xilinx.com:inline_hdl:ilconstant:1.0 irq_zero ]
   set_property -dict [list \
     CONFIG.CONST_VAL {0} \
     CONFIG.CONST_WIDTH {15} \
-  ] $irq
+  ] $irq_zero
 
 
-  # Create instance: locked, and set properties
-  set locked [ create_bd_cell -type inline_hdl -vlnv xilinx.com:inline_hdl:ilconstant:1.0 locked ]
+  # Create instance: reset_locked, and set properties
+  set reset_locked [ create_bd_cell -type inline_hdl -vlnv xilinx.com:inline_hdl:ilconstant:1.0 reset_locked ]
 
   # Create instance: clk_wiz_0, and set properties
   set clk_wiz_0 [ create_bd_cell -type ip -vlnv xilinx.com:ip:clk_wiz:6.0 clk_wiz_0 ]
@@ -372,6 +372,8 @@ proc create_root_design { parentCell } {
 
   # Create instance: rgb2dvi_0, and set properties
   set rgb2dvi_0 [ create_bd_cell -type ip -vlnv digilentinc.com:ip:rgb2dvi:1.4 rgb2dvi_0 ]
+  set_property CONFIG.kClkRange {3} $rgb2dvi_0
+
 
   # Create instance: axis_subset_converter_0, and set properties
   set axis_subset_converter_0 [ create_bd_cell -type ip -vlnv xilinx.com:ip:axis_subset_converter:1.1 axis_subset_converter_0 ]
@@ -450,16 +452,16 @@ proc create_root_design { parentCell } {
   connect_bd_net -net clk_wiz_0_locked  [get_bd_pins clk_wiz_0/locked] \
   [get_bd_pins proc_sys_reset_0/dcm_locked]
   connect_bd_net -net gpgpu_axi_0_irq  [get_bd_pins gpgpu_axi_0/irq] \
-  [get_bd_pins ilconcat_0/In0]
+  [get_bd_pins irq_concat/In0]
   connect_bd_net -net gpgpu_axi_0_o_core_idle  [get_bd_pins gpgpu_axi_0/o_core_idle] \
   [get_bd_ports o_core_idle_0]
   connect_bd_net -net gpgpu_axi_0_o_core_running  [get_bd_pins gpgpu_axi_0/o_core_running] \
   [get_bd_ports o_core_running_0]
-  connect_bd_net -net ilconcat_0_dout  [get_bd_pins ilconcat_0/dout] \
+  connect_bd_net -net ilconcat_0_dout  [get_bd_pins irq_concat/dout] \
   [get_bd_pins processing_system7_0/IRQ_F2P]
-  connect_bd_net -net ilconstant_0_dout  [get_bd_pins irq/dout] \
-  [get_bd_pins ilconcat_0/In1]
-  connect_bd_net -net ilconstant_1_dout  [get_bd_pins locked/dout] \
+  connect_bd_net -net ilconstant_0_dout  [get_bd_pins irq_zero/dout] \
+  [get_bd_pins irq_concat/In1]
+  connect_bd_net -net ilconstant_1_dout  [get_bd_pins reset_locked/dout] \
   [get_bd_pins rst_ps7_0_35M/dcm_locked]
   connect_bd_net -net proc_sys_reset_0_peripheral_aresetn  [get_bd_pins proc_sys_reset_0/peripheral_aresetn] \
   [get_bd_pins v_tc_0/resetn]
@@ -514,7 +516,6 @@ proc create_root_design { parentCell } {
   # Restore current instance
   current_bd_instance $oldCurInst
 
-  validate_bd_design
   save_bd_design
 }
 # End of create_root_design()
@@ -526,4 +527,6 @@ proc create_root_design { parentCell } {
 
 create_root_design ""
 
+
+common::send_gid_msg -ssname BD::TCL -id 2053 -severity "WARNING" "This Tcl script was generated from a block design that has not been validated. It is possible that design <$design_name> may result in errors during validation."
 
