@@ -20,7 +20,6 @@
 /* MM2S registers (PG020). Writing VSIZE starts the channel. */
 #define VDMA_MM2S_VDMACR         0x00U
 #define VDMA_MM2S_VDMASR         0x04U
-#define VDMA_MM2S_FRMSTORE       0x18U
 #define VDMA_PARK_PTR            0x28U
 #define VDMA_MM2S_VSIZE          0x50U
 #define VDMA_MM2S_HSIZE          0x54U
@@ -32,11 +31,12 @@
 #define VDMA_SR_HALTED           0x00000001U
 #define VDMA_SR_ERRORS           0x00000070U  /* DMAIntErr, DMASlvErr, DMADecErr */
 #define VDMA_PARK_RD_MASK        0x0000001FU
-#define VDMA_FRMSTORE_MASK       0x0000001FU
 
 #define FB_STRIDE_BYTES          (GPGPU_FB_WIDTH * 4U)
 
-/* Frame store n of the VDMA holds framebuffer n. */
+/* Frame store n of the VDMA holds framebuffer n; the block design gives it
+ * one frame store per framebuffer (c_num_fstores). Its MM2S_FRMSTORE register
+ * is not built in, so the count cannot be read back. */
 static const u32 framebuffers[] = { GPGPU_FB0_BASE, GPGPU_FB1_BASE };
 #define FB_COUNT                 (sizeof(framebuffers) / sizeof(framebuffers[0]))
 
@@ -55,7 +55,6 @@ static inline void vdma_write(u32 offset, u32 value) {
 /* Reset the MM2S channel and start it parked on framebuffer `fb`: it scans
  * that one buffer every frame until display_show() parks it on another. */
 static int display_start(u32 fb) {
-    u32 stores;
     u32 timeout = 1000U;
 
     vdma_write(VDMA_MM2S_VDMACR, VDMA_CR_RESET);
@@ -67,12 +66,6 @@ static int display_start(u32 fb) {
         usleep(1);
     }
 
-    stores = vdma_read(VDMA_MM2S_FRMSTORE) & VDMA_FRMSTORE_MASK;
-    if (stores < FB_COUNT) {
-        xil_printf("ERROR: VDMA has %u frame stores, the framebuffers need %u\r\n",
-                   stores, (u32)FB_COUNT);
-        return -1;
-    }
     if (fb >= FB_COUNT) {
         xil_printf("ERROR: framebuffer %u does not exist (0..%u)\r\n", fb, (u32)FB_COUNT - 1U);
         return -1;
