@@ -121,9 +121,18 @@ def checkout(tmp_path):
     return repo
 
 
-def run(repo, task='vitis:build:all', *overrides):
+# Vitis consumes the published XSA and never builds hardware, so the complete
+# flow is two invocations, the second only after the first succeeds.
+FULL = ('vivado:system:build', 'vitis:build:all')
+
+
+def run(repo, task=FULL, *overrides):
     arguments = [item for value in overrides for item in ('--set', value)]
-    return CliRunner().invoke(create_app(repo_root=repo), [*arguments, 'run', task, '--plain'])
+    for name in (task,) if isinstance(task, str) else task:
+        result = CliRunner().invoke(create_app(repo_root=repo), [*arguments, 'run', name, '--plain'])
+        if result.exit_code:
+            break
+    return result
 
 
 def calls(repo):
@@ -141,7 +150,7 @@ def test_clean_bootstrap_full_effective_graph_and_unchanged_cache(tmp_path):
     assert not (repo / 'build').exists()
     tasks = create_task_loader(resolve_config(repo)).load_tasks(None, [])
     control = TaskControl(tasks)  # Detect implicit file edges and cycles in the real loader.
-    assert 'vivado:system:build' in control.tasks['vitis:project'].task_dep
+    assert 'vivado:system:build' not in control.tasks['vitis:project'].task_dep
     assert 'vitis:build:host' in control.tasks['vitis:build:all'].task_dep
     result = run(repo)
     assert result.exit_code == 0, result.output
@@ -175,19 +184,19 @@ def test_configuration_xdc_and_host_header_invalidation(tmp_path):
     assert run(repo).exit_code == 0
     values = ('architecture.num_cores=4', 'hardware.vivado.peripheral.base_address="0x44000000"')
     previous = len(calls(repo))
-    result = run(repo, 'vitis:build:all', *values)
+    result = run(repo, FULL, *values)
     assert result.exit_code == 0, result.output
     assert calls(repo)[previous:] == CHAIN
     xdc = repo / 'hardware/constraints/smart_zynq.xdc'
     xdc.write_text(xdc.read_text() + '\n# isolated XDC probe\n')
     previous = len(calls(repo))
-    result = run(repo, 'vitis:build:all', *values)
+    result = run(repo, FULL, *values)
     assert result.exit_code == 0, result.output
     assert calls(repo)[previous:] == CHAIN[2:]
     header = repo / 'software/host/xc7z020/gpgpu_driver.h'
     header.write_text(header.read_text() + '\n// isolated header probe\n')
     previous = len(calls(repo))
-    result = run(repo, 'vitis:build:all', *values)
+    result = run(repo, FULL, *values)
     assert result.exit_code == 0, result.output
     assert calls(repo)[previous:] == ['vitis:host']
 
@@ -254,9 +263,26 @@ def test_package_tampering_and_xgui_metadata_republish_before_consumers(tmp_path
     assert calls(repo)[previous:] == CHAIN[1:]
 
 
-def test_nondefault_xsa_has_unconditional_producer_edge(tmp_path):
+def test_vitis_alone_never_builds_hardware(tmp_path):
     repo = checkout(tmp_path)
-    result = run(repo, 'vitis:build:all', 'hardware.vivado.xsa_name=custom_xsa')
+    result = run(repo, 'vitis:build:all')
+    assert result.exit_code != 0
+    assert 'run `./gpgpu run vivado:system:build` first' in result.output
+    assert [call for call in calls(repo) if call.endswith('.tcl')] == []
+    assert not (repo / 'build/software/vitis/gpgpu_platform').exists()
+    assert run(repo).exit_code == 0
+    # Stale RTL is Vivado's concern: Vitis keeps using the published XSA.
+    source = repo / 'hardware/rtl/gpgpu/constants.svh'
+    source.write_text(source.read_text() + '\n// isolated freshness probe\n')
+    previous = len(calls(repo))
+    result = run(repo, 'vitis:build:all')
+    assert result.exit_code == 0, result.output
+    assert calls(repo)[previous:] == []
+
+
+def test_nondefault_xsa_is_consumed_by_vitis(tmp_path):
+    repo = checkout(tmp_path)
+    result = run(repo, FULL, 'hardware.vivado.xsa_name=custom_xsa')
     assert result.exit_code == 0, result.output
     assert calls(repo) == CHAIN
     assert (repo / 'build/hardware/platform/custom_xsa.xsa').exists()
