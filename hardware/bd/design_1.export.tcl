@@ -210,6 +210,8 @@ proc create_root_design { parentCell } {
 
   set UART_0_0 [ create_bd_intf_port -mode Master -vlnv xilinx.com:interface:uart_rtl:1.0 UART_0_0 ]
 
+  set TMDS_0 [ create_bd_intf_port -mode Master -vlnv digilentinc.com:interface:tmds_rtl:1.0 TMDS_0 ]
+
 
   # Create ports
   set o_core_idle_0 [ create_bd_port -dir O o_core_idle_0 ]
@@ -264,7 +266,8 @@ proc create_root_design { parentCell } {
     CONFIG.PCW_USE_M_AXI_GP0 {1} \
     CONFIG.PCW_USE_M_AXI_GP1 {1} \
     CONFIG.PCW_USE_S_AXI_HP0 {1} \
-    CONFIG.PCW_USE_S_AXI_HP1 {1} \
+    CONFIG.PCW_USE_S_AXI_HP1 {0} \
+    CONFIG.PCW_USE_S_AXI_HP2 {1} \
   ] $processing_system7_0
 
 
@@ -282,12 +285,12 @@ proc create_root_design { parentCell } {
   # Create instance: rst_ps7_0_35M, and set properties
   set rst_ps7_0_35M [ create_bd_cell -type ip -vlnv xilinx.com:ip:proc_sys_reset:5.0 rst_ps7_0_35M ]
 
-  # Create instance: smartconnect_0, and set properties
-  set smartconnect_0 [ create_bd_cell -type ip -vlnv xilinx.com:ip:smartconnect:1.0 smartconnect_0 ]
+  # Create instance: gpgpu_ddr, and set properties
+  set gpgpu_ddr [ create_bd_cell -type ip -vlnv xilinx.com:ip:smartconnect:1.0 gpgpu_ddr ]
   set_property -dict [list \
-    CONFIG.NUM_MI {2} \
-    CONFIG.NUM_SI {2} \
-  ] $smartconnect_0
+    CONFIG.NUM_MI {1} \
+    CONFIG.NUM_SI {1} \
+  ] $gpgpu_ddr
 
 
   # Create instance: axi_vdma_0, and set properties
@@ -406,21 +409,30 @@ proc create_root_design { parentCell } {
   ] $axis_subset_converter_0
 
 
+  # Create instance: vdma_ddr, and set properties
+  set vdma_ddr [ create_bd_cell -type ip -vlnv xilinx.com:ip:smartconnect:1.0 vdma_ddr ]
+  set_property -dict [list \
+    CONFIG.NUM_MI {1} \
+    CONFIG.NUM_SI {1} \
+  ] $vdma_ddr
+
+
   # Create interface connections
   connect_bd_intf_net -intf_net axi_smc_1_M00_AXI [get_bd_intf_pins axi_smc_1/M00_AXI] [get_bd_intf_pins axi_vdma_0/S_AXI_LITE]
   connect_bd_intf_net -intf_net axi_smc_M00_AXI [get_bd_intf_pins axi_smc/M00_AXI] [get_bd_intf_pins gpgpu_axi_0/s00_axi]
   connect_bd_intf_net -intf_net axi_vdma_0_M_AXIS_MM2S [get_bd_intf_pins axi_vdma_0/M_AXIS_MM2S] [get_bd_intf_pins axis_subset_converter_0/S_AXIS]
-  connect_bd_intf_net -intf_net axi_vdma_0_M_AXI_MM2S [get_bd_intf_pins axi_vdma_0/M_AXI_MM2S] [get_bd_intf_pins smartconnect_0/S01_AXI]
+  connect_bd_intf_net -intf_net axi_vdma_0_M_AXI_MM2S [get_bd_intf_pins vdma_ddr/S00_AXI] [get_bd_intf_pins axi_vdma_0/M_AXI_MM2S]
   connect_bd_intf_net -intf_net axis_subset_converter_0_M_AXIS [get_bd_intf_pins axis_subset_converter_0/M_AXIS] [get_bd_intf_pins v_axi4s_vid_out_0/video_in]
-  connect_bd_intf_net -intf_net gpgpu_axi_0_m00_axi [get_bd_intf_pins gpgpu_axi_0/m00_axi] [get_bd_intf_pins smartconnect_0/S00_AXI]
+  connect_bd_intf_net -intf_net gpgpu_axi_0_m00_axi [get_bd_intf_pins gpgpu_axi_0/m00_axi] [get_bd_intf_pins gpgpu_ddr/S00_AXI]
   connect_bd_intf_net -intf_net processing_system7_0_DDR [get_bd_intf_ports DDR] [get_bd_intf_pins processing_system7_0/DDR]
   connect_bd_intf_net -intf_net processing_system7_0_FIXED_IO [get_bd_intf_ports FIXED_IO] [get_bd_intf_pins processing_system7_0/FIXED_IO]
   connect_bd_intf_net -intf_net processing_system7_0_M_AXI_GP0 [get_bd_intf_pins processing_system7_0/M_AXI_GP0] [get_bd_intf_pins axi_smc/S00_AXI]
   connect_bd_intf_net -intf_net processing_system7_0_M_AXI_GP1 [get_bd_intf_pins processing_system7_0/M_AXI_GP1] [get_bd_intf_pins axi_smc_1/S00_AXI]
   connect_bd_intf_net -intf_net processing_system7_0_UART_0 [get_bd_intf_ports UART_0_0] [get_bd_intf_pins processing_system7_0/UART_0]
-  connect_bd_intf_net -intf_net smartconnect_0_M00_AXI [get_bd_intf_pins smartconnect_0/M00_AXI] [get_bd_intf_pins processing_system7_0/S_AXI_HP0]
-  connect_bd_intf_net -intf_net smartconnect_0_M01_AXI [get_bd_intf_pins smartconnect_0/M01_AXI] [get_bd_intf_pins processing_system7_0/S_AXI_HP1]
+  connect_bd_intf_net -intf_net rgb2dvi_0_TMDS [get_bd_intf_ports TMDS_0] [get_bd_intf_pins rgb2dvi_0/TMDS]
+  connect_bd_intf_net -intf_net smartconnect_0_M00_AXI [get_bd_intf_pins gpgpu_ddr/M00_AXI] [get_bd_intf_pins processing_system7_0/S_AXI_HP0]
   connect_bd_intf_net -intf_net v_tc_0_vtiming_out [get_bd_intf_pins v_tc_0/vtiming_out] [get_bd_intf_pins v_axi4s_vid_out_0/vtiming_in]
+  connect_bd_intf_net -intf_net vdma_ddr_M00_AXI [get_bd_intf_pins vdma_ddr/M00_AXI] [get_bd_intf_pins processing_system7_0/S_AXI_HP2]
 
   # Create port connections
   connect_bd_net -net clk_en1_dout  [get_bd_pins clk_en1/dout] \
@@ -459,7 +471,7 @@ proc create_root_design { parentCell } {
   [get_bd_pins axi_smc/aclk] \
   [get_bd_pins rst_ps7_0_35M/slowest_sync_clk] \
   [get_bd_pins processing_system7_0/S_AXI_HP0_ACLK] \
-  [get_bd_pins smartconnect_0/aclk] \
+  [get_bd_pins gpgpu_ddr/aclk] \
   [get_bd_pins axi_vdma_0/s_axi_lite_aclk] \
   [get_bd_pins axi_vdma_0/m_axi_mm2s_aclk] \
   [get_bd_pins axi_vdma_0/m_axis_mm2s_aclk] \
@@ -467,20 +479,22 @@ proc create_root_design { parentCell } {
   [get_bd_pins v_axi4s_vid_out_0/aclk] \
   [get_bd_pins axi_smc_1/aclk] \
   [get_bd_pins processing_system7_0/M_AXI_GP1_ACLK] \
-  [get_bd_pins processing_system7_0/S_AXI_HP1_ACLK] \
   [get_bd_pins gpgpu_axi_0/aclk] \
-  [get_bd_pins axis_subset_converter_0/aclk]
+  [get_bd_pins axis_subset_converter_0/aclk] \
+  [get_bd_pins vdma_ddr/aclk] \
+  [get_bd_pins processing_system7_0/S_AXI_HP2_ACLK]
   connect_bd_net -net processing_system7_0_FCLK_RESET0_N  [get_bd_pins processing_system7_0/FCLK_RESET0_N] \
   [get_bd_pins rst_ps7_0_35M/ext_reset_in] \
   [get_bd_pins proc_sys_reset_0/ext_reset_in]
   connect_bd_net -net rst_ps7_0_35M_peripheral_aresetn  [get_bd_pins rst_ps7_0_35M/peripheral_aresetn] \
   [get_bd_pins axi_smc/aresetn] \
-  [get_bd_pins smartconnect_0/aresetn] \
+  [get_bd_pins gpgpu_ddr/aresetn] \
   [get_bd_pins axi_vdma_0/axi_resetn] \
   [get_bd_pins v_axi4s_vid_out_0/aresetn] \
   [get_bd_pins axi_smc_1/aresetn] \
   [get_bd_pins gpgpu_axi_0/aresetn] \
-  [get_bd_pins axis_subset_converter_0/aresetn]
+  [get_bd_pins axis_subset_converter_0/aresetn] \
+  [get_bd_pins vdma_ddr/aresetn]
   connect_bd_net -net v_axi4s_vid_out_0_vid_active_video  [get_bd_pins v_axi4s_vid_out_0/vid_active_video] \
   [get_bd_pins rgb2dvi_0/vid_pVDE]
   connect_bd_net -net v_axi4s_vid_out_0_vid_data  [get_bd_pins v_axi4s_vid_out_0/vid_data] \
@@ -494,11 +508,7 @@ proc create_root_design { parentCell } {
   assign_bd_address -offset 0x83000000 -range 0x00010000 -target_address_space [get_bd_addr_spaces processing_system7_0/Data] [get_bd_addr_segs axi_vdma_0/S_AXI_LITE/Reg] -force
   assign_bd_address -offset 0x43C00000 -range 0x00010000 -target_address_space [get_bd_addr_spaces processing_system7_0/Data] [get_bd_addr_segs gpgpu_axi_0/s00_axi/reg0] -force
   assign_bd_address -offset 0x00000000 -range 0x20000000 -target_address_space [get_bd_addr_spaces gpgpu_axi_0/m00_axi] [get_bd_addr_segs processing_system7_0/S_AXI_HP0/HP0_DDR_LOWOCM] -force
-  assign_bd_address -offset 0x00000000 -range 0x20000000 -target_address_space [get_bd_addr_spaces axi_vdma_0/Data_MM2S] [get_bd_addr_segs processing_system7_0/S_AXI_HP0/HP0_DDR_LOWOCM] -force
-
-  # Exclude Address Segments
-  exclude_bd_addr_seg -target_address_space [get_bd_addr_spaces axi_vdma_0/Data_MM2S] [get_bd_addr_segs processing_system7_0/S_AXI_HP1/HP1_DDR_LOWOCM]
-  exclude_bd_addr_seg -target_address_space [get_bd_addr_spaces gpgpu_axi_0/m00_axi] [get_bd_addr_segs processing_system7_0/S_AXI_HP1/HP1_DDR_LOWOCM]
+  assign_bd_address -offset 0x00000000 -range 0x20000000 -target_address_space [get_bd_addr_spaces axi_vdma_0/Data_MM2S] [get_bd_addr_segs processing_system7_0/S_AXI_HP2/HP2_DDR_LOWOCM] -force
 
 
   # Restore current instance
