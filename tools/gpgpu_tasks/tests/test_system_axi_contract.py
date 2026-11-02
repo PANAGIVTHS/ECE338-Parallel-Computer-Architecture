@@ -248,8 +248,13 @@ def test_system_creates_catalog_first_then_products_wrapper_and_top(tmp_path):
     assert "connect_bd_net irq_concat/dout processing_system7_0/IRQ_F2P" in out
     assert "create_bd_cell -type inline_hdl -vlnv xilinx.com:inline_hdl:ilconcat:1.0 irq_concat" in out
     assert "CONFIG.CONST_WIDTH 15 CONFIG.CONST_VAL 0" in out
-    for reset in ("gpu_sys_reset", "rst_ps7_0_35M"):
-        assert f"SET CONFIG.C_EXT_RESET_HIGH 0 {reset}" in out
+    # Reset polarity is read-only on proc_sys_reset in 2025.2 (it follows the
+    # connected FCLK_RESET0_N); setting it is a critical warning.
+    assert "C_EXT_RESET_HIGH" not in out
+    ps_reset = next(line for line in out.splitlines()
+                    if line.startswith("connect_bd_net processing_system7_0/FCLK_RESET0_N"))
+    assert set(ps_reset.split()[2:]) == {"gpu_sys_reset/ext_reset_in", "rst_ps7_0_35M/ext_reset_in",
+                                         "proc_sys_reset_0/ext_reset_in"}
 
 
 def test_bootstrap_keeps_the_display_off_the_gpgpu_clock(tmp_path):
@@ -258,8 +263,10 @@ def test_bootstrap_keeps_the_display_off_the_gpgpu_clock(tmp_path):
     out = result.stdout
     lines = out.splitlines()
     # FCLK_CLK1 is a fixed 100 MHz the PS makes exactly, on a global buffer.
+    # PCW_EN_CLK1_PORT is what creates the pin; without it every display
+    # clock is left unconnected.
     for setting in ("CONFIG.PCW_FPGA_FCLK1_ENABLE 1", "CONFIG.PCW_FPGA1_PERIPHERAL_FREQMHZ 100",
-                    "CONFIG.PCW_FCLK_CLK1_BUF TRUE"):
+                    "CONFIG.PCW_EN_CLK1_PORT 1", "CONFIG.PCW_FCLK_CLK1_BUF TRUE"):
         assert setting in out
     gpu = {"processing_system7_0/M_AXI_GP0_ACLK", "processing_system7_0/S_AXI_HP0_ACLK", "gpgpu_ctrl/aclk",
            "gpgpu_ddr/aclk", "gpgpu_axi_0/aclk", "gpu_sys_reset/slowest_sync_clk"}
@@ -302,7 +309,6 @@ def test_bootstrap_connects_gpgpu_ddr_master_and_hdmi_scanout(tmp_path):
     # rgb2dvi's 720p range: its PLL is out of range at 74.25 MHz with the default.
     assert "SET CONFIG.kClkRange 3 rgb2dvi_0" in out
     assert "CONFIG.CLKOUT1_REQUESTED_OUT_FREQ 74.25" in out
-    assert "SET CONFIG.C_EXT_RESET_HIGH 0 proc_sys_reset_0" in out
 
 
 def test_bootstrap_ports_match_the_board_constraints():

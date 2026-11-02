@@ -30,12 +30,14 @@ proc create_block_design {} {
 
     # GP0: GPGPU CSRs. GP1: VDMA registers. HP0: GPGPU to DDR. HP2: VDMA to DDR.
     # FCLK_CLK1: 100 MHz, which the PS makes exactly (I/O PLL / 10).
+    # PCW_EN_CLK1_PORT creates its pin; the enable alone does not.
     set ps [create_bd_cell -type ip -vlnv xilinx.com:ip:processing_system7:5.5 processing_system7_0]
     set_property -dict [list \
         CONFIG.PCW_FPGA0_PERIPHERAL_FREQMHZ $FCLK0_MHZ \
         CONFIG.PCW_FPGA_FCLK0_ENABLE {1} \
         CONFIG.PCW_FPGA1_PERIPHERAL_FREQMHZ {100} \
         CONFIG.PCW_FPGA_FCLK1_ENABLE {1} \
+        CONFIG.PCW_EN_CLK1_PORT {1} \
         CONFIG.PCW_FCLK_CLK1_BUF {TRUE} \
         CONFIG.PCW_USE_M_AXI_GP0 {1} \
         CONFIG.PCW_USE_M_AXI_GP1 {1} \
@@ -55,11 +57,11 @@ proc create_block_design {} {
     set_property -dict [list CONFIG.NUM_SI {1} CONFIG.NUM_MI {1}] $smc
     # One reset per clock: gpu_sys_reset for FCLK_CLK0, rst_ps7_0_35M for
     # FCLK_CLK1 and proc_sys_reset_0 (below) for the pixel clock. All take
-    # FCLK_RESET0_N, which is active low; proc_sys_reset defaults to active
-    # high. The PS clocks need no lock, so dcm_locked is tied high.
+    # FCLK_RESET0_N; their C_EXT_RESET_HIGH is read-only and follows its
+    # active-low polarity. The PS clocks need no lock, so dcm_locked is tied
+    # high.
     foreach {name locked} {gpu_sys_reset reset_locked1 rst_ps7_0_35M reset_locked} {
-        set rst [create_bd_cell -type ip -vlnv xilinx.com:ip:proc_sys_reset:5.0 $name]
-        set_property CONFIG.C_EXT_RESET_HIGH {0} $rst
+        create_bd_cell -type ip -vlnv xilinx.com:ip:proc_sys_reset:5.0 $name
         create_bd_cell -type inline_hdl -vlnv xilinx.com:inline_hdl:ilconstant:1.0 $locked
     }
     # Vivado 2025.2 inline HDL replaces xlconcat/xlconstant; widths follow the connections.
@@ -112,8 +114,7 @@ proc create_block_design {} {
     # 720p60 pixel clock from FCLK_CLK1; the MMCM settings are Vivado's.
     set pixel_clk [create_bd_cell -type ip -vlnv xilinx.com:ip:clk_wiz:6.0 clk_wiz_0]
     set_property -dict [list CONFIG.CLKOUT1_REQUESTED_OUT_FREQ {74.25} CONFIG.USE_RESET {false}] $pixel_clk
-    set pixel_rst [create_bd_cell -type ip -vlnv xilinx.com:ip:proc_sys_reset:5.0 proc_sys_reset_0]
-    set_property CONFIG.C_EXT_RESET_HIGH {0} $pixel_rst
+    create_bd_cell -type ip -vlnv xilinx.com:ip:proc_sys_reset:5.0 proc_sys_reset_0
     # kClkRange 3 is rgb2dvi's "< 80 MHz (720p)" range. Its serial PLL runs at
     # PixelClk * (kClkRange + 1) * 5 = 1485 MHz, inside the -1 grade's
     # 800-1600 MHz; the default 1 (">= 120 MHz") gives 742.5 MHz, below it.
