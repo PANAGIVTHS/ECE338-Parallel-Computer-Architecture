@@ -7,6 +7,9 @@ main
 
 # Generated memories for committed regression case directories
 *.mem
+# ...except the hand-written initial memories
+!dmem_seed.mem
+!ddr_seed.mem
 
 # Generated random/fuzzer cases
 cases/test999/

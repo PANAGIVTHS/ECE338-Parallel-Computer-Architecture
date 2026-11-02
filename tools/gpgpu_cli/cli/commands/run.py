@@ -49,7 +49,9 @@ Example: `software:programs:simple:x86`
 
 [bold cyan]Tests[/bold cyan]
 
-• `tests:rtl:generate` — Generate shared test programs and expected-memory files.
+• `tests:rtl:constants` — Elaborate the RTL packages and write every constant (`pkg::NAME=value`) for the GPGPU model.
+
+• `tests:rtl:generate` — Assemble the cases and run them on the GPGPU model (`tools/tests/gpgpu_model.py`) for the expected registers, DMEM and DDR.
 
 • `tests:rtl:e2e:build` — Build the E2E bench (`tests.rtl.e2e.testbench`/`top`) with Verilator over `hardware.sources` minus `tests.rtl.e2e.exclude_sources`.
 

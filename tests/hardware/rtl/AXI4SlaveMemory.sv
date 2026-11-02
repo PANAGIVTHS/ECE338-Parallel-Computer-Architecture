@@ -155,6 +155,73 @@ module AXI4SlaveMemory
         aw_count = 0; w_count = 0; b_count = 0; ar_count = 0; r_count = 0;
     endfunction
 
+    // Word files (expected_generator.py): one '<byte address> <word>' hex pair
+    // per line; '//' starts a comment. An expected file may also hold
+    // 'bursts <n>', the write bursts since the last clear().
+
+    // Backdoor-writes every word of a seed file.
+    function automatic void load_words(input string path);
+        int fd;
+        string line;
+        axi_addr_t addr;
+        logic [31:0] data;
+        fd = $fopen(path, "r");
+        if (fd == 0)
+            $fatal(1, "[ERROR] AXI slave: cannot open %0s", path);
+        while ($fgets(line, fd) != 0) begin
+            if ($sscanf(line, "%h %h", addr, data) == 2)
+                write_word(addr, data);
+        end
+        $fclose(fd);
+    endfunction
+
+    // Compares memory with an expected file: every listed word, every other
+    // word that was written (it must be zero), and the burst count. Returns
+    // the number of mismatches, each reported as [ERROR].
+    function automatic int unsigned check_words(input string path);
+        int fd;
+        int unsigned mismatches;
+        int unsigned bursts;
+        string line;
+        axi_addr_t addr;
+        logic [31:0] data;
+        logic [31:0] expected [axi_addr_t];
+        // An automatic function's associative array keeps its contents
+        // between calls in Verilator, so start from an empty one explicitly.
+        expected.delete();
+        fd = $fopen(path, "r");
+        if (fd == 0)
+            $fatal(1, "[ERROR] AXI slave: cannot open %0s", path);
+        mismatches = 0;
+        while ($fgets(line, fd) != 0) begin
+            if ($sscanf(line, "bursts %d", bursts) == 1) begin
+                if (aw_count != bursts) begin
+                    $display("  [ERROR] DDR: %0d write bursts, expected %0d", aw_count, bursts);
+                    mismatches++;
+                end
+            end else if ($sscanf(line, "%h %h", addr, data) == 2) begin
+                expected[addr] = data;
+            end
+        end
+        $fclose(fd);
+        foreach (expected[a]) begin
+            if (read_word(a) !== expected[a]) begin
+                $display("  [ERROR] DDR[%h]: Expected %h, Found %h", a, expected[a], read_word(a));
+                mismatches++;
+            end
+        end
+        foreach (mem[beat]) begin
+            for (int unsigned lane = 0; lane < WORDS_PER_BEAT; lane++) begin
+                addr = axi_addr_t'(beat) << BEAT_SHIFT | axi_addr_t'(lane * 4);
+                if (expected.exists(addr) == 0 && read_word(addr) !== 32'd0) begin
+                    $display("  [ERROR] DDR[%h]: Expected 00000000, Found %h", addr, read_word(addr));
+                    mismatches++;
+                end
+            end
+        end
+        return mismatches;
+    endfunction
+
     // No burst accepted and unanswered, and no data waiting for its address.
     function automatic bit idle();
         return aw_q.size() == 0 && w_q.size() == 0 && b_q.size() == 0 && ar_q.size() == 0;

@@ -43,6 +43,7 @@ class StubResolvedConfig:
             "tests.rtl.axi_slave.source": "tests/hardware/rtl/AXI4SlaveMemory.sv",
             "tests.rtl.axi_slave.parameters": {"AXI_SLAVE_LATENCY_MAX": 9, "AXI_SLAVE_SEED": 3},
             "paths.rtl.sources.gpgpu": "hardware/rtl/gpgpu",
+            "hardware.vivado.exclude_sources": [],
             "hardware.sources.extensions": [".sv", ".v"],
             "hardware.sources.header_extensions": [".svh"],
             "hardware.sources.ordered": ["memory/MemoryInterface.sv"],
@@ -83,7 +84,7 @@ def tasks_by_name(config):
 def test_current_layout_generation_and_build_dependencies(tmp_path):
     tasks = tasks_by_name(make_repo(tmp_path))
     assert set(tasks) == {
-        "hardware:identity", "tests:rtl:generate", "tests:rtl:random",
+        "hardware:identity", "tests:rtl:constants", "tests:rtl:generate", "tests:rtl:random",
         *(f"tests:rtl:{suite}:{stage}" for suite in ("smx", "e2e", "ddr") for stage in ("build", "run", "all")),
         *(f"tests:rtl:{stage}" for stage in ("build", "run", "all")),
     }
@@ -91,7 +92,8 @@ def test_current_layout_generation_and_build_dependencies(tmp_path):
     case = tmp_path / "tests/hardware/rtl/cases/test1"
     assert str(case / "regfile_c7.mem") in generate["targets"]
     assert str(case / "regfile_c8.mem") not in generate["targets"]
-    assert generate["actions"][1][1][0][-2:] == ["--num-cores", "8"]
+    assert generate["actions"][1][1][0][-4:] == [
+        "--num-cores", "8", "--rtl-constants", str(tmp_path / "build/tests/rtl/rtl_constants.txt")]
     assert isinstance(generate["uptodate"][0], config_changed)
     assert generate["uptodate"][0].config == {"num_cores": 8}
     build = tasks["tests:rtl:smx:build"]
@@ -150,6 +152,37 @@ def test_hdl_parameter_mappings_must_be_integers(tmp_path, key, value):
     config.get = lambda k: value if k == key else lookup(k)
     with pytest.raises(TypeError, match=key):
         tasks_by_name(config)
+
+
+def test_expected_results_come_from_the_model_with_rtl_constants(tmp_path):
+    tasks = tasks_by_name(make_repo(tmp_path))
+    constants = tmp_path / "build/tests/rtl/rtl_constants.txt"
+    rtl_root = tmp_path / "hardware/rtl/gpgpu"
+    task = tasks["tests:rtl:constants"]
+    assert task["targets"] == [str(constants)]
+    assert task["actions"][0][1] == [[rtl_root / path for path in (
+        "memory/MemoryInterface.sv", "GPGPU.sv", "control/Controller.sv", "interfaces/AXI4Top.v",
+        "memory/Memory.sv", "sp/Processor.sv")], rtl_root, constants]
+    assert str(rtl_root / "constants.svh") in task["file_dep"]
+    generate = tasks["tests:rtl:generate"]
+    assert generate["task_dep"] == ["tests:rtl:constants"]
+    assert str(constants) in generate["file_dep"]
+    assert str(tmp_path / "tools/tests/gpgpu_model.py") in generate["file_dep"]
+    random = tasks["tests:rtl:random"]
+    assert random["actions"][0][1][0][random["actions"][0][1][0].index("--rtl-constants") + 1] == str(constants)
+    assert random["task_dep"] == ["tests:rtl:constants", "tests:rtl:smx:build"]
+
+
+def test_rtl_constants_file_is_rewritten_only_when_a_value_changes(tmp_path):
+    package = tmp_path / "p.sv"
+    package.write_text("package p; localparam int unsigned A = 4 * 2; "
+                       "typedef enum logic [1:0] {X = 1, Y = 2} e_t; endpackage\n")
+    output = tmp_path / "out/rtl_constants.txt"
+    rtl.write_rtl_constants([package], tmp_path, output)
+    assert output.read_text() == "p::A=8\np::X=1\np::Y=2\n"
+    stamp = output.stat().st_mtime_ns
+    rtl.write_rtl_constants([package], tmp_path, output)
+    assert output.stat().st_mtime_ns == stamp
 
 
 def test_random_task_omits_seed_argument_when_configured_for_auto_seed(tmp_path):
@@ -347,3 +380,119 @@ def test_static_hdl_parameters_have_no_fallback(key, value):
 
     with pytest.raises(ValueError, match=key):
         static_hdl_parameters(static_config({**VALID_STATIC, key: value}))
+
+
+# ----------------------------------------------------------------------
+# GPGPU model (expected results)
+# ----------------------------------------------------------------------
+
+def model_constants(tmp_path):
+    from tools.tests import gpgpu_model
+    root = Path(__file__).resolve().parents[3] / "hardware/rtl/gpgpu"
+    path = tmp_path / "rtl_constants.txt"
+    rtl.write_rtl_constants([root / package for package in (
+        "packages/gpu_pkg.sv", "memory/ddr/AXI4FullPkg.sv",
+        "memory/ddr/DDRBackendPkg.sv", "memory/MemorySubsystemPkg.sv")], root, path)
+    return gpgpu_model.read_constants(path)
+
+
+def run_model(tmp_path, source, lanes=4, **kwargs):
+    from tools.tests import assembler, gpgpu_model
+    lines = [line.strip() for line in source.strip().splitlines()]
+    labels, instructions = {}, []
+    for line in lines:
+        if line.endswith(":"):
+            labels[line[:-1]] = len(instructions)
+        else:
+            instructions.append(line)
+    program = [assembler.assemble_line(inst, pc, labels) for pc, inst in enumerate(instructions)]
+    return gpgpu_model.Warp(program, lanes, model_constants(tmp_path), **kwargs).run(10_000)
+
+
+def test_model_decodes_what_the_assembler_encodes():
+    from tools.tests import assembler, gpgpu_model
+    for text, expected in (
+        ("addi x5, x6, -3", ("addi", 5, 6, 0, -3)),
+        ("sltiu x5, x6, -1", ("sltiu", 5, 6, 0, -1)),
+        ("srai x7, x8, 4", ("srai", 7, 8, 0, 4)),
+        ("sub x1, x2, x3", ("sub", 1, 2, 3, 0)),
+        ("mul x1, x2, x3", ("mul", 1, 2, 3, 0)),
+        ("lui x9, 0x18000", ("lui", 9, 0, 0, 0x18000000)),
+        ("lw x4, -8(x2)", ("lw", 4, 2, 0, -8)),
+        ("sw x4, 2044(x2)", ("sw", 0, 2, 4, 2044)),
+        ("bne x1, x2, -12", ("bne", 0, 1, 2, -12)),
+        ("jal x1, 2048", ("jal", 1, 0, 0, 2048)),
+        ("jalr x0, 0(x1)", ("jalr", 0, 1, 0, 0)),
+    ):
+        inst = gpgpu_model.decode(assembler.assemble_line(text, 0, {}))
+        assert (inst.op, inst.rd, inst.rs1, inst.rs2, inst.imm) == expected, text
+    with pytest.raises(gpgpu_model.ModelError, match="unsupported"):
+        gpgpu_model.decode(0)
+
+
+def test_model_lanes_follow_lane_0_and_report_divergence(tmp_path):
+    result = run_model(tmp_path, """
+        beq x31, x0, skip
+        addi x5, x0, 7
+        skip:
+        addi x6, x0, 1
+        jalr x0, 0(x1)
+    """)
+    # Lane 0 takes the branch, so every lane skips the addi.
+    assert [regs[5] for regs in result.regfiles] == [0, 0, 0, 0]
+    assert [regs[6] for regs in result.regfiles] == [1, 1, 1, 1]
+    assert [regs[31] for regs in result.regfiles] == [0, 1, 2, 3]
+    assert result.divergent_pcs == [0]
+
+
+def test_model_dmem_stores_in_ascending_lane_order(tmp_path):
+    result = run_model(tmp_path, """
+        addi x5, x31, 10
+        sw x5, 64(x0)
+        jalr x0, 0(x1)
+    """)
+    assert result.dmem[16] == 13  # lane 3's store lands last
+    assert result.ddr == {} and result.ddr_bursts == 0
+
+
+def test_model_counts_one_burst_per_group_and_rejects_ambiguous_ddr_stores(tmp_path):
+    from tools.tests import gpgpu_model
+    result = run_model(tmp_path, """
+        lui x5, 0x18000
+        slli x6, x31, 6
+        add x5, x5, x6
+        sw x31, 0(x5)
+        jalr x0, 0(x1)
+    """)
+    # 64 B per lane: lanes 0-1 share the first 128 B group, lanes 2-3 the second.
+    assert result.ddr == {0x18000000: 0, 0x18000040: 1, 0x18000080: 2, 0x180000C0: 3}
+    assert result.ddr_bursts == 2
+    with pytest.raises(gpgpu_model.ModelError, match="unspecified"):
+        run_model(tmp_path, """
+            lui x5, 0x18000
+            sw x31, 0(x5)
+            jalr x0, 0(x1)
+        """)
+
+
+def test_model_faults_stop_the_kernel_without_side_effects(tmp_path):
+    constants = model_constants(tmp_path)
+    result = run_model(tmp_path, """
+        addi x5, x0, 9
+        lui x6, 0x18000
+        lw x7, 0(x6)
+        addi x8, x0, 1
+        jalr x0, 0(x1)
+    """)
+    # Framebuffers are write-only: the load faults on every lane.
+    assert result.fault.pc == 8
+    assert result.fault.lanes == 0b1111
+    assert result.fault.statuses == {constants["MemorySubsystemPkg::ST_PERMISSION"]}
+    assert [regs[5] for regs in result.regfiles] == [9] * 4
+    assert [regs[8] for regs in result.regfiles] == [0] * 4
+    unmapped = run_model(tmp_path, """
+        lui x6, 0x18000
+        sw x0, 0(x6)
+        jalr x0, 0(x1)
+    """, lanes=1, ddr_enable=False)
+    assert unmapped.fault.statuses == {constants["MemorySubsystemPkg::ST_UNMAPPED"]}

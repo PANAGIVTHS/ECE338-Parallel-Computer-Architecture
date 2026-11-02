@@ -44,6 +44,9 @@ module tb_GPGPU_smx_only
     reg [8*255:0] reg_file;
     reg [8*255:0] trace_file;
     string dump_file;
+    string ddr_file, ddr_seed_file;
+    bit has_ddr;
+    int unsigned ddr_errors;
 
     AXI4FullInterface ddr_axi ();
 
@@ -131,6 +134,18 @@ module tb_GPGPU_smx_only
 
             $display("\n[INFO] ---> Starting test %0d...", test_idx);
 
+            // A case that uses DDR has an expected DDR file; it needs the backend.
+            ddr_file = $sformatf("cases/test%0d/ddr.mem", test_idx);
+            ddr_seed_file = $sformatf("cases/test%0d/ddr_seed.mem", test_idx);
+            fd = $fopen(ddr_file, "r");
+            has_ddr = fd != 0;
+            if (has_ddr) $fclose(fd);
+            if (has_ddr && DDR_ENABLE == 0) begin
+                $display("  [INFO] Uses DDR: skipped without the DDR backend.");
+                test_idx = test_idx + 1;
+                continue;
+            end
+
             // Clear expected arrays
             for (i = 0; i < DMEM_ENTRIES; i = i + 1)
                 expected_data[i] = 32'b0;
@@ -168,6 +183,11 @@ module tb_GPGPU_smx_only
             rst = 1'b0;
             repeat (10) @(posedge uut_clk);
             ddr_mem.clear();
+            fd = $fopen(ddr_seed_file, "r");
+            if (fd != 0) begin
+                $fclose(fd);
+                ddr_mem.load_words(ddr_seed_file);
+            end
             rst = 1'b1;
             repeat (10) @(posedge uut_clk);
 
@@ -248,6 +268,10 @@ module tb_GPGPU_smx_only
             if (!ddr_mem.idle()) begin
                 $display("  [ERROR] A DDR transaction is still open after completion");
                 data_errors = data_errors + 1;
+            end
+            if (has_ddr) begin
+                ddr_errors = ddr_mem.check_words(ddr_file);
+                data_errors = data_errors + ddr_errors;
             end
 
             if (reg_errors == 0 && data_errors == 0) begin

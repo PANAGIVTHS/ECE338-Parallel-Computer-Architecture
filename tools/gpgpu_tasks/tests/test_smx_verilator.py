@@ -46,6 +46,7 @@ class Config:
             "tests.rtl.axi_slave.source": "tests/hardware/rtl/AXI4SlaveMemory.sv",
             "tests.rtl.axi_slave.parameters": {"AXI_SLAVE_LATENCY_MIN": 1, "AXI_SLAVE_SEED": 1},
             "paths.rtl.sources.gpgpu": "hardware/rtl/gpgpu",
+            "hardware.vivado.exclude_sources": ["experimental", "HostControllerProcessor.sv"],
             "hardware.sources.extensions": [".sv", ".v"],
             "hardware.sources.header_extensions": [".svh"],
             "hardware.sources.ordered": [
@@ -88,7 +89,7 @@ def test_real_checkout_verilator_sources_and_core_count():
     assert not any("experimental" in s or "AXI4Lite" in s for s in command)
     assert not any(s in command for s in ("-P", "-s", "-Winfloop", "-Wno-timescale"))
     assert command[command.index("--Mdir") + 1] == str(config.build_root / "tests/rtl/smx")
-    assert graph["tests:rtl:generate"]["actions"][1][1][0][-2:] == ["--num-cores", "8"]
+    assert graph["tests:rtl:generate"]["actions"][1][1][0][-4:-2] == ["--num-cores", "8"]
     assert graph["tests:rtl:smx:run"]["actions"][0][1][0] == build["targets"]
     config.num_cores = 4
     config.verilator = "another-verilator"

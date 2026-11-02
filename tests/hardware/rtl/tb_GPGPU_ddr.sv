@@ -3,9 +3,10 @@
 
 // DDR end-to-end bench: the GPGPU through its AXI4-Lite top (as in
 // tb_GPGPU_e2e) with DDR_ENABLE = 1 and the AXI4SlaveMemory model behind the
-// AXI4 master. Kernels store to the framebuffers; the bench checks memory
-// through the model's backdoor, the burst count, the handshake idle state
-// and the fault report for injected AXI errors.
+// AXI4 master. Directed kernels store to the framebuffers; the bench checks
+// memory through the model's backdoor, the burst count, the handshake idle
+// state and the fault report for injected AXI errors. Then it runs every
+// directed case (run_cases), DDR cases included.
 //
 // Stores only: the DDR read ring does not exist yet, so a DDR load would
 // never be accepted.
@@ -253,8 +254,9 @@ module tb_GPGPU_ddr
 
         if (errors != 0 || csr_errors != 0)
             $fatal(1, "[ERROR] DDR checks failed: %0d memory errors, %0d CSR errors", errors, csr_errors);
-        $display("\n[INFO] Simulation finished successfully!");
-        $finish;
+        $display("[INFO]  DDR kernel checks passed.");
+
+        run_cases();
     end
 
     initial begin

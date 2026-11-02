@@ -17,9 +17,9 @@ import re
 from typing import TYPE_CHECKING, Any, NamedTuple
 
 from doit.tools import config_changed
-import pyslang
-from pyslang import ast, parsing, syntax
+from pyslang import ast, syntax
 from src.hardware_contract import rtl_root, rtl_sources, string_list
+from src.rtl_packages import elaborate_packages, package_trees, parse_sources
 
 if TYPE_CHECKING:
     from config import ResolvedConfig
@@ -100,23 +100,8 @@ def collect_exports(trees: list[Any], source_manager: Any, options: Any,
     Every marker in *trees* must be on a package member.
     """
 
-    def declares_package(tree: Any) -> bool:
-        # A one-item text parses with that item as the root, not a compilation unit.
-        items = tree.root.members if tree.root.kind == syntax.SyntaxKind.CompilationUnit else [tree.root]
-        return any(item.kind == syntax.SyntaxKind.PackageDeclaration for item in items)
-
-    packages = [tree for tree in trees if declares_package(tree)]
-    compilation = ast.Compilation(options)
-    for tree in packages:
-        compilation.addSyntaxTree(tree)
-    errors = [diagnostic for diagnostic in compilation.getAllDiagnostics() if diagnostic.isError()]
-    if errors:
-        engine = pyslang.DiagnosticEngine(source_manager)
-        client = pyslang.TextDiagnosticClient()
-        engine.addClient(client)
-        for diagnostic in errors:
-            engine.issue(diagnostic)
-        raise ValueError(f"RTL packages do not elaborate:\n{client.getString()}")
+    packages = package_trees(trees)
+    compilation = elaborate_packages(packages, source_manager, options)
 
     order = {tree.root.sourceRange.start.buffer: index for index, tree in enumerate(packages)}
     marked = []
@@ -151,11 +136,7 @@ def collect_exports(trees: list[Any], source_manager: Any, options: Any,
 
 
 def read_exports(sources: list[Path], include_directory: Path, attribute: str) -> list[Export]:
-    preprocessor = parsing.PreprocessorOptions()
-    preprocessor.additionalIncludePaths = [str(include_directory)]
-    options = pyslang.Bag([preprocessor])
-    source_manager = pyslang.SourceManager()
-    trees = [syntax.SyntaxTree.fromFile(str(path), source_manager, options) for path in sources]
+    trees, source_manager, options = parse_sources(sources, include_directory)
     return collect_exports(trees, source_manager, options, attribute)
 
 

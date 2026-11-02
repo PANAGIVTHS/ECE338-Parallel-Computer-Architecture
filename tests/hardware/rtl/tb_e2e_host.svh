@@ -73,8 +73,8 @@
         .o_core_idle(o_core_idle),
         .o_core_running(o_core_running),
 
-        .s00_axi_aclk(clk_in),
-        .s00_axi_aresetn(aresetn),
+        .aclk(clk_in),
+        .aresetn(aresetn),
         .s00_axi_awaddr(awaddr),
         .s00_axi_awprot(3'b000),
         .s00_axi_awvalid(awvalid),
@@ -382,5 +382,232 @@
             @(negedge clk_in);
             aresetn = 1'b1;
             repeat (5) @(posedge clk_in);
+        end
+    endtask
+
+    // ============================================================
+    // Directed cases (cases/test<N>): load, launch, check
+    // ============================================================
+    // Each case is loaded through AXI4-Lite, run to its completion IRQ, and
+    // checked against the expected files of expected_generator.py: all of
+    // DMEM, and for a case that uses DDR, the DDR model's contents and burst
+    // count (its ddr_seed file is loaded first). Without the DDR backend such
+    // a case is skipped. Ends the simulation after the last case.
+
+    reg [31:0] expected_imem [0:IMEM_ENTRIES-1];
+    reg [31:0] expected_dmem [0:DMEM_ENTRIES-1];
+
+    function automatic bit file_exists(input string path);
+        int fd;
+        fd = $fopen(path, "r");
+        if (fd == 0)
+            return 1'b0;
+        $fclose(fd);
+        return 1'b1;
+    endfunction
+
+    task automatic run_cases;
+        integer i;
+        integer test_idx;
+        integer test_end;
+        bit has_test_end;
+        integer fd;
+        integer imem_errors;
+        integer dmem_errors;
+        int unsigned ddr_errors;
+        integer cycle_count;
+        integer program_words;
+        bit found_ret;
+        bit has_ddr;
+        reg [31:0] captured_word;
+        string test_root, case_prefix, program_name, data_name, ddr_seed_name, ddr_name;
+        string prog_file, data_file, ddr_seed_file, ddr_file;
+
+        `REQUIRE_PLUSARG("TEST_ROOT=%s", test_root)
+        `REQUIRE_PLUSARG("TEST_IDX=%d", test_idx)
+        `REQUIRE_PLUSARG("CASE_PREFIX=%s", case_prefix)
+        `REQUIRE_PLUSARG("PROGRAM_FILE=%s", program_name)
+        `REQUIRE_PLUSARG("DATA_FILE=%s", data_name)
+        `REQUIRE_PLUSARG("DDR_SEED_FILE=%s", ddr_seed_name)
+        `REQUIRE_PLUSARG("DDR_FILE=%s", ddr_name)
+        has_test_end = $value$plusargs("TEST_END=%d", test_end) != 0;
+        $display("\n[INFO] ---> Directed cases from %0s", test_root);
+
+        forever begin
+            if (has_test_end && test_idx > test_end) begin
+                $display("\n[INFO] Reached requested TEST_END=%0d. Simulation finished successfully!", test_end);
+                $finish;
+                // The simulator can continue this time slot after $finish.
+                break;
+            end
+
+            // ----------------------------------------------------
+            // Find test files
+            // ----------------------------------------------------
+            prog_file = $sformatf("%0s/%0s%0d/%0s", test_root, case_prefix, test_idx, program_name);
+            data_file = $sformatf("%0s/%0s%0d/%0s", test_root, case_prefix, test_idx, data_name);
+            ddr_seed_file = $sformatf("%0s/%0s%0d/%0s", test_root, case_prefix, test_idx, ddr_seed_name);
+            ddr_file = $sformatf("%0s/%0s%0d/%0s", test_root, case_prefix, test_idx, ddr_name);
+
+            fd = $fopen(prog_file, "r");
+            if (fd == 0) begin
+                if (test_idx == 1)
+                    $fatal(1, "[ERROR] No tests were found");
+                else
+                    $display("\n[INFO] Simulation finished successfully!");
+
+                $finish;
+                // The simulator can continue this time slot after $finish.
+                break;
+            end
+            $fclose(fd);
+
+            $display("\n[INFO] ---> Starting test %0d...", test_idx);
+
+            // A case that uses DDR has an expected DDR file.
+            has_ddr = file_exists(ddr_file);
+            if (has_ddr && DDR_ENABLE == 0) begin
+                $display("[INFO]  Uses DDR: skipped without the DDR backend.");
+                test_idx = test_idx + 1;
+                continue;
+            end
+
+            // ----------------------------------------------------
+            // Initialize expected arrays
+            // ----------------------------------------------------
+            for (i = 0; i < IMEM_ENTRIES; i = i + 1)
+                expected_imem[i] = NOP_INSTR;
+
+            for (i = 0; i < DMEM_ENTRIES; i = i + 1)
+                expected_dmem[i] = 32'b0;
+
+            $readmemh(prog_file, expected_imem);
+            $readmemh(data_file, expected_dmem);
+
+            // Only load up to (and including) the kernel's RET.
+            program_words = IMEM_ENTRIES;
+            found_ret = 0;
+            for (i = 0; i < IMEM_ENTRIES; i = i + 1) begin
+                if (!found_ret && expected_imem[i] == ret_instr) begin
+                    program_words = i + 1;
+                    found_ret = 1;
+                end
+            end
+
+            if (!found_ret)
+                $display("[WARNING] No RET instruction 0x%08h found in %0s. Loading full IMEM.",
+                         ret_instr, prog_file);
+            else
+                $display("[INFO]  Program length detected: %0d words. RET at IMEM[%0d].",
+                         program_words, program_words - 1);
+
+            // ----------------------------------------------------
+            // Reset (BRAM contents survive reset)
+            // ----------------------------------------------------
+            reset_device();
+            ddr_mem.clear();
+            if (file_exists(ddr_seed_file))
+                ddr_mem.load_words(ddr_seed_file);
+
+            if (o_core_idle !== 1'b1)
+                $fatal(1, "[ERROR] GPGPU did not enter idle after reset");
+
+            // ----------------------------------------------------
+            // Clear DMEM, load and verify IMEM
+            // ----------------------------------------------------
+            $display("[INFO]  Clearing DMEM...");
+            for (i = 0; i < DMEM_ENTRIES; i = i + 1)
+                write_dmem(i, 32'b0);
+
+            $display("[INFO]  Loading IMEM...");
+            for (i = 0; i < program_words; i = i + 1)
+                write_imem(i, expected_imem[i]);
+
+            $display("[INFO]  Verifying IMEM...");
+            imem_errors = 0;
+            for (i = 0; i < program_words; i = i + 1) begin
+                read_imem(i, captured_word);
+                if (captured_word !== expected_imem[i]) begin
+                    $display("  [ERROR] IMEM[%0d]: Expected %h, Found %h",
+                             i, expected_imem[i], captured_word);
+                    imem_errors = imem_errors + 1;
+                end
+            end
+
+            if (imem_errors != 0)
+                $fatal(1, "[ERROR] Test %0d: IMEM verification failed with %0d errors",
+                       test_idx, imem_errors);
+
+            // ----------------------------------------------------
+            // Launch and wait for the completion interrupt
+            // ----------------------------------------------------
+            csr_errors = 0;
+            write_word(REG_IRQ_ENABLE, 32'd1);
+
+            $display("[INFO]  Starting kernel...");
+            write_word(REG_CONTROL, CONTROL_START_MASK);
+
+            cycle_count = 0;
+            while (irq !== 1'b1 && cycle_count < test_timeout_cycles) begin
+                @(posedge clk_in);
+                cycle_count = cycle_count + 1;
+            end
+
+            if (irq !== 1'b1)
+                $fatal(1, "[ERROR] Test %0d reached timeout of %0d cycles without IRQ (idle=%b running=%b)",
+                       test_idx, test_timeout_cycles, o_core_idle, o_core_running);
+
+            $display("[INFO]  Completion IRQ after %0d cycles.", cycle_count);
+
+            // Completion leaves the device idle and not stopped.
+            expect_csr(REG_STATUS, STATUS_IDLE_MASK, "STATUS");
+            expect_csr(REG_IRQ_STATUS, 32'd1, "IRQ_STATUS");
+
+            // W1C acknowledge must drop the interrupt line.
+            write_word(REG_IRQ_STATUS, 32'd1);
+            @(negedge clk_in);
+            if (irq !== 1'b0) begin
+                $display("  [ERROR] IRQ still asserted after IRQ_STATUS W1C");
+                csr_errors = csr_errors + 1;
+            end
+            expect_csr(REG_IRQ_STATUS, 32'd0, "IRQ_STATUS");
+
+            if (!ddr_mem.idle()) begin
+                $display("  [ERROR] A DDR transaction is still open after completion");
+                csr_errors = csr_errors + 1;
+            end
+
+            // ----------------------------------------------------
+            // Read back and verify DMEM
+            // ----------------------------------------------------
+            $display("[INFO]  Verifying DMEM...");
+            dmem_errors = 0;
+            for (i = 0; i < DMEM_ENTRIES; i = i + 1) begin
+                read_dmem(i, captured_word);
+                if (captured_word !== expected_dmem[i]) begin
+                    $display("  [ERROR] DMEM[%0d]: Expected %h, Found %h",
+                             i, expected_dmem[i], captured_word);
+                    dmem_errors = dmem_errors + 1;
+                end
+            end
+
+            // ----------------------------------------------------
+            // Verdict
+            // ----------------------------------------------------
+            ddr_errors = 0;
+            if (has_ddr) begin
+                $display("[INFO]  Verifying DDR...");
+                ddr_errors = ddr_mem.check_words(ddr_file);
+            end
+
+            if (dmem_errors == 0 && ddr_errors == 0 && csr_errors == 0) begin
+                $display("  [SUCCESS] Test %0d passed in %0d cycles.", test_idx, cycle_count);
+            end else begin
+                $display("  [WARNING] Test %0d failed. DMEM errors: %0d, DDR errors: %0d, CSR errors: %0d",
+                         test_idx, dmem_errors, ddr_errors, csr_errors);
+                $fatal(1, "[ERROR] Halting simulation due to E2E GPGPU test failure.");
+            end
+
+            test_idx = test_idx + 1;
         end
     endtask

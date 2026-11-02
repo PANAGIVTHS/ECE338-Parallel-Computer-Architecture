@@ -2,10 +2,10 @@
 `include "constants.svh"
 
 // End-to-end bench: drives the GPGPU exclusively through the AXI4-Lite top
-// (gpgpu_axi), exactly as the PS does on the FPGA. Programs are loaded,
-// launched and checked using only CSR/IMEM/DMEM accesses and the IRQ pin.
-// The DDR model (ddr_mem) answers the AXI4 master; these programs use DMEM
-// only, so every test checks that no DDR transaction is left open.
+// (gpgpu_axi), exactly as the PS does on the FPGA. It checks the CSR map,
+// error responses and fault reports, then runs the directed cases
+// (run_cases, tb_e2e_host.svh): programs are loaded, launched and checked
+// using only CSR/IMEM/DMEM accesses, the IRQ pin and the DDR model's backdoor.
 // +TEST_END is optional: without it the suite runs until the next case
 // directory has no program file.
 module tb_GPGPU_e2e
@@ -27,54 +27,25 @@ module tb_GPGPU_e2e
 
     `include "tb_e2e_host.svh"
 
-    reg [31:0] expected_imem [0:IMEM_ENTRIES-1];
-    reg [31:0] expected_dmem [0:DMEM_ENTRIES-1];
-
     integer i;
-    integer test_idx;
-    integer test_end;
-    bit has_test_end;
-    integer fd;
-    integer imem_errors;
-    integer dmem_errors;
-    integer cycle_count;
-    integer program_words;
-    bit found_ret;
-
     reg [31:0] captured_word;
-    reg [1:0] resp;
-
-    string test_root;
-    string case_prefix;
-    string program_name;
-    string data_name;
     string dump_file;
-    string prog_file;
-    string data_file;
 
     // Run settings (plusargs)
     reg [31:0] unmapped_addr;
 
     // ============================================================
-    // Main test loop
+    // Host interface checks, then the directed cases
     // ============================================================
 
     initial begin
         host_init();
 
-        `REQUIRE_PLUSARG("TEST_ROOT=%s", test_root)
-        `REQUIRE_PLUSARG("TEST_IDX=%d", test_idx)
-        `REQUIRE_PLUSARG("CASE_PREFIX=%s", case_prefix)
-        `REQUIRE_PLUSARG("PROGRAM_FILE=%s", program_name)
-        `REQUIRE_PLUSARG("DATA_FILE=%s", data_name)
         `REQUIRE_PLUSARG("UNMAPPED_ADDR=%h", unmapped_addr)
-
-        has_test_end = $value$plusargs("TEST_END=%d", test_end) != 0;
 
         $display("[INFO] =================================================");
         $display("[INFO]  Starting GPGPU AXI4-Lite E2E Test Suite");
         $display("[INFO]  NUM_CORES = %0d", NUM_CORES);
-        $display("[INFO]  TEST_ROOT = %0s", test_root);
         $display("[INFO] =================================================");
 
         // --------------------------------------------------------
@@ -187,165 +158,7 @@ module tb_GPGPU_e2e
             $fatal(1, "[ERROR] Host interface checks failed with %0d errors", csr_errors);
         $display("[INFO]  Host interface checks passed.");
 
-        forever begin
-            if (has_test_end && test_idx > test_end) begin
-                $display("\n[INFO] Reached requested TEST_END=%0d. Simulation finished successfully!", test_end);
-                $finish;
-                // The simulator can continue this time slot after $finish.
-                break;
-            end
-
-            // ----------------------------------------------------
-            // Find test files
-            // ----------------------------------------------------
-            prog_file = $sformatf("%0s/%0s%0d/%0s", test_root, case_prefix, test_idx, program_name);
-            data_file = $sformatf("%0s/%0s%0d/%0s", test_root, case_prefix, test_idx, data_name);
-
-            fd = $fopen(prog_file, "r");
-            if (fd == 0) begin
-                if (test_idx == 1)
-                    $fatal(1, "[ERROR] No tests were found");
-                else
-                    $display("\n[INFO] Simulation finished successfully!");
-
-                $finish;
-                // The simulator can continue this time slot after $finish.
-                break;
-            end
-            $fclose(fd);
-
-            $display("\n[INFO] ---> Starting test %0d...", test_idx);
-
-            // ----------------------------------------------------
-            // Initialize expected arrays
-            // ----------------------------------------------------
-            for (i = 0; i < IMEM_ENTRIES; i = i + 1)
-                expected_imem[i] = NOP_INSTR;
-
-            for (i = 0; i < DMEM_ENTRIES; i = i + 1)
-                expected_dmem[i] = 32'b0;
-
-            $readmemh(prog_file, expected_imem);
-            $readmemh(data_file, expected_dmem);
-
-            // Only load up to (and including) the kernel's RET.
-            program_words = IMEM_ENTRIES;
-            found_ret = 0;
-            for (i = 0; i < IMEM_ENTRIES; i = i + 1) begin
-                if (!found_ret && expected_imem[i] == ret_instr) begin
-                    program_words = i + 1;
-                    found_ret = 1;
-                end
-            end
-
-            if (!found_ret)
-                $display("[WARNING] No RET instruction 0x%08h found in %0s. Loading full IMEM.",
-                         ret_instr, prog_file);
-            else
-                $display("[INFO]  Program length detected: %0d words. RET at IMEM[%0d].",
-                         program_words, program_words - 1);
-
-            // ----------------------------------------------------
-            // Reset (BRAM contents survive reset)
-            // ----------------------------------------------------
-            reset_device();
-            ddr_mem.clear();
-
-            if (o_core_idle !== 1'b1)
-                $fatal(1, "[ERROR] GPGPU did not enter idle after reset");
-
-            // ----------------------------------------------------
-            // Clear DMEM, load and verify IMEM
-            // ----------------------------------------------------
-            $display("[INFO]  Clearing DMEM...");
-            for (i = 0; i < DMEM_ENTRIES; i = i + 1)
-                write_dmem(i, 32'b0);
-
-            $display("[INFO]  Loading IMEM...");
-            for (i = 0; i < program_words; i = i + 1)
-                write_imem(i, expected_imem[i]);
-
-            $display("[INFO]  Verifying IMEM...");
-            imem_errors = 0;
-            for (i = 0; i < program_words; i = i + 1) begin
-                read_imem(i, captured_word);
-                if (captured_word !== expected_imem[i]) begin
-                    $display("  [ERROR] IMEM[%0d]: Expected %h, Found %h",
-                             i, expected_imem[i], captured_word);
-                    imem_errors = imem_errors + 1;
-                end
-            end
-
-            if (imem_errors != 0)
-                $fatal(1, "[ERROR] Test %0d: IMEM verification failed with %0d errors",
-                       test_idx, imem_errors);
-
-            // ----------------------------------------------------
-            // Launch and wait for the completion interrupt
-            // ----------------------------------------------------
-            csr_errors = 0;
-            write_word(REG_IRQ_ENABLE, 32'd1);
-
-            $display("[INFO]  Starting kernel...");
-            write_word(REG_CONTROL, CONTROL_START_MASK);
-
-            cycle_count = 0;
-            while (irq !== 1'b1 && cycle_count < test_timeout_cycles) begin
-                @(posedge clk_in);
-                cycle_count = cycle_count + 1;
-            end
-
-            if (irq !== 1'b1)
-                $fatal(1, "[ERROR] Test %0d reached timeout of %0d cycles without IRQ (idle=%b running=%b)",
-                       test_idx, test_timeout_cycles, o_core_idle, o_core_running);
-
-            $display("[INFO]  Completion IRQ after %0d cycles.", cycle_count);
-
-            // Completion leaves the device idle and not stopped.
-            expect_csr(REG_STATUS, STATUS_IDLE_MASK, "STATUS");
-            expect_csr(REG_IRQ_STATUS, 32'd1, "IRQ_STATUS");
-
-            // W1C acknowledge must drop the interrupt line.
-            write_word(REG_IRQ_STATUS, 32'd1);
-            @(negedge clk_in);
-            if (irq !== 1'b0) begin
-                $display("  [ERROR] IRQ still asserted after IRQ_STATUS W1C");
-                csr_errors = csr_errors + 1;
-            end
-            expect_csr(REG_IRQ_STATUS, 32'd0, "IRQ_STATUS");
-
-            if (!ddr_mem.idle()) begin
-                $display("  [ERROR] A DDR transaction is still open after completion");
-                csr_errors = csr_errors + 1;
-            end
-
-            // ----------------------------------------------------
-            // Read back and verify DMEM
-            // ----------------------------------------------------
-            $display("[INFO]  Verifying DMEM...");
-            dmem_errors = 0;
-            for (i = 0; i < DMEM_ENTRIES; i = i + 1) begin
-                read_dmem(i, captured_word);
-                if (captured_word !== expected_dmem[i]) begin
-                    $display("  [ERROR] DMEM[%0d]: Expected %h, Found %h",
-                             i, expected_dmem[i], captured_word);
-                    dmem_errors = dmem_errors + 1;
-                end
-            end
-
-            // ----------------------------------------------------
-            // Verdict
-            // ----------------------------------------------------
-            if (dmem_errors == 0 && csr_errors == 0) begin
-                $display("  [SUCCESS] Test %0d passed in %0d cycles.", test_idx, cycle_count);
-            end else begin
-                $display("  [WARNING] Test %0d failed. DMEM errors: %0d, CSR errors: %0d",
-                         test_idx, dmem_errors, csr_errors);
-                $fatal(1, "[ERROR] Halting simulation due to E2E GPGPU test failure.");
-            end
-
-            test_idx = test_idx + 1;
-        end
+        run_cases();
     end
 
     initial begin

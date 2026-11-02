@@ -17,6 +17,7 @@ from src.hardware_contract import (
     build_identity_path, build_identity_task, parse_parameters, rtl_root, rtl_sources,
     static_hdl_parameters, string_list,
 )
+from src.rtl_packages import package_constants
 
 if TYPE_CHECKING:
     from config import ResolvedConfig
@@ -136,6 +137,19 @@ def rtl_range_plusargs(value: str) -> list[str]:
     return [f"+TEST_IDX={first}", f"+TEST_END={last}"]
 
 
+def write_rtl_constants(sources: list[Path], include_directory: Path, output: Path) -> None:
+    """Every RTL package constant as pkg::NAME=value, for the test model.
+
+    Rewritten only when a value changed, so the expected results regenerate
+    only then.
+    """
+    text = "".join(f"{name}={value}\n"
+                   for name, value in sorted(package_constants(sources, include_directory).items()))
+    if not output.is_file() or output.read_text(encoding="utf-8") != text:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(text, encoding="utf-8")
+
+
 def run_compilation(command: list[str], cwd: Path, build: Path, make: str, identity: Path) -> None:
     """Build with configured native prerequisites and preserve live build output.
 
@@ -197,6 +211,8 @@ def create_tasks(config: ResolvedConfig) -> list[dict[str, Any]]:
     range_args = rtl_range_plusargs(_configured_command(config, "tests.rtl.range"))
     assembler = repo_root / "tools/tests/assembler.py"
     expected_generator = repo_root / "tools/tests/expected_generator.py"
+    model = repo_root / "tools/tests/gpgpu_model.py"
+    rtl_constants = build_root / "rtl_constants.txt"
     random_tester = repo_root / "tools/tests/random_tester.py"
     # Suite names are the task namespace; everything else about a suite
     # (bench file, top module, parameters, tracing, runtime plusargs) comes
@@ -236,9 +252,10 @@ def create_tasks(config: ResolvedConfig) -> list[dict[str, Any]]:
     cases = _test_cases(cases_root)
     assembly_sources = [case / "program.asm" for case in cases]
     optional_seeds = [
-        case / "dmem_seed.mem"
+        case / seed
         for case in cases
-        if (case / "dmem_seed.mem").is_file()
+        for seed in ("dmem_seed.mem", "ddr_seed.mem")
+        if (case / seed).is_file()
     ]
     generated_targets = [
         output
@@ -260,8 +277,20 @@ def create_tasks(config: ResolvedConfig) -> list[dict[str, Any]]:
             config, string_list(config, f"tests.rtl.{suite}.exclude_sources")
         )
 
+    # The test model reads its constants from the RTL packages of the
+    # production sources (the hardware under test).
+    constant_sources, constant_headers = rtl_sources(
+        config, string_list(config, "hardware.vivado.exclude_sources"))
+
     tasks: list[dict[str, Any]] = [
         build_identity_task(config),
+        {
+            "name": "tests:rtl:constants",
+            "actions": [(write_rtl_constants, [constant_sources, rtl_src_root, rtl_constants])],
+            "file_dep": [str(source) for source in (*constant_sources, *constant_headers)],
+            "targets": [str(rtl_constants)],
+            "clean": True,
+        },
         {
             "name": "tests:rtl:generate",
             "actions": [
@@ -274,6 +303,8 @@ def create_tasks(config: ResolvedConfig) -> list[dict[str, Any]]:
                             str(expected_generator),
                             "--num-cores",
                             str(num_cores),
+                            "--rtl-constants",
+                            str(rtl_constants),
                         ],
                         test_root,
                     ],
@@ -282,9 +313,12 @@ def create_tasks(config: ResolvedConfig) -> list[dict[str, Any]]:
             "file_dep": [
                 str(assembler),
                 str(expected_generator),
+                str(model),
+                str(rtl_constants),
                 *(str(source) for source in assembly_sources),
                 *(str(seed) for seed in optional_seeds),
             ],
+            "task_dep": ["tests:rtl:constants"],
             "targets": [str(target) for target in generated_targets],
             "uptodate": [config_changed({"num_cores": num_cores})],
             "clean": True,
@@ -372,6 +406,8 @@ def create_tasks(config: ResolvedConfig) -> list[dict[str, Any]]:
         str(random_iterations),
         "--num-cores",
         str(num_cores),
+        "--rtl-constants",
+        str(rtl_constants),
     ]
     if random_seed != 0:
         random_command.extend(["--seed", str(random_seed)])
@@ -393,8 +429,9 @@ def create_tasks(config: ResolvedConfig) -> list[dict[str, Any]]:
             "actions": [
                 (run_command, [random_command, repo_root, random_build_root])
             ],
-            "file_dep": [str(random_tester), str(assembler), str(expected_generator)],
-            "task_dep": ["tests:rtl:smx:build"],
+            "file_dep": [str(random_tester), str(assembler), str(expected_generator), str(model),
+                         str(rtl_constants)],
+            "task_dep": ["tests:rtl:constants", "tests:rtl:smx:build"],
             "targets": [str(random_log)],
             "uptodate": [False],
             "clean": True,

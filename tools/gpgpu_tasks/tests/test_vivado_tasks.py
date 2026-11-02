@@ -27,7 +27,8 @@ def test_standalone_public_tasks_and_system_checkpoint_chain(tmp_path):
 
 
 def test_configured_vendor_and_arguments_in_all_commands(tmp_path):
-    tasks = graph(tmp_path, 'tools.vivado.command=custom-vivado', 'architecture.num_cores=4', 'hardware.vivado.jobs=2')
+    tasks = graph(tmp_path, 'tools.vivado.command=custom-vivado', 'architecture.num_cores=4', 'hardware.vivado.jobs=2',
+                  'hardware.vivado.fabric_clock_mhz=50')
     for task in tasks.values():
         command = task['actions'][0][1][0]
         assert command[0] == 'custom-vivado'
@@ -38,7 +39,7 @@ def test_configured_vendor_and_arguments_in_all_commands(tmp_path):
             tmp_path / 'output/hardware/vivado/gpgpu_ip_dev/.gpgpu/sources.tsv')
         assert not any('{' in arg or len(arg) > 1024 for arg in command)
         assert command[command.index('-flow-version') + 1] == '2025.2'
-        assert command[command.index('-fclk0-mhz') + 1] == '35'
+        assert command[command.index('-fclk0-mhz') + 1] == '50'
         assert Path(command[command.index('-source') + 1]).is_file()
         assert str(tmp_path / 'output') in command[command.index('-project-dir') + 1]
         assert not any('/GPU/' in dep for dep in task['file_dep'])

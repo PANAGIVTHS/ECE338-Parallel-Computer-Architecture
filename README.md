@@ -16,7 +16,27 @@ used. Python dependencies are initialized by `./gpgpu` (using uv when available)
 ```
 
 `architecture.num_cores` controls both expected-memory generation and the compiled
-bench parameter. Each suite compiles every `hardware.sources.extensions` file
+bench parameter.
+
+### Test cases and the GPGPU model
+
+A case is `tests/hardware/rtl/cases/test<N>/program.asm`, with optional
+`dmem_seed.mem` (initial DMEM: hex words, `@<word index>` moves on) and
+`ddr_seed.mem` (initial DDR: `<byte address> <word>` hex pairs).
+`tests:rtl:generate` assembles each case to `program.mem` and runs that machine
+code on the GPGPU model (`tools/tests/gpgpu_model.py`) to produce the expected
+`regfile_c<lane>.mem`, `data.mem` and, for a case that uses DDR, `ddr.mem`
+(`bursts <n>` and the expected DDR words). The model follows the hardware's
+rules: lockstep lanes that branch with lane 0, the kernel ending at lane 0's
+RET, the memory map and permissions of `MemorySubsystemPkg::decode_access`,
+ascending-lane order for same-word DMEM stores, and one AXI burst per group per
+store instruction. A case must end with RET without a fault; a branch the lanes
+disagree on or lanes storing different values to one DDR word in one
+instruction is reported. Every constant comes from the RTL packages:
+`tests:rtl:constants` elaborates them with pyslang into
+`<paths.build.root>/tests/rtl/rtl_constants.txt` (`pkg::NAME=value`). Without
+the DDR backend (`architecture.ddr_enable: false`), the benches skip cases that
+have a `ddr.mem`. Each suite compiles every `hardware.sources.extensions` file
 under `paths.rtl.sources.gpgpu`, minus its own `tests.rtl.<suite>.exclude_sources`
 (directory or file names), with `hardware.sources.ordered` first (packages and
 interfaces before their users; excluded entries are dropped).
@@ -54,7 +74,8 @@ used on the FPGA) and touches the GPGPU only through AXI4-Lite and the IRQ pin. 
 CSR map and error responses, plus a host-only DMEM write/readback. Then, for
 each case, it clears DMEM, loads and verifies IMEM, enables the IRQ, writes
 `CONTROL.START`, waits for the completion IRQ, checks `STATUS`/`IRQ_STATUS` and
-the W1C acknowledge, and compares all of DMEM with the expected data file. Register files are
+the W1C acknowledge, and compares all of DMEM with the expected data file and, for a
+DDR case, the DDR model's contents and burst count with `ddr.mem`. Register files are
 not host-visible, so they are checked only by the SMX suite. Its
 `tests.rtl.e2e.exclude_sources` keeps `interfaces/` (the AXI wrapper) that the SMX suite
 excludes. Every bench setting (case root, case prefix and first index, program
@@ -78,6 +99,7 @@ one group per lane (more groups than write slots), gaps carrying `WSTRB=0`, the
 same word from every lane, a store loop, and SLVERR/DECERR injection checked
 through `FAULT_INFO`/`FAULT_LANES`/`FAULT_PC`. Results are read through the
 model's backdoor, with burst counts and an idle bus checked after each kernel.
+Then it runs every directed case, DDR cases included.
 `tests.rtl.range` in `config/profiles/default.yaml` selects directed SMX/E2E
 case IDs: `"all"` (default) or an inclusive range such as `"1-10"` or `"5-5"`.
 For a one-off selection:
