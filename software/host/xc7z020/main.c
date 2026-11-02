@@ -4,7 +4,8 @@
 #include "xil_io.h"
 #include "xil_printf.h"
 #include "xil_types.h"
-#include "xtime_l.h"
+#include "xiltimer.h"
+#include "xcortexa9_config.h"
 #include "sleep.h"
 
 #include <stdlib.h>
@@ -115,8 +116,13 @@ static int display_show(u32 fb) {
 /* Run the loaded kernel `frames` times back to back and report the rate. The
  * kernel must need no host writes between runs (e.g. it advances its own
  * frame counter). The time covers START to completion and the driver's
- * checks, not UART traffic. */
+ * checks, not UART traffic.
+ *
+ * XTime_GetTime (XilTimer) reads the Cortex-A9 global timer, which counts at
+ * half the CPU clock. XilTimer starts that timer on the first sleep call, so
+ * one usleep() comes first. */
 static int bench(u32 frames) {
+    const u64 counts_per_second = XGet_CpuFreq() / 2U;
     XTime start, end;
     u64 elapsed, rate_x100;
 
@@ -125,6 +131,7 @@ static int bench(u32 frames) {
         return -1;
     }
 
+    usleep(1);
     XTime_GetTime(&start);
     for (u32 i = 0; i < frames; i++) {
         if (gpgpu_run_quiet() != GPGPU_OK) {
@@ -136,11 +143,11 @@ static int bench(u32 frames) {
 
     elapsed = end - start;
     /* xil_printf has no floats or 64-bit integers: print fixed point. */
-    rate_x100 = ((u64)frames * COUNTS_PER_SECOND * 100U) / elapsed;
+    rate_x100 = ((u64)frames * counts_per_second * 100U) / elapsed;
     xil_printf("%u frames in %u us: %u.%02u frames/s, %u us/frame\r\n", frames,
-               (u32)((elapsed * 1000000U) / COUNTS_PER_SECOND),
+               (u32)((elapsed * 1000000U) / counts_per_second),
                (u32)(rate_x100 / 100U), (u32)(rate_x100 % 100U),
-               (u32)((elapsed * 1000000U) / COUNTS_PER_SECOND / frames));
+               (u32)((elapsed * 1000000U) / counts_per_second / frames));
     return 0;
 }
 
