@@ -14,6 +14,8 @@
 #define GPGPU_FB0_BASE                     402653184U
 #define GPGPU_FB1_BASE                     406847488U
 #define GPGPU_TEX_BASE                     411041792U
+#define GPGPU_FB_WIDTH                     1280U
+#define GPGPU_FB_HEIGHT                    720U
 #define GPGPU_FB_SIZE                      3686400U
 #define GPGPU_TEX_SIZE                     8388608U
 

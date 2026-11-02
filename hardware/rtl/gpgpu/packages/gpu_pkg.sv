@@ -13,7 +13,11 @@ package gpu_pkg;
     (* host *) localparam int unsigned FB0_BASE = 'h1800_0000;
     (* host *) localparam int unsigned FB1_BASE = 'h1840_0000;
     (* host *) localparam int unsigned TEX_BASE = 'h1880_0000;
-    (* host *) localparam int unsigned FB_SIZE = 'h0038_4000;
+    // Framebuffers hold FB_WIDTH x FB_HEIGHT pixels of one word (0x00RRGGBB),
+    // rows packed; the display scans them out at this resolution.
+    (* host *) localparam int unsigned FB_WIDTH = 1280;
+    (* host *) localparam int unsigned FB_HEIGHT = 720;
+    (* host *) localparam int unsigned FB_SIZE = FB_WIDTH * FB_HEIGHT * BYTES_PER_WORD;
     (* host *) localparam int unsigned TEX_SIZE = 'h0080_0000;
 
     localparam logic [XLEN-1:0] INITIAL_PC = 32'h0000_0000;

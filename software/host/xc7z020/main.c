@@ -1,15 +1,122 @@
 #include "gpgpu_driver.h"
 
 #include "xparameters.h"
+#include "xil_io.h"
 #include "xil_printf.h"
 #include "xil_types.h"
+#include "sleep.h"
 
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
 
+/* HDMI scanout: the AXI VDMA's MM2S channel reads one framebuffer and streams
+ * it to the video output. The base address comes from the hardware's
+ * xparameters.h. */
+#ifndef XPAR_XAXIVDMA_0_BASEADDR
+#error "XPAR_XAXIVDMA_0_BASEADDR is not defined: the hardware has no AXI VDMA"
+#endif
+
+/* MM2S registers (PG020). Writing VSIZE starts the channel. */
+#define VDMA_MM2S_VDMACR         0x00U
+#define VDMA_MM2S_VDMASR         0x04U
+#define VDMA_MM2S_FRMSTORE       0x18U
+#define VDMA_PARK_PTR            0x28U
+#define VDMA_MM2S_VSIZE          0x50U
+#define VDMA_MM2S_HSIZE          0x54U
+#define VDMA_MM2S_FRMDLY_STRIDE  0x58U
+#define VDMA_MM2S_START_ADDRESS  0x5CU  /* frame store n at + 4 * n */
+
+#define VDMA_CR_RS               0x00000001U
+#define VDMA_CR_RESET            0x00000004U  /* Circular_Park (bit 1) left 0: park mode */
+#define VDMA_SR_HALTED           0x00000001U
+#define VDMA_SR_ERRORS           0x00000070U  /* DMAIntErr, DMASlvErr, DMADecErr */
+#define VDMA_PARK_RD_MASK        0x0000001FU
+#define VDMA_FRMSTORE_MASK       0x0000001FU
+
+#define FB_STRIDE_BYTES          (GPGPU_FB_WIDTH * 4U)
+
+/* Frame store n of the VDMA holds framebuffer n. */
+static const u32 framebuffers[] = { GPGPU_FB0_BASE, GPGPU_FB1_BASE };
+#define FB_COUNT                 (sizeof(framebuffers) / sizeof(framebuffers[0]))
+
 static u32 rx_buffer[GPGPU_MAX_WORDS];
+static u32 shown_fb = 0U;
 extern char inbyte(void);
+
+static inline u32 vdma_read(u32 offset) {
+    return Xil_In32((UINTPTR)XPAR_XAXIVDMA_0_BASEADDR + offset);
+}
+
+static inline void vdma_write(u32 offset, u32 value) {
+    Xil_Out32((UINTPTR)XPAR_XAXIVDMA_0_BASEADDR + offset, value);
+}
+
+/* Reset the MM2S channel and start it parked on framebuffer `fb`: it scans
+ * that one buffer every frame until display_show() parks it on another. */
+static int display_start(u32 fb) {
+    u32 stores;
+    u32 timeout = 1000U;
+
+    vdma_write(VDMA_MM2S_VDMACR, VDMA_CR_RESET);
+    while ((vdma_read(VDMA_MM2S_VDMACR) & VDMA_CR_RESET) != 0U) {
+        if (--timeout == 0U) {
+            xil_printf("ERROR: VDMA reset did not complete\r\n");
+            return -1;
+        }
+        usleep(1);
+    }
+
+    stores = vdma_read(VDMA_MM2S_FRMSTORE) & VDMA_FRMSTORE_MASK;
+    if (stores < FB_COUNT) {
+        xil_printf("ERROR: VDMA has %u frame stores, the framebuffers need %u\r\n",
+                   stores, (u32)FB_COUNT);
+        return -1;
+    }
+    if (fb >= FB_COUNT) {
+        xil_printf("ERROR: framebuffer %u does not exist (0..%u)\r\n", fb, (u32)FB_COUNT - 1U);
+        return -1;
+    }
+
+    vdma_write(VDMA_MM2S_VDMACR, VDMA_CR_RS);
+    for (u32 i = 0; i < FB_COUNT; i++)
+        vdma_write(VDMA_MM2S_START_ADDRESS + 4U * i, framebuffers[i]);
+    vdma_write(VDMA_PARK_PTR, fb & VDMA_PARK_RD_MASK);
+    vdma_write(VDMA_MM2S_FRMDLY_STRIDE, FB_STRIDE_BYTES);
+    vdma_write(VDMA_MM2S_HSIZE, FB_STRIDE_BYTES);
+    vdma_write(VDMA_MM2S_VSIZE, GPGPU_FB_HEIGHT);
+
+    if ((vdma_read(VDMA_MM2S_VDMASR) & (VDMA_SR_HALTED | VDMA_SR_ERRORS)) != 0U) {
+        xil_printf("ERROR: VDMA did not start (MM2S_VDMASR=0x%08x)\r\n",
+                   vdma_read(VDMA_MM2S_VDMASR));
+        return -1;
+    }
+
+    shown_fb = fb;
+    xil_printf("Display: FB%u at 0x%08x, %ux%u\r\n", fb, framebuffers[fb],
+               GPGPU_FB_WIDTH, GPGPU_FB_HEIGHT);
+    return 0;
+}
+
+/* Park the running channel on framebuffer `fb`; it switches at the next
+ * frame boundary. */
+static int display_show(u32 fb) {
+    u32 status = vdma_read(VDMA_MM2S_VDMASR);
+
+    if ((status & (VDMA_SR_HALTED | VDMA_SR_ERRORS)) != 0U) {
+        xil_printf("VDMA stopped (MM2S_VDMASR=0x%08x); restarting\r\n", status);
+        return display_start(fb);
+    }
+    if (fb >= FB_COUNT) {
+        xil_printf("ERROR: framebuffer %u does not exist (0..%u)\r\n", fb, (u32)FB_COUNT - 1U);
+        return -1;
+    }
+
+    vdma_write(VDMA_PARK_PTR, fb & VDMA_PARK_RD_MASK);
+    shown_fb = fb;
+    xil_printf("Display: FB%u at 0x%08x\r\n", fb, framebuffers[fb]);
+    return 0;
+}
 
 static void read_line(char *buf, int max_len) {
     int idx = 0;
@@ -255,6 +362,8 @@ static void print_help(void) {
     xil_printf("  run\r\n");
     xil_printf("  clear   (acknowledge STOPPED/FAULTED)\r\n");
     xil_printf("  reset   (PL reset; needed after a fatal fault)\r\n");
+    xil_printf("  --------- DISPLAY ---------\r\n");
+    xil_printf("  display <fb>   (show framebuffer 0 or 1 on HDMI)\r\n");
     xil_printf("\r\n");
 }
 
@@ -268,6 +377,7 @@ int main(void) {
     }
 
     gpgpu_print_status();
+    display_start(shown_fb);
     print_help();
 
     while (1) {
@@ -441,6 +551,19 @@ int main(void) {
             if (gpgpu_reset() != GPGPU_OK)
                 xil_printf("ERROR: GPGPU initialization after reset failed\r\n");
             gpgpu_print_status();
+            /* The PL reset also resets the VDMA. */
+            display_start(shown_fb);
+
+        } else if (strcmp(cmd, "display") == 0) {
+            u32 fb;
+
+            arg1 = strtok(NULL, " \t");
+            if (parse_count(arg1, &fb) != 0) {
+                xil_printf("Usage: display <fb>\r\n");
+                continue;
+            }
+
+            display_show(fb);
 
         } else {
             xil_printf("Unknown command: %s\r\n", cmd);
