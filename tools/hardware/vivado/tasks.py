@@ -131,7 +131,7 @@ def validate_saved_bd(path, bd_name, part):
         raise RuntimeError(f'Incompatible saved BD identity: {path}')
     if cells.get('gpgpu_axi_0', {}).get('vlnv') != 'user.org:user:gpgpu_axi:1.0':
         raise RuntimeError(f'Saved BD is not the packaged AXI system: {path}')
-    if not {'processing_system7_0', 'axi_smc'} <= cells.keys() or any('axi_gpio' in name for name in cells):
+    if not {'processing_system7_0', 'gpgpu_ctrl'} <= cells.keys() or any('axi_gpio' in name for name in cells):
         raise RuntimeError(f'Legacy/incomplete saved BD: {path}')
 
 

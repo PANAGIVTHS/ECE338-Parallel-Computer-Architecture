@@ -58,8 +58,10 @@ hardware:
     jobs: 6
     # Requested PS fabric clock FCLK_CLK0 (MHz) driving the GPGPU, its AXI
     # interconnect and reset; Vivado selects the nearest achievable frequency.
-    # Applied to new and saved block designs on vivado:system:create.
-    fabric_clock_mhz: 60
+    # Applied to new and saved block designs on vivado:system:create. The
+    # display has its own fixed clock (FCLK_CLK1), so this follows the
+    # GPGPU's timing alone.
+    fabric_clock_mhz: 42
     # phys_opt_design after routing in impl_1, with its -directive (e.g.
     # AggressiveExplore, Explore, AlternateFlowWithRetiming, Default). Applied
     # on every implementation run, so disabling it also takes effect.

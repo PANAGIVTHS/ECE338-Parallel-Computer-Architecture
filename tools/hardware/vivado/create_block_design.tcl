@@ -8,8 +8,13 @@
 # m00_axi (DDR backend) on HP0 and the VDMA on HP2. The VDMA reads the
 # framebuffer for HDMI scanout (VDMA -> 4-to-3-byte subset converter ->
 # AXI4-Stream video out -> rgb2dvi). Each master has a 1x1 SmartConnect, which
-# also converts AXI4 to the HP port's AXI3. Everything runs on FCLK_CLK0
-# except the 74.25 MHz (720p60) pixel clock.
+# also converts AXI4 to the HP port's AXI3.
+#
+# Clocks: FCLK_CLK0 (configuration-owned, follows the GPGPU's timing) runs only
+# the GPGPU, GP0 and HP0. The display runs on a fixed 100 MHz FCLK_CLK1 (GP1,
+# the VDMA, HP2 and the stream into the video out, faster than the pixel clock
+# so the stream keeps up) and its 74.25 MHz (720p60) pixel clock, made from
+# FCLK_CLK1 so that it never depends on the GPGPU's clock.
 proc create_block_design {} {
     global BD_NAME FCLK0_MHZ
     if {[version -short] ne "2025.2"} { error "This system requires Vivado 2025.2" }
@@ -24,10 +29,14 @@ proc create_block_design {} {
     create_bd_port -dir O o_core_running_0
 
     # GP0: GPGPU CSRs. GP1: VDMA registers. HP0: GPGPU to DDR. HP2: VDMA to DDR.
+    # FCLK_CLK1: 100 MHz, which the PS makes exactly (I/O PLL / 10).
     set ps [create_bd_cell -type ip -vlnv xilinx.com:ip:processing_system7:5.5 processing_system7_0]
     set_property -dict [list \
         CONFIG.PCW_FPGA0_PERIPHERAL_FREQMHZ $FCLK0_MHZ \
         CONFIG.PCW_FPGA_FCLK0_ENABLE {1} \
+        CONFIG.PCW_FPGA1_PERIPHERAL_FREQMHZ {100} \
+        CONFIG.PCW_FPGA_FCLK1_ENABLE {1} \
+        CONFIG.PCW_FCLK_CLK1_BUF {TRUE} \
         CONFIG.PCW_USE_M_AXI_GP0 {1} \
         CONFIG.PCW_USE_M_AXI_GP1 {1} \
         CONFIG.PCW_USE_S_AXI_HP0 {1} \
@@ -42,16 +51,21 @@ proc create_block_design {} {
         CONFIG.PCW_USE_FABRIC_INTERRUPT {1} \
         CONFIG.PCW_IRQ_F2P_INTR {1}] $ps
     create_bd_cell -type ip -vlnv user.org:user:gpgpu_axi:1.0 gpgpu_axi_0
-    set smc [create_bd_cell -type ip -vlnv xilinx.com:ip:smartconnect:1.0 axi_smc]
+    set smc [create_bd_cell -type ip -vlnv xilinx.com:ip:smartconnect:1.0 gpgpu_ctrl]
     set_property -dict [list CONFIG.NUM_SI {1} CONFIG.NUM_MI {1}] $smc
-    set rst [create_bd_cell -type ip -vlnv xilinx.com:ip:proc_sys_reset:5.0 rst_ps7_0_35M]
-    # FCLK_RESET0_N is active low; proc_sys_reset defaults to active high.
-    set_property CONFIG.C_EXT_RESET_HIGH {0} $rst
+    # One reset per clock: gpu_sys_reset for FCLK_CLK0, rst_ps7_0_35M for
+    # FCLK_CLK1 and proc_sys_reset_0 (below) for the pixel clock. All take
+    # FCLK_RESET0_N, which is active low; proc_sys_reset defaults to active
+    # high. The PS clocks need no lock, so dcm_locked is tied high.
+    foreach {name locked} {gpu_sys_reset reset_locked1 rst_ps7_0_35M reset_locked} {
+        set rst [create_bd_cell -type ip -vlnv xilinx.com:ip:proc_sys_reset:5.0 $name]
+        set_property CONFIG.C_EXT_RESET_HIGH {0} $rst
+        create_bd_cell -type inline_hdl -vlnv xilinx.com:inline_hdl:ilconstant:1.0 $locked
+    }
     # Vivado 2025.2 inline HDL replaces xlconcat/xlconstant; widths follow the connections.
     create_bd_cell -type inline_hdl -vlnv xilinx.com:inline_hdl:ilconcat:1.0 irq_concat
     set zero [create_bd_cell -type inline_hdl -vlnv xilinx.com:inline_hdl:ilconstant:1.0 irq_zero]
     set_property -dict [list CONFIG.CONST_WIDTH {15} CONFIG.CONST_VAL {0}] $zero
-    create_bd_cell -type inline_hdl -vlnv xilinx.com:inline_hdl:ilconstant:1.0 reset_locked
 
     # One SmartConnect per DDR master
     foreach name {gpgpu_ddr vdma_ddr} {
@@ -95,7 +109,7 @@ proc create_block_design {} {
         CONFIG.enable_detection {false} \
         CONFIG.max_clocks_per_line {2048} \
         CONFIG.max_lines_per_frame {1024}] $vtc
-    # 720p60 pixel clock from FCLK_CLK0; the MMCM settings are Vivado's.
+    # 720p60 pixel clock from FCLK_CLK1; the MMCM settings are Vivado's.
     set pixel_clk [create_bd_cell -type ip -vlnv xilinx.com:ip:clk_wiz:6.0 clk_wiz_0]
     set_property -dict [list CONFIG.CLKOUT1_REQUESTED_OUT_FREQ {74.25} CONFIG.USE_RESET {false}] $pixel_clk
     set pixel_rst [create_bd_cell -type ip -vlnv xilinx.com:ip:proc_sys_reset:5.0 proc_sys_reset_0]
@@ -114,8 +128,8 @@ proc create_block_design {} {
         connect_bd_intf_net [get_bd_intf_ports $name] [get_bd_intf_pins processing_system7_0/$name]
     }
     connect_bd_intf_net [get_bd_intf_ports UART_0_0] [get_bd_intf_pins processing_system7_0/UART_0]
-    connect_bd_intf_net [get_bd_intf_pins processing_system7_0/M_AXI_GP0] [get_bd_intf_pins axi_smc/S00_AXI]
-    connect_bd_intf_net [get_bd_intf_pins axi_smc/M00_AXI] [get_bd_intf_pins gpgpu_axi_0/s00_axi]
+    connect_bd_intf_net [get_bd_intf_pins processing_system7_0/M_AXI_GP0] [get_bd_intf_pins gpgpu_ctrl/S00_AXI]
+    connect_bd_intf_net [get_bd_intf_pins gpgpu_ctrl/M00_AXI] [get_bd_intf_pins gpgpu_axi_0/s00_axi]
     connect_bd_intf_net [get_bd_intf_pins gpgpu_axi_0/m00_axi] [get_bd_intf_pins gpgpu_ddr/S00_AXI]
     connect_bd_intf_net [get_bd_intf_pins gpgpu_ddr/M00_AXI] [get_bd_intf_pins processing_system7_0/S_AXI_HP0]
     connect_bd_intf_net [get_bd_intf_pins axi_vdma_0/M_AXI_MM2S] [get_bd_intf_pins vdma_ddr/S00_AXI]
@@ -127,23 +141,29 @@ proc create_block_design {} {
     connect_bd_intf_net [get_bd_intf_pins v_tc_0/vtiming_out] [get_bd_intf_pins v_axi4s_vid_out_0/vtiming_in]
     connect_bd_intf_net [get_bd_intf_pins rgb2dvi_0/TMDS] [get_bd_intf_ports TMDS_0]
 
-    # FCLK_CLK0: the GPGPU, every AXI interface and the pixel clock's source
+    # FCLK_CLK0: the GPGPU, GP0 and HP0
     connect_bd_net [get_bd_pins processing_system7_0/FCLK_CLK0] \
-        [get_bd_pins processing_system7_0/M_AXI_GP0_ACLK] [get_bd_pins processing_system7_0/M_AXI_GP1_ACLK] \
-        [get_bd_pins processing_system7_0/S_AXI_HP0_ACLK] [get_bd_pins processing_system7_0/S_AXI_HP2_ACLK] \
-        [get_bd_pins axi_smc/aclk] [get_bd_pins gpgpu_ddr/aclk] [get_bd_pins vdma_ddr/aclk] \
-        [get_bd_pins axi_smc_1/aclk] \
-        [get_bd_pins gpgpu_axi_0/aclk] [get_bd_pins rst_ps7_0_35M/slowest_sync_clk] \
+        [get_bd_pins processing_system7_0/M_AXI_GP0_ACLK] [get_bd_pins processing_system7_0/S_AXI_HP0_ACLK] \
+        [get_bd_pins gpgpu_ctrl/aclk] [get_bd_pins gpgpu_ddr/aclk] [get_bd_pins gpgpu_axi_0/aclk] \
+        [get_bd_pins gpu_sys_reset/slowest_sync_clk]
+    # FCLK_CLK1: GP1, the VDMA, HP2, the stream into the video out and the
+    # pixel clock's source
+    connect_bd_net [get_bd_pins processing_system7_0/FCLK_CLK1] \
+        [get_bd_pins processing_system7_0/M_AXI_GP1_ACLK] [get_bd_pins processing_system7_0/S_AXI_HP2_ACLK] \
+        [get_bd_pins axi_smc_1/aclk] [get_bd_pins vdma_ddr/aclk] \
         [get_bd_pins axi_vdma_0/s_axi_lite_aclk] [get_bd_pins axi_vdma_0/m_axi_mm2s_aclk] \
         [get_bd_pins axi_vdma_0/m_axis_mm2s_aclk] [get_bd_pins axis_subset_converter_0/aclk] \
-        [get_bd_pins v_axi4s_vid_out_0/aclk] [get_bd_pins clk_wiz_0/clk_in1]
+        [get_bd_pins v_axi4s_vid_out_0/aclk] [get_bd_pins clk_wiz_0/clk_in1] \
+        [get_bd_pins rst_ps7_0_35M/slowest_sync_clk]
     connect_bd_net [get_bd_pins processing_system7_0/FCLK_RESET0_N] \
-        [get_bd_pins rst_ps7_0_35M/ext_reset_in] [get_bd_pins proc_sys_reset_0/ext_reset_in]
+        [get_bd_pins gpu_sys_reset/ext_reset_in] [get_bd_pins rst_ps7_0_35M/ext_reset_in] \
+        [get_bd_pins proc_sys_reset_0/ext_reset_in]
+    connect_bd_net [get_bd_pins reset_locked1/dout] [get_bd_pins gpu_sys_reset/dcm_locked]
     connect_bd_net [get_bd_pins reset_locked/dout] [get_bd_pins rst_ps7_0_35M/dcm_locked]
+    connect_bd_net [get_bd_pins gpu_sys_reset/peripheral_aresetn] \
+        [get_bd_pins gpgpu_axi_0/aresetn] [get_bd_pins gpgpu_ctrl/aresetn] [get_bd_pins gpgpu_ddr/aresetn]
     connect_bd_net [get_bd_pins rst_ps7_0_35M/peripheral_aresetn] \
-        [get_bd_pins gpgpu_axi_0/aresetn] [get_bd_pins axi_smc/aresetn] \
-        [get_bd_pins gpgpu_ddr/aresetn] [get_bd_pins vdma_ddr/aresetn] \
-        [get_bd_pins axi_smc_1/aresetn] [get_bd_pins axi_vdma_0/axi_resetn] \
+        [get_bd_pins axi_smc_1/aresetn] [get_bd_pins vdma_ddr/aresetn] [get_bd_pins axi_vdma_0/axi_resetn] \
         [get_bd_pins axis_subset_converter_0/aresetn] [get_bd_pins v_axi4s_vid_out_0/aresetn]
     # Pixel clock domain
     connect_bd_net [get_bd_pins clk_wiz_0/clk_out1] \

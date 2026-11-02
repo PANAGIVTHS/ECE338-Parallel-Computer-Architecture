@@ -11,7 +11,7 @@ proc assert_system_bd_cells {} {
     foreach {name vlnv} {
         processing_system7_0 xilinx.com:ip:processing_system7:5.5
         gpgpu_axi_0 user.org:user:gpgpu_axi:1.0
-        axi_smc xilinx.com:ip:smartconnect:1.0
+        gpgpu_ctrl xilinx.com:ip:smartconnect:1.0
         gpgpu_ddr xilinx.com:ip:smartconnect:1.0
         irq_concat xilinx.com:inline_hdl:ilconcat:1.0
         irq_zero xilinx.com:inline_hdl:ilconstant:1.0
@@ -22,8 +22,8 @@ proc assert_system_bd_cells {} {
             error "Expected cell $name with VLNV $vlnv; refusing saved design mutation"
         }
     }
-    # Reset instances may have user-chosen names in saved GUI state (one for
-    # FCLK_CLK0, one for the pixel clock).
+    # Reset instances may have user-chosen names in saved GUI state (one each
+    # for FCLK_CLK0, FCLK_CLK1 and the pixel clock).
     set resets [get_bd_cells -quiet -hierarchical -filter {VLNV == xilinx.com:ip:proc_sys_reset:5.0}]
     if {[llength $resets] == 0} {
         error "Expected a proc_sys_reset cell; refusing saved design mutation"

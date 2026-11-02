@@ -118,7 +118,7 @@ def test_symlink_project_remains_rejected(tmp_path, operation, target_exists):
 def bd_payload():
     return {'design': {
         'design_info': {'name': 'design_1', 'device': PART},
-        'components': {'processing_system7_0': {}, 'axi_smc': {},
+        'components': {'processing_system7_0': {}, 'gpgpu_ctrl': {},
                        'gpgpu_axi_0': {'vlnv': 'user.org:user:gpgpu_axi:1.0'}},
     }}
 

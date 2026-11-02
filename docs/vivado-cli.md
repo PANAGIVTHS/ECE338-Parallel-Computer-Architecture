@@ -67,7 +67,7 @@ hardware:
     xsa_name: gpgpu_platform
     version: "2025.2"
     jobs: 6
-    fabric_clock_mhz: 35
+    fabric_clock_mhz: 42
     post_route_phys_opt:
       enabled: true
       directive: AggressiveExplore
@@ -108,13 +108,13 @@ Board XDC is excluded from the reusable IP.
 
 The saved system BD, not its inconsistent neighboring Tcl export, supplied:
 DDR **16-bit MT41K256M16 RE-125**, UART0 **EMIO**. The fabric clock FCLK0
-(GPGPU, SmartConnect and reset) is configuration-owned:
-`hardware.vivado.fabric_clock_mhz` (default **35 MHz**) is passed as
+(GPGPU, its SmartConnects and reset) is configuration-owned:
+`hardware.vivado.fabric_clock_mhz` (default **42 MHz**) is passed as
 `-fclk0-mhz`, used when bootstrapping a new BD and re-applied to a saved BD on
 every `vivado:system:create`, like the core count and AXI aperture. It is the
 requested `PCW_FPGA0_PERIPHERAL_FREQMHZ`; the PS picks the nearest achievable
 frequency from its dividers.
-The system connects PS GP0 -> SmartConnect -> `gpgpu_axi_0/s00_axi`, with
+The system connects PS GP0 -> `gpgpu_ctrl` (SmartConnect) -> `gpgpu_axi_0/s00_axi`, with
 clock/reset distribution, DDR/FIXED_IO external ports and UART/LED ports.
 `irq` connects through width handling to `IRQ_F2P[0]` (GIC ID 61), matching
 the IRQ-enabled driver; polling is not silently enabled. The GPGPU's DDR master
@@ -126,8 +126,12 @@ at 0x8300_0000. Scanout:
 VDMA (32-bit pixels, two frame stores) -> AXI4-Stream subset converter (4 to
 3 bytes, `0x00RRGGBB` to the video order) -> AXI4-Stream video out, timed by a
 VTC in its default mode -> `rgb2dvi` (`kClkRange` 3, its 720p range) -> the `TMDS_0` HDMI
-port. Everything runs on FCLK0 except the 74.25 MHz (720p60) pixel clock from
-`clk_wiz_0`, with its own reset. The bootstrap is `create_block_design.tcl`;
+port. FCLK0 runs only the GPGPU, GP0 and HP0 (reset `gpu_sys_reset`), so it
+can follow the GPGPU's timing. The display has a fixed 100 MHz FCLK1 (GP1,
+the VDMA, HP2 and the stream into the video out, faster than the pixel clock;
+reset `rst_ps7_0_35M`) and the 74.25 MHz (720p60) pixel clock that `clk_wiz_0`
+makes from FCLK1 (reset `proc_sys_reset_0`). All three resets follow
+`FCLK_RESET0_N`. The bootstrap is `create_block_design.tcl`;
 `create_system.tcl` refuses a saved design that lacks the GPGPU's host,
 interrupt or DDR cells. `smart_zynq.xdc` places the TMDS pairs (TMDS_33).
 

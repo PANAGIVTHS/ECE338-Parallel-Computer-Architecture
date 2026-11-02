@@ -217,8 +217,8 @@ proc get_property {{key object}} {{
     if {{$key eq "VLNV"}} {{
         switch -- $object {{
             processing_system7_0 {{return xilinx.com:ip:processing_system7:5.5}}
-            axi_smc - gpgpu_ddr {{return xilinx.com:ip:smartconnect:1.0}}
-            rst_ps7_0_35M {{return xilinx.com:ip:proc_sys_reset:5.0}}
+            gpgpu_ctrl - gpgpu_ddr {{return xilinx.com:ip:smartconnect:1.0}}
+            rst_ps7_0_35M - gpu_sys_reset {{return xilinx.com:ip:proc_sys_reset:5.0}}
             irq_concat {{return xilinx.com:inline_hdl:ilconcat:1.0}}
             irq_zero - reset_locked {{return xilinx.com:inline_hdl:ilconstant:1.0}}
         }}
@@ -248,7 +248,34 @@ def test_system_creates_catalog_first_then_products_wrapper_and_top(tmp_path):
     assert "connect_bd_net irq_concat/dout processing_system7_0/IRQ_F2P" in out
     assert "create_bd_cell -type inline_hdl -vlnv xilinx.com:inline_hdl:ilconcat:1.0 irq_concat" in out
     assert "CONFIG.CONST_WIDTH 15 CONFIG.CONST_VAL 0" in out
-    assert "SET CONFIG.C_EXT_RESET_HIGH 0 rst_ps7_0_35M" in out
+    for reset in ("gpu_sys_reset", "rst_ps7_0_35M"):
+        assert f"SET CONFIG.C_EXT_RESET_HIGH 0 {reset}" in out
+
+
+def test_bootstrap_keeps_the_display_off_the_gpgpu_clock(tmp_path):
+    result = run_tcl(system_script(tmp_path))
+    assert result.returncode == 0, result.stderr
+    out = result.stdout
+    lines = out.splitlines()
+    # FCLK_CLK1 is a fixed 100 MHz the PS makes exactly, on a global buffer.
+    for setting in ("CONFIG.PCW_FPGA_FCLK1_ENABLE 1", "CONFIG.PCW_FPGA1_PERIPHERAL_FREQMHZ 100",
+                    "CONFIG.PCW_FCLK_CLK1_BUF TRUE"):
+        assert setting in out
+    gpu = {"processing_system7_0/M_AXI_GP0_ACLK", "processing_system7_0/S_AXI_HP0_ACLK", "gpgpu_ctrl/aclk",
+           "gpgpu_ddr/aclk", "gpgpu_axi_0/aclk", "gpu_sys_reset/slowest_sync_clk"}
+    display = {"processing_system7_0/M_AXI_GP1_ACLK", "processing_system7_0/S_AXI_HP2_ACLK", "axi_smc_1/aclk",
+               "vdma_ddr/aclk", "axi_vdma_0/s_axi_lite_aclk", "axi_vdma_0/m_axi_mm2s_aclk",
+               "axi_vdma_0/m_axis_mm2s_aclk", "axis_subset_converter_0/aclk", "v_axi4s_vid_out_0/aclk",
+               "clk_wiz_0/clk_in1", "rst_ps7_0_35M/slowest_sync_clk"}
+    for source, pins in (("processing_system7_0/FCLK_CLK0", gpu), ("processing_system7_0/FCLK_CLK1", display)):
+        net = next(line for line in lines if line.startswith(f"connect_bd_net {source}"))
+        assert set(net.split()[2:]) == pins, source
+    # Each clock domain takes its reset from the proc_sys_reset on that clock.
+    for reset, pins in (("gpu_sys_reset", {"gpgpu_axi_0/aresetn", "gpgpu_ctrl/aresetn", "gpgpu_ddr/aresetn"}),
+                        ("rst_ps7_0_35M", {"axi_smc_1/aresetn", "vdma_ddr/aresetn", "axi_vdma_0/axi_resetn",
+                                           "axis_subset_converter_0/aresetn", "v_axi4s_vid_out_0/aresetn"})):
+        net = next(line for line in lines if line.startswith(f"connect_bd_net {reset}/peripheral_aresetn"))
+        assert set(net.split()[2:]) == pins, reset
 
 
 def test_bootstrap_connects_gpgpu_ddr_master_and_hdmi_scanout(tmp_path):
@@ -257,7 +284,7 @@ def test_bootstrap_connects_gpgpu_ddr_master_and_hdmi_scanout(tmp_path):
     out = result.stdout
     lines = out.splitlines()
     # The GPGPU's DDR master on HP0, the VDMA on HP2 (separate DDR controller
-    # ports); one FCLK_CLK0 domain.
+    # ports).
     for setting in ("CONFIG.PCW_USE_S_AXI_HP0 1", "CONFIG.PCW_USE_S_AXI_HP2 1", "CONFIG.PCW_USE_M_AXI_GP1 1"):
         assert setting in out
     assert "PCW_USE_S_AXI_HP1" not in out
@@ -265,13 +292,6 @@ def test_bootstrap_connects_gpgpu_ddr_master_and_hdmi_scanout(tmp_path):
     assert "connect_bd_intf_net gpgpu_ddr/M00_AXI processing_system7_0/S_AXI_HP0" in out
     assert "connect_bd_intf_net axi_vdma_0/M_AXI_MM2S vdma_ddr/S00_AXI" in out
     assert "connect_bd_intf_net vdma_ddr/M00_AXI processing_system7_0/S_AXI_HP2" in out
-    clock = next(line for line in lines if line.startswith("connect_bd_net processing_system7_0/FCLK_CLK0"))
-    for pin in ("gpgpu_axi_0/aclk", "gpgpu_ddr/aclk", "vdma_ddr/aclk", "processing_system7_0/S_AXI_HP0_ACLK",
-                "processing_system7_0/S_AXI_HP2_ACLK", "axi_vdma_0/m_axi_mm2s_aclk", "clk_wiz_0/clk_in1"):
-        assert pin in clock
-    reset = next(line for line in lines if line.startswith("connect_bd_net rst_ps7_0_35M/peripheral_aresetn"))
-    for pin in ("gpgpu_axi_0/aresetn", "gpgpu_ddr/aresetn", "vdma_ddr/aresetn", "axi_vdma_0/axi_resetn"):
-        assert pin in reset
     # Both DDR masters map PS DDR identity-mapped, nothing excluded.
     assert sum(line.startswith("MAP -offset 0x00000000 -range 0x20000000") for line in lines) == 2
     assert not any(line.startswith("exclude_bd_addr_seg") for line in lines)
@@ -310,7 +330,7 @@ def test_system_reuses_saved_gui_design_without_bootstrap(tmp_path):
     assert "SET CONFIG.SP_PER_SM" not in out
 
 
-@pytest.mark.parametrize("missing", ["gpgpu_axi_0", "axi_smc", "gpgpu_ddr", "irq_concat", "irq_zero",
+@pytest.mark.parametrize("missing", ["gpgpu_axi_0", "gpgpu_ctrl", "gpgpu_ddr", "irq_concat", "irq_zero",
                                      "rst_ps7_0_35M"])
 def test_incomplete_saved_design_refused_before_refresh_or_save(tmp_path, missing):
     result = run_tcl(system_script(tmp_path, existing=True, missing_cell=missing))

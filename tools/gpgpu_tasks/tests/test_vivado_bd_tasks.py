@@ -8,7 +8,7 @@ from tools.hardware.vivado import tasks
 
 def payload(name='design_1', part='xc7z020clg484-1'):
     return {'design': {'design_info': {'name': name, 'device': part},
-                       'components': {'processing_system7_0': {}, 'axi_smc': {},
+                       'components': {'processing_system7_0': {}, 'gpgpu_ctrl': {},
                                       'gpgpu_axi_0': {'vlnv': 'user.org:user:gpgpu_axi:1.0'}},
                        'gui_property': 'preserve me'}}
 
