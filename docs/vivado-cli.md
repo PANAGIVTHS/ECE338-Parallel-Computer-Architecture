@@ -123,11 +123,13 @@ reaches `S_AXI_HP2` through `vdma_ddr` (1x1 SmartConnects, which also convert
 AXI4 to AXI3), so the two meet only in the DDR controller; both see PS DDR
 identity-mapped (0x0000_0000-0x1FFF_FFFF). The DDR controller's ports 2
 (HP0/HP1) and 3 (HP2/HP3) read through its high-priority queue
-(`HPR(16)/LPR(16)`), so the scanout's reads are not held behind the GPGPU's
+(`HPR(16)/LPR(16)`), which goes critical first (level 1; low-priority reads
+and writes at 15), so the scanout's reads are not held behind the GPGPU's
 write bursts; without it the video out underflows and the monitor blanks
 while a kernel writes DDR. PS GP1 reaches the VDMA registers
 at 0x8300_0000. Scanout:
-VDMA (32-bit pixels, two frame stores) -> AXI4-Stream subset converter (4 to
+VDMA (32-bit pixels, two frame stores, 64-beat bursts of its 64-bit memory
+side, 8192-pixel line buffer) -> AXI4-Stream subset converter (4 to
 3 bytes, `0x00RRGGBB` to the video order) -> AXI4-Stream video out, timed by a
 VTC in its default mode -> `rgb2dvi` (`kClkRange` 3, its 720p range) -> the `TMDS_0` HDMI
 port. FCLK0 runs only the GPGPU, GP0 and HP0 (reset `gpu_sys_reset`), so it

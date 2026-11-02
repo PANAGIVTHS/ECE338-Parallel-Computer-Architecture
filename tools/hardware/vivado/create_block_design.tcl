@@ -33,6 +33,10 @@ proc create_block_design {} {
     # through the high-priority queue (16 of the 32 read entries), so the
     # scanout's reads are not held behind the GPGPU's write bursts; without
     # it the video out underflows and blanks while the GPGPU writes DDR.
+    # The *_TO_CRITICAL levels are how long (x32 DDR clocks) a queue may be
+    # starved before it goes critical: high-priority reads after 1, low-
+    # priority reads and writes after 15, so the GPGPU's writes cannot
+    # overtake the scanout.
     # FCLK_CLK1: 100 MHz, which the PS makes exactly (I/O PLL / 10).
     # PCW_EN_CLK1_PORT creates its pin; the enable alone does not.
     set ps [create_bd_cell -type ip -vlnv xilinx.com:ip:processing_system7:5.5 processing_system7_0]
@@ -56,9 +60,9 @@ proc create_block_design {} {
         CONFIG.PCW_UIPARAM_DDR_ECC {Disabled} \
         CONFIG.PCW_UIPARAM_DDR_ADV_ENABLE {1} \
         CONFIG.PCW_DDR_HPRLPR_QUEUE_PARTITION {HPR(16)/LPR(16)} \
-        CONFIG.PCW_DDR_HPR_TO_CRITICAL_PRIORITY_LEVEL {15} \
-        CONFIG.PCW_DDR_LPR_TO_CRITICAL_PRIORITY_LEVEL {2} \
-        CONFIG.PCW_DDR_WRITE_TO_CRITICAL_PRIORITY_LEVEL {2} \
+        CONFIG.PCW_DDR_HPR_TO_CRITICAL_PRIORITY_LEVEL {1} \
+        CONFIG.PCW_DDR_LPR_TO_CRITICAL_PRIORITY_LEVEL {15} \
+        CONFIG.PCW_DDR_WRITE_TO_CRITICAL_PRIORITY_LEVEL {15} \
         CONFIG.PCW_DDR_PORT0_HPR_ENABLE {0} \
         CONFIG.PCW_DDR_PORT1_HPR_ENABLE {0} \
         CONFIG.PCW_DDR_PORT2_HPR_ENABLE {1} \
@@ -100,14 +104,16 @@ proc create_block_design {} {
     set_property CONFIG.NUM_SI {1} $vdma_smc
 
     # Scanout: read-only VDMA of 32-bit pixels (one framebuffer word each),
-    # two frame stores (FB0, FB1), 16-beat bursts.
+    # two frame stores (FB0, FB1). 64-beat bursts of the 64-bit memory side
+    # (512 bytes, 10 per 1280-pixel line) and an 8192-pixel (~6 line) buffer
+    # ride out DDR stalls while the GPGPU writes.
     set vdma [create_bd_cell -type ip -vlnv xilinx.com:ip:axi_vdma:6.3 axi_vdma_0]
     set_property -dict [list \
         CONFIG.c_include_s2mm {0} \
         CONFIG.c_m_axis_mm2s_tdata_width {32} \
         CONFIG.c_mm2s_genlock_mode {0} \
-        CONFIG.c_mm2s_linebuffer_depth {4096} \
-        CONFIG.c_mm2s_max_burst_length {16} \
+        CONFIG.c_mm2s_linebuffer_depth {8192} \
+        CONFIG.c_mm2s_max_burst_length {64} \
         CONFIG.c_num_fstores {2}] $vdma
     # 0x00RRGGBB pixels to the 24-bit AXI4-Stream video order {R, B, G}.
     # TKEEP/TREADY/TSTRB/TID/TDEST follow the connected streams.

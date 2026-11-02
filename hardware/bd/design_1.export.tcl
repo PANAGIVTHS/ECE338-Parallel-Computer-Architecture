@@ -248,8 +248,8 @@ proc create_root_design { parentCell } {
     CONFIG.PCW_CLK2_FREQ {10000000} \
     CONFIG.PCW_CLK3_FREQ {10000000} \
     CONFIG.PCW_DDR_HPRLPR_QUEUE_PARTITION {HPR(16)/LPR(16)} \
-    CONFIG.PCW_DDR_HPR_TO_CRITICAL_PRIORITY_LEVEL {15} \
-    CONFIG.PCW_DDR_LPR_TO_CRITICAL_PRIORITY_LEVEL {2} \
+    CONFIG.PCW_DDR_HPR_TO_CRITICAL_PRIORITY_LEVEL {1} \
+    CONFIG.PCW_DDR_LPR_TO_CRITICAL_PRIORITY_LEVEL {15} \
     CONFIG.PCW_DDR_PORT0_HPR_ENABLE {0} \
     CONFIG.PCW_DDR_PORT1_HPR_ENABLE {0} \
     CONFIG.PCW_DDR_PORT2_HPR_ENABLE {1} \
@@ -263,7 +263,7 @@ proc create_root_design { parentCell } {
     CONFIG.PCW_DDR_PRIORITY_WRITEPORT_2 {Low} \
     CONFIG.PCW_DDR_PRIORITY_WRITEPORT_3 {Low} \
     CONFIG.PCW_DDR_RAM_HIGHADDR {0x1FFFFFFF} \
-    CONFIG.PCW_DDR_WRITE_TO_CRITICAL_PRIORITY_LEVEL {2} \
+    CONFIG.PCW_DDR_WRITE_TO_CRITICAL_PRIORITY_LEVEL {15} \
     CONFIG.PCW_EN_CLK1_PORT {1} \
     CONFIG.PCW_EN_EMIO_UART0 {1} \
     CONFIG.PCW_EN_UART0 {1} \
@@ -354,8 +354,8 @@ proc create_root_design { parentCell } {
     CONFIG.c_include_s2mm {0} \
     CONFIG.c_m_axis_mm2s_tdata_width {32} \
     CONFIG.c_mm2s_genlock_mode {0} \
-    CONFIG.c_mm2s_linebuffer_depth {4096} \
-    CONFIG.c_mm2s_max_burst_length {16} \
+    CONFIG.c_mm2s_linebuffer_depth {8192} \
+    CONFIG.c_mm2s_max_burst_length {64} \
     CONFIG.c_num_fstores {2} \
   ] $axi_vdma_0
 
