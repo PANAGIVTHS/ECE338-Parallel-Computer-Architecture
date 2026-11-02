@@ -21,11 +21,6 @@ module DDRWriteAssembler
 );
 
     localparam int unsigned WORD_BYTES = XLEN / 8;
-    typedef logic [$clog2(AXI_DATA_W/XLEN)-1:0] word_sel_t;
-
-    function automatic word_sel_t word_sel_of(input word_t addr);
-        return addr[WORD_SELECT_BIT +: $bits(word_sel_t)];
-    endfunction
 
     //& =============================================
     //& MEMBERS IN THE CURRENT BEAT

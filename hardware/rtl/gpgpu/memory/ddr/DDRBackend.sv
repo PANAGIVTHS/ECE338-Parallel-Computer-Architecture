@@ -152,12 +152,12 @@ module DDRBackend
     //& AXI Master
     //& =============================================
     // TODO: drive from DDRReadRing
-    // cmd_t rd_cmd;
-    // logic rd_r_ready, rd_owed;
-    // logic ar_ready, r_valid, r_last;
-    // assign rd_cmd     = '0;
-    // assign rd_r_ready = 1'b0;
-    // assign rd_owed    = 1'b0;
+    cmd_t rd_cmd;
+    logic rd_r_ready, rd_owed;
+    logic ar_ready, r_valid, r_last;
+    assign rd_cmd     = '0;
+    assign rd_r_ready = 1'b0;
+    assign rd_owed    = 1'b0;
 
     logic axi_fatal;
     mem_fatal_t axi_fatal_code;

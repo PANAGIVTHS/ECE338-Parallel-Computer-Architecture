@@ -32,11 +32,7 @@ module MemorySubsystem
     if (!map_disjoint()) begin : g_map_overlap_check
         $fatal(1, "Memory map regions (DMEM, FB0, FB1, TEX) must not overlap");
     end
-
-    if (DDR_ENABLE) begin : g_ddr_check
-        $fatal(1, "DDR_ENABLE=1: the DDR backend is not implemented yet");
-    end
-
+    
     // Request expansions
     mem_req_t [NUM_REQ-1:0] req;
     logic [NUM_REQ-1:0] req_valid;

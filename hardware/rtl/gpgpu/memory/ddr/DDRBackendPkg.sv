@@ -18,6 +18,7 @@ package DDRBackendPkg;
     typedef logic [XLEN-GROUP_LSB-1:0] ring_group_t;
     typedef logic [GROUP_LSB-BEAT_LSB-1:0] beat_t;
     typedef logic [AXI_MAX_BEATS_PER_BURST-1:0] beat_mask_t;
+    typedef logic [$clog2(AXI_DATA_W/XLEN)-1:0] word_sel_t;
 
     function automatic ring_group_t group_of(input word_t addr);
         return ring_group_t'(addr[XLEN-1:GROUP_LSB]);
@@ -29,6 +30,10 @@ package DDRBackendPkg;
 
     function automatic word_t word_of(input ring_group_t group, input beat_t beat);
         return {group, beat, BEAT_LSB'(0)};
+    endfunction
+
+    function automatic word_sel_t word_sel_of(input word_t addr);
+        return addr[WORD_SELECT_BIT +: $bits(word_sel_t)];
     endfunction
 
 endpackage
