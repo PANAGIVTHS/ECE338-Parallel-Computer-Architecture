@@ -486,7 +486,9 @@ int gpgpu_reset(void)
     return gpgpu_init();
 }
 
-int gpgpu_start_and_wait(void)
+/* `verbose` prints the start and idle messages, which the UART tools expect;
+ * errors are always printed. */
+static int start_and_wait(int verbose)
 {
     u32 status;
 
@@ -513,7 +515,8 @@ int gpgpu_start_and_wait(void)
     gpu_write(GPGPU_REG_IRQ_ENABLE, GPGPU_IRQ_COMPLETE_MASK);
 #endif
 
-    xil_printf("Starting core...\r\n");
+    if (verbose)
+        xil_printf("Starting core...\r\n");
     gpu_write(GPGPU_REG_CONTROL, GPGPU_CONTROL_START_MASK);
 
     /* No timeout: a kernel that never completes blocks here forever. */
@@ -539,8 +542,19 @@ int gpgpu_start_and_wait(void)
     if ((status & GPGPU_STATUS_FAULTED_MASK) != 0U)
         return report_fault();
 
-    xil_printf("Core entered idle state.\r\n");
+    if (verbose)
+        xil_printf("Core entered idle state.\r\n");
     return GPGPU_OK;
+}
+
+int gpgpu_start_and_wait(void)
+{
+    return start_and_wait(1);
+}
+
+int gpgpu_run_quiet(void)
+{
+    return start_and_wait(0);
 }
 
 int gpgpu_dump_imem_ascii(u32 offset, u32 count)

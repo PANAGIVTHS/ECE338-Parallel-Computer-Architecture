@@ -28,6 +28,8 @@ int gpgpu_init(void);
 u32 gpgpu_read_status(void);
 void gpgpu_print_status(void);
 int gpgpu_start_and_wait(void);
+/* gpgpu_start_and_wait() without its progress messages, for timed loops. */
+int gpgpu_run_quiet(void);
 
 /* Acknowledge STOPPED and FAULTED (W1C). A fatal fault stays until a reset. */
 void gpgpu_clear(void);

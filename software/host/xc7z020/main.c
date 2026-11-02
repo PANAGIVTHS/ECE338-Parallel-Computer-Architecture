@@ -4,6 +4,7 @@
 #include "xil_io.h"
 #include "xil_printf.h"
 #include "xil_types.h"
+#include "xtime_l.h"
 #include "sleep.h"
 
 #include <stdlib.h>
@@ -108,6 +109,38 @@ static int display_show(u32 fb) {
     vdma_write(VDMA_PARK_PTR, fb & VDMA_PARK_RD_MASK);
     shown_fb = fb;
     xil_printf("Display: FB%u at 0x%08x\r\n", fb, framebuffers[fb]);
+    return 0;
+}
+
+/* Run the loaded kernel `frames` times back to back and report the rate. The
+ * kernel must need no host writes between runs (e.g. it advances its own
+ * frame counter). The time covers START to completion and the driver's
+ * checks, not UART traffic. */
+static int bench(u32 frames) {
+    XTime start, end;
+    u64 elapsed, rate_x100;
+
+    if (frames == 0U) {
+        xil_printf("ERROR: bench needs at least one frame\r\n");
+        return -1;
+    }
+
+    XTime_GetTime(&start);
+    for (u32 i = 0; i < frames; i++) {
+        if (gpgpu_run_quiet() != GPGPU_OK) {
+            xil_printf("ERROR: frame %u failed\r\n", i);
+            return -1;
+        }
+    }
+    XTime_GetTime(&end);
+
+    elapsed = end - start;
+    /* xil_printf has no floats or 64-bit integers: print fixed point. */
+    rate_x100 = ((u64)frames * COUNTS_PER_SECOND * 100U) / elapsed;
+    xil_printf("%u frames in %u us: %u.%02u frames/s, %u us/frame\r\n", frames,
+               (u32)((elapsed * 1000000U) / COUNTS_PER_SECOND),
+               (u32)(rate_x100 / 100U), (u32)(rate_x100 % 100U),
+               (u32)((elapsed * 1000000U) / COUNTS_PER_SECOND / frames));
     return 0;
 }
 
@@ -353,6 +386,7 @@ static void print_help(void) {
     xil_printf("  loaddmem_bin <offset> <count>\r\n");
     xil_printf("  --------- CONTROL ---------\r\n");
     xil_printf("  run\r\n");
+    xil_printf("  bench <frames>   (run the kernel back to back, report frames/s)\r\n");
     xil_printf("  clear   (acknowledge STOPPED/FAULTED)\r\n");
     xil_printf("  reset   (PL reset; needed after a fatal fault)\r\n");
     xil_printf("  --------- DISPLAY ---------\r\n");
@@ -534,6 +568,17 @@ int main(void) {
 
         } else if (strcmp(cmd, "run") == 0) {
             gpgpu_start_and_wait();
+
+        } else if (strcmp(cmd, "bench") == 0) {
+            u32 frames;
+
+            arg1 = strtok(NULL, " \t");
+            if (parse_count(arg1, &frames) != 0) {
+                xil_printf("Usage: bench <frames>\r\n");
+                continue;
+            }
+
+            bench(frames);
 
         } else if (strcmp(cmd, "clear") == 0) {
             gpgpu_clear();
