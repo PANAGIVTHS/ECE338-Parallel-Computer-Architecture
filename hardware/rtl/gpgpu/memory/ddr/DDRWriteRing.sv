@@ -51,6 +51,11 @@ module DDRWriteRing
     typedef logic [SLOT_W:0] wr_ptr_t; // [2:0] slot index, [3] wrap bit
     typedef logic [SLOT_W-1:0] wr_slot_idx_t;
 
+    // Pointers wrap naturally only at a power of two
+    if ((WR_DEPTH & (WR_DEPTH - 1)) != 0) begin : g_depth_check
+        $fatal(1, "AXI_MAX_OUTSTANDING_WRITES (%0d) must be a power of two", WR_DEPTH);
+    end
+
     typedef struct packed {
         beat_t first; //first beat
         beat_t len; // last - first
@@ -91,17 +96,27 @@ module DDRWriteRing
     //& Pointers
     //& =============================================
     wr_ptr_t alloc, w, b, head;
+    wr_ptr_t w_next;
     logic empty, full, pop;
+
+    // Slot indices: the pointers without their wrap bit
+    wr_slot_idx_t alloc_idx, w_idx, b_idx, head_idx;
+    assign alloc_idx = alloc[SLOT_W-1:0];
+    assign w_idx = w[SLOT_W-1:0];
+    assign b_idx = b[SLOT_W-1:0];
+    assign head_idx = head[SLOT_W-1:0];
+
+    assign w_next = w + wr_ptr_t'(1);
     assign empty = (head == alloc);
-    assign full = (head[SLOT_W-1:0] == alloc[SLOT_W-1:0] & (head[SLOT_W] != alloc[SLOT_W]));
-    assign w_valid = (w != alloc) & ~(aw_cmd.valid & (w + 1'b1 == alloc)); // AW of slot w has gone
+    assign full = (head_idx == alloc_idx) & (head[SLOT_W] != alloc[SLOT_W]);
+    assign w_valid = (w != alloc) & ~(aw_cmd.valid & (w_next == alloc)); // AW of slot w has gone
 
     // Allocation pointer
     always_ff @(posedge clk) begin
         if (~rst_n) begin
             alloc <= '0;
         end else if (push_wr) begin
-            alloc <= alloc + 1'b1;
+            alloc <= alloc + wr_ptr_t'(1);
         end
     end
 
@@ -110,7 +125,7 @@ module DDRWriteRing
         if (~rst_n) begin
             w <= '0;
         end else if (w_fire & w_last) begin
-            w <= w + 1'b1;
+            w <= w_next;
         end
     end
 
@@ -119,7 +134,7 @@ module DDRWriteRing
         if (~rst_n) begin
             b <= '0;
         end else if (b_fire) begin
-            b <= b + 1'b1;
+            b <= b + wr_ptr_t'(1);
         end
     end
 
@@ -128,7 +143,7 @@ module DDRWriteRing
         if (~rst_n) begin
             head <= '0;
         end else if (pop) begin
-            head <= head + 1'b1;
+            head <= head + wr_ptr_t'(1);
         end
     end
 
@@ -144,7 +159,7 @@ module DDRWriteRing
         end else if (w_fire & w_last) begin
             w_beat <= '0;
         end else if(w_fire) begin
-            w_beat <= w_beat + 1'b1;
+            w_beat <= w_beat + beat_t'(1);
         end
     end
 
@@ -160,37 +175,37 @@ module DDRWriteRing
             end
         end else begin
             if (push_wr) begin
-                slot[alloc] <= '{
+                slot[alloc_idx] <= '{
                     first: first_beat,
                     len: length,
-                    b_done: 0,
+                    b_done: 1'b0,
                     bresp: AXI_RESP_OKAY
                 };
             end
             if (b_fire) begin
-                slot[b].b_done <= 1'b1;
-                slot[b].bresp <= b_resp;
+                slot[b_idx].b_done <= 1'b1;
+                slot[b_idx].bresp <= b_resp;
             end
             if (pop) begin
-                slot[head].b_done <= '0;
+                slot[head_idx].b_done <= 1'b0;
             end
         end
     end
 
     logic [NUM_REQ-1:0] waiting_at_head; 
     for (genvar i = 0; i < NUM_REQ; i++) begin: head_waiting
-        assign waiting_at_head[i] = wr_members[i] & (wr_slot_idx_t'(idx[i]) == head[SLOT_W-1:0]) & ~wr_take[i];
+        assign waiting_at_head[i] = wr_members[i] & (wr_slot_idx_t'(idx[i]) == head_idx) & ~wr_take[i];
     end
-    assign pop = ~empty & slot[head[SLOT_W-1:0]].b_done & ~|waiting_at_head;
+    assign pop = ~empty & slot[head_idx].b_done & ~|waiting_at_head;
 
     //& =============================================
     //& Outputs
     //& =============================================
-    assign w_wbeat = w_beat + slot[w].first;
+    assign w_wbeat = w_beat + slot[w_idx].first;
     assign wr_owed = b != w;
-    assign w_slot = ring_index_t'(w[SLOT_W-1:0]);
-    assign w_last = w_beat == slot[w].len;
-    assign wr_alloc = ring_index_t'(alloc[SLOT_W-1:0]);
+    assign w_slot = ring_index_t'(w_idx);
+    assign w_last = w_beat == slot[w_idx].len;
+    assign wr_alloc = ring_index_t'(alloc_idx);
 
     for (genvar i = 0; i < NUM_REQ; i++) begin : wr_response
         assign wr_bdone[i] = wr_members[i] & slot[wr_slot_idx_t'(idx[i])].b_done;

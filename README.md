@@ -21,7 +21,11 @@ under `paths.rtl.sources.gpgpu`, minus its own `tests.rtl.<suite>.exclude_source
 (directory or file names), with `hardware.sources.ordered` first (packages and
 interfaces before their users; excluded entries are dropped).
 `hardware.sources.header_extensions` files are cache dependencies only. The bench and top module come from
-`tests.rtl.<suite>.testbench` and `tests.rtl.<suite>.top`.
+`tests.rtl.<suite>.testbench` and `tests.rtl.<suite>.top`. Every bench attaches the
+AXI4 slave model `tests.rtl.axi_slave.source` (compiled before the bench) to the
+GPGPU's DDR master; `tests.rtl.axi_slave.parameters` set its latency, READY/VALID
+rates and seed. `tests.rtl.<suite>.parameters` override HDL parameters for one
+suite. Headers next to a bench (`tb_e2e_host.svh`) are found with `-I` and tracked.
 
 Generated C++, objects, the native `main` binary, `build.log`, and `simulation.log`
 stay under `<paths.build.root>/tests/rtl/smx/`. Runtime uses this directory with
@@ -58,7 +62,22 @@ and data file names, clock period, reset length, timeouts, RET encoding, unmappe
 address, INFO version) is a required plusarg taken from `tests.rtl.e2e.plusargs`.
 The bench has no defaults and stops if any is missing; add `TEST_END` to stop
 early. The aggregate
-`tests:rtl:{build,run,all}` tasks cover both suites.
+`tests:rtl:{build,run,all}` tasks cover every suite.
+
+### DDR (AXI4 master)
+
+```bash
+./gpgpu run tests:rtl:ddr:all
+```
+
+The DDR bench shares the E2E harness (`tests/hardware/rtl/tb_e2e_host.svh`: the
+AXI4-Lite top, the slave model, host tasks and RISC-V encoders) and is built
+with `DDR_ENABLE=1` from `tests.rtl.ddr.parameters`. Its kernels only store to
+the framebuffers (the DDR read path is not implemented yet): consecutive words,
+one group per lane (more groups than write slots), gaps carrying `WSTRB=0`, the
+same word from every lane, a store loop, and SLVERR/DECERR injection checked
+through `FAULT_INFO`/`FAULT_LANES`/`FAULT_PC`. Results are read through the
+model's backdoor, with burst counts and an idle bus checked after each kernel.
 `tests.rtl.range` in `config/profiles/default.yaml` selects directed SMX/E2E
 case IDs: `"all"` (default) or an inclusive range such as `"1-10"` or `"5-5"`.
 For a one-off selection:

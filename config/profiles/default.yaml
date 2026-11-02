@@ -122,14 +122,29 @@ tests:
       dump_file: dumpfile.fst
     # Directed SMX/E2E test IDs, inclusive: "all" or e.g. "1-10".
     range: "all"
+    # DDR model every bench attaches to the GPGPU's AXI4 master. `source` is
+    # compiled before the bench; `parameters` are the benches' HDL
+    # parameters for it (-G): response latency range in cycles after a
+    # burst's last handshake, and the chance in percent per cycle that a
+    # READY (AW/W/AR) or a due VALID (B/R) is high. SEED is non-zero.
+    axi_slave:
+      source: tests/hardware/rtl/AXI4SlaveMemory.sv
+      parameters:
+        AXI_SLAVE_LATENCY_MIN: 1
+        AXI_SLAVE_LATENCY_MAX: 40
+        AXI_SLAVE_READY_PCT: 75
+        AXI_SLAVE_VALID_PCT: 75
+        AXI_SLAVE_SEED: 1
     # Per suite: `testbench` is relative to the repository root, `top` is the
     # bench's top module, `exclude_sources` drops directories/files from
-    # hardware.sources, `plusargs` are passed to the simulator as +NAME=value.
+    # hardware.sources, `parameters` override HDL parameters (-G) for this
+    # suite only, `plusargs` are passed to the simulator as +NAME=value.
     smx:
       testbench: tests/hardware/rtl/tb_GPGPU.sv
       top: tb_GPGPU_smx_only
       # No AXI wrapper: the bench instantiates GPGPU directly.
       exclude_sources: [experimental, interfaces]
+      parameters: {}
       plusargs: {}
     e2e:
       testbench: tests/hardware/rtl/tb_GPGPU_e2e.sv
@@ -137,6 +152,7 @@ tests:
       # Keeps interfaces/ for the AXI4-Lite top; drops the deprecated host
       # command processor.
       exclude_sources: [experimental, HostControllerProcessor.sv]
+      parameters: {}
       # All required by the bench (no defaults in SystemVerilog). +TEST_END
       # is optional and may be added here to stop after a given case.
       plusargs:
@@ -145,12 +161,23 @@ tests:
         TEST_IDX: 1                 # first case index
         PROGRAM_FILE: program.mem
         DATA_FILE: data.mem
-        CLOCK_PERIOD_NS: 10
-        RESET_CYCLES: 20
-        TEST_TIMEOUT_CYCLES: 10000  # launch to completion IRQ
-        AXI_TIMEOUT_CYCLES: 1000    # per AXI channel handshake
-        RET_INSTR: "00008067"       # hex; kernel end, IMEM is loaded up to it
         UNMAPPED_ADDR: "00008000"   # hex; must decode to no CSR/IMEM/DMEM
+        # Shared AXI4-Lite host settings (tb_e2e_host.svh)
+        <<: &e2e_host_plusargs
+          CLOCK_PERIOD_NS: 10
+          RESET_CYCLES: 20
+          TEST_TIMEOUT_CYCLES: 10000  # launch to completion IRQ
+          AXI_TIMEOUT_CYCLES: 1000    # per AXI channel handshake
+          RET_INSTR: "00008067"       # hex; kernel end, IMEM is loaded up to it
+    ddr:
+      testbench: tests/hardware/rtl/tb_GPGPU_ddr.sv
+      top: tb_GPGPU_ddr
+      exclude_sources: [experimental, HostControllerProcessor.sv]
+      # Store kernels against the DDR model, whatever architecture.ddr_enable is.
+      parameters:
+        DDR_ENABLE: 1
+      plusargs:
+        <<: *e2e_host_plusargs
     random:
       iterations: 100
       # Set a non-zero integer for reproducibility; 0 chooses and prints a seed.

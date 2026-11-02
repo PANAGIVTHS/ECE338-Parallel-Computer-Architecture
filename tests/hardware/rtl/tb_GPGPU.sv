@@ -13,7 +13,12 @@ module tb_GPGPU_smx_only
     parameter int unsigned CLOCK_KHZ,
     parameter int unsigned BUILD_HASH,
     parameter int unsigned BUILD_DIRTY,
-    parameter int unsigned DDR_ENABLE
+    parameter int unsigned DDR_ENABLE,
+    parameter int unsigned AXI_SLAVE_LATENCY_MIN,
+    parameter int unsigned AXI_SLAVE_LATENCY_MAX,
+    parameter int unsigned AXI_SLAVE_READY_PCT,
+    parameter int unsigned AXI_SLAVE_VALID_PCT,
+    parameter int unsigned AXI_SLAVE_SEED
 ) ();
 
     reg clk_in, rst;
@@ -40,6 +45,8 @@ module tb_GPGPU_smx_only
     reg [8*255:0] trace_file;
     string dump_file;
 
+    AXI4FullInterface ddr_axi ();
+
     GPGPU #(.SP_PER_SM(NUM_CORES), .MEMORY_INIT(""), .INTERFACE_VERSION(INTERFACE_VERSION),
            .CLOCK_KHZ(CLOCK_KHZ), .BUILD_HASH(BUILD_HASH), .BUILD_DIRTY(BUILD_DIRTY != 0),
            .DDR_ENABLE(DDR_ENABLE != 0)) UUT (
@@ -48,7 +55,16 @@ module tb_GPGPU_smx_only
         .i_req_valid(1'b0), .o_req_ready(), .i_req_write(1'b0),
         .i_req_addr(32'b0), .i_req_wdata(32'b0), .i_req_wstrb(4'b0),
         .o_rsp_valid(), .i_rsp_ready(1'b1), .o_rsp_rdata(),
-        .o_rsp_status(), .o_irq()
+        .o_rsp_status(), .o_irq(),
+        `AXI4_SLAVE_CONNECT(m_axi, ddr_axi)
+    );
+
+    // DDR model on the AXI4 master; these programs use DMEM only.
+    AXI4SlaveMemory #(
+        .LATENCY_MIN(AXI_SLAVE_LATENCY_MIN), .LATENCY_MAX(AXI_SLAVE_LATENCY_MAX),
+        .READY_PCT(AXI_SLAVE_READY_PCT), .VALID_PCT(AXI_SLAVE_VALID_PCT), .SEED(AXI_SLAVE_SEED)
+    ) ddr_mem (
+        .clk(clk_in), .rst_n(rst), .axi(ddr_axi)
     );
     assign o_idle = rst && UUT.core_state == CORE_IDLE;
     assign o_running = rst && UUT.core_state == CORE_RUNNING;
@@ -151,6 +167,7 @@ module tb_GPGPU_smx_only
             // Reset
             rst = 1'b0;
             repeat (10) @(posedge uut_clk);
+            ddr_mem.clear();
             rst = 1'b1;
             repeat (10) @(posedge uut_clk);
 
@@ -226,6 +243,11 @@ module tb_GPGPU_smx_only
                              i, expected_data[i], UUT.memory_subsystem.bramBackend.dataMemory.data[i]);
                     data_errors = data_errors + 1;
                 end
+            end
+
+            if (!ddr_mem.idle()) begin
+                $display("  [ERROR] A DDR transaction is still open after completion");
+                data_errors = data_errors + 1;
             end
 
             if (reg_errors == 0 && data_errors == 0) begin

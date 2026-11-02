@@ -34,6 +34,11 @@ SIM_EXE := $(BUILD_DIR)/$(notdir $(OUT))
 #                    "reference before declaration". Headers come in via -I.
 EXCLUDE_DIRS ?= 
 ORDERED_SOURCES ?= 
+# Bench-side sources compiled after the RTL and before $(TB): the DDR model
+# every bench attaches to the AXI4 master (mirrors tests.rtl.axi_slave). Its
+# AXI_SLAVE_* bench parameters have no defaults; pass them with
+# EXTRA_FLAGS=-G..., as tests.rtl.axi_slave.parameters does for the runner.
+TB_SOURCES ?= AXI4SlaveMemory.sv
 
 _PRUNE   := $(foreach d,$(EXCLUDE_DIRS),-not -path '*/$(d)/*')
 _ORDERED := $(addprefix $(SRC_DIR)/,$(ORDERED_SOURCES))
@@ -43,7 +48,7 @@ VERILOG_SOURCES := $(_ORDERED) $(_REST)
 # Keep existing datapath warnings visible; they must not prevent simulation.
 # An elaboration-time $fatal (USERFATAL) still stops the build.
 VERILATOR_FLAGS := --binary --timing --assert --trace -Wno-fatal -Werror-USERFATAL \
-    --timescale 1ns/1ps -I$(SRC_DIR)
+    --timescale 1ns/1ps -I$(SRC_DIR) -I$(CURDIR)
 
 UART_PORT ?= /dev/ttyACM0
 UART_BAUD ?= 115200
@@ -71,7 +76,7 @@ compile:
 	@echo "Compiling testbench: $(TB) (Verilator, top $(TOP))"
 	mkdir -p $(BUILD_DIR) $(dir $(abspath $(OUT)))
 	$(VERILATOR) $(VERILATOR_FLAGS) $(EXTRA_FLAGS) --top-module $(TOP) \
-	    --Mdir $(BUILD_DIR) -j $(JOBS) -o $(notdir $(OUT)) $(VERILOG_SOURCES) $(TB)
+	    --Mdir $(BUILD_DIR) -j $(JOBS) -o $(notdir $(OUT)) $(VERILOG_SOURCES) $(TB_SOURCES) $(TB)
 	@if [[ '$(SIM_EXE)' != '$(abspath $(OUT))' ]]; then cp $(SIM_EXE) $(abspath $(OUT)); fi
 
 simulate: compile

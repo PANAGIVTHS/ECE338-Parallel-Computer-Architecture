@@ -34,8 +34,17 @@ class Config:
             "tests.rtl.e2e.testbench": "tests/hardware/rtl/tb_GPGPU_e2e.sv",
             "tests.rtl.e2e.top": "tb_GPGPU_e2e",
             "tests.rtl.e2e.plusargs": {"TEST_ROOT": "cases", "TEST_IDX": 1},
+            "tests.rtl.ddr.testbench": "tests/hardware/rtl/tb_GPGPU_ddr.sv",
+            "tests.rtl.ddr.top": "tb_GPGPU_ddr",
+            "tests.rtl.ddr.plusargs": {},
             "tests.rtl.smx.exclude_sources": ["experimental", "interfaces"],
             "tests.rtl.e2e.exclude_sources": ["experimental", "HostControllerProcessor.sv"],
+            "tests.rtl.ddr.exclude_sources": ["experimental", "HostControllerProcessor.sv"],
+            "tests.rtl.smx.parameters": {},
+            "tests.rtl.e2e.parameters": {},
+            "tests.rtl.ddr.parameters": {"DDR_ENABLE": 1},
+            "tests.rtl.axi_slave.source": "tests/hardware/rtl/AXI4SlaveMemory.sv",
+            "tests.rtl.axi_slave.parameters": {"AXI_SLAVE_LATENCY_MIN": 1, "AXI_SLAVE_SEED": 1},
             "paths.rtl.sources.gpgpu": "hardware/rtl/gpgpu",
             "hardware.sources.extensions": [".sv", ".v"],
             "hardware.sources.header_extensions": [".svh"],
@@ -89,7 +98,7 @@ def test_real_checkout_verilator_sources_and_core_count():
     assert changed["tests:rtl:generate"]["uptodate"][0].config == {"num_cores": 4}
 
 
-def test_e2e_builds_axi_top_and_aggregate_requires_both_suites():
+def test_e2e_builds_axi_top_and_aggregate_requires_every_suite():
     repo = Path(__file__).resolve().parents[3]
     graph = tasks(Config(repo))
     root = repo / "hardware/rtl/gpgpu"
@@ -103,16 +112,33 @@ def test_e2e_builds_axi_top_and_aggregate_requires_both_suites():
     assert command[command.index("--Mdir") + 1] == str(repo / "custom-build/tests/rtl/e2e")
     assert graph["tests:rtl:e2e:run"]["task_dep"] == ["tests:rtl:generate", "tests:rtl:e2e:build"]
     assert graph["tests:rtl:e2e:all"]["task_dep"] == ["tests:rtl:e2e:run"]
-    assert graph["tests:rtl:build"]["task_dep"] == ["tests:rtl:e2e:build", "tests:rtl:smx:build"]
-    assert graph["tests:rtl:run"]["task_dep"] == ["tests:rtl:e2e:run", "tests:rtl:smx:run"]
+    assert graph["tests:rtl:build"]["task_dep"] == [
+        "tests:rtl:ddr:build", "tests:rtl:e2e:build", "tests:rtl:smx:build"]
+    assert graph["tests:rtl:run"]["task_dep"] == ["tests:rtl:ddr:run", "tests:rtl:e2e:run", "tests:rtl:smx:run"]
     assert graph["tests:rtl:all"]["task_dep"] == ["tests:rtl:run"]
+
+
+def test_ddr_suite_builds_the_axi_top_with_ddr_enabled():
+    repo = Path(__file__).resolve().parents[3]
+    graph = tasks(Config(repo))
+    build = graph["tests:rtl:ddr:build"]
+    command = build["actions"][0][1][0]
+    assert command[command.index("--top-module") + 1] == "tb_GPGPU_ddr"
+    assert command[-2:] == [str(repo / "tests/hardware/rtl/AXI4SlaveMemory.sv"),
+                            str(repo / "tests/hardware/rtl/tb_GPGPU_ddr.sv")]
+    assert "-GDDR_ENABLE=1" in command and "-GDDR_ENABLE=0" not in command
+    assert str(repo / "hardware/rtl/gpgpu/interfaces/AXI4Top.v") in command
+    # Every dependency exists in the checkout, including the shared bench header.
+    identity = Config(repo).build_root / "hardware/build_identity.txt"
+    assert all(Path(p).is_file() for p in build["file_dep"] if Path(p) != identity)
+    assert str(repo / "tests/hardware/rtl/tb_e2e_host.svh") in build["file_dep"]
 
 
 def test_trace_and_random_use_native_executable():
     config = Config(Path(__file__).resolve().parents[3])
     config.trace = True
     graph = tasks(config)
-    for suite in ("smx", "e2e"):
+    for suite in ("smx", "e2e", "ddr"):
         build = graph[f"tests:rtl:{suite}:build"]["actions"][0][1][0]
         assert "--trace-fst" in build and "--trace-structs" in build
         assert "+DUMP_FILE=dumpfile.fst" in graph[f"tests:rtl:{suite}:run"]["actions"][0][1][0]
@@ -125,9 +151,9 @@ def test_trace_and_random_use_native_executable():
 
 @pytest.mark.parametrize("key", [
     f"tests.rtl.{suite}.{option}"
-    for suite in ("smx", "e2e")
-    for option in ("testbench", "top", "exclude_sources", "plusargs")
-] + ["paths.rtl.sources.gpgpu"]
+    for suite in ("smx", "e2e", "ddr")
+    for option in ("testbench", "top", "exclude_sources", "parameters", "plusargs")
+] + ["tests.rtl.axi_slave.source", "tests.rtl.axi_slave.parameters", "paths.rtl.sources.gpgpu"]
   + [f"hardware.sources.{option}" for option in ("extensions", "header_extensions", "ordered")]
   + ["tests.rtl.trace.enabled", "tests.rtl.trace.verilator_flags", "tests.rtl.trace.dump_file"])
 def test_suite_settings_have_no_fallback(key):

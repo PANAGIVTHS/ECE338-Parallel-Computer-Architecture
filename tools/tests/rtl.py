@@ -90,6 +90,16 @@ def _configured_bool(config: ResolvedConfig, key: str) -> bool:
         raise TypeError(f"{key} must be a boolean")
     return value
 
+def _configured_int_parameters(config: ResolvedConfig, key: str) -> dict[str, int]:
+    """Read a {NAME: integer} mapping of HDL parameters (passed as -GNAME=value)."""
+    value = config.get(key)
+    if not isinstance(value, Mapping) or not all(
+        isinstance(name, str) and name and isinstance(arg, int) and not isinstance(arg, bool)
+        for name, arg in value.items()
+    ):
+        raise TypeError(f"{key} must be a mapping of parameter names to integers")
+    return dict(value)
+
 def _configured_plusargs(config: ResolvedConfig, key: str) -> list[str]:
     """Render a {NAME: value} mapping as simulator +NAME=value arguments."""
     value = config.get(key)
@@ -189,8 +199,9 @@ def create_tasks(config: ResolvedConfig) -> list[dict[str, Any]]:
     expected_generator = repo_root / "tools/tests/expected_generator.py"
     random_tester = repo_root / "tools/tests/random_tester.py"
     # Suite names are the task namespace; everything else about a suite
-    # (bench file, top module, tracing, runtime plusargs) comes from config.
-    suites = ("smx", "e2e")
+    # (bench file, top module, parameters, tracing, runtime plusargs) comes
+    # from config.
+    suites = ("smx", "e2e", "ddr")
     testbenches = {
         suite: repo_root / _configured_command(config, f"tests.rtl.{suite}.testbench")
         for suite in suites
@@ -200,6 +211,27 @@ def create_tasks(config: ResolvedConfig) -> list[dict[str, Any]]:
     }
     run_plusargs = {
         suite: _configured_plusargs(config, f"tests.rtl.{suite}.plusargs") for suite in suites
+    }
+    # Every bench attaches the AXI4 slave model to the GPGPU's DDR master: it
+    # compiles before the bench, and its parameters are bench parameters.
+    # A suite's own parameters override both these and the static ones.
+    slave_source = repo_root / _configured_command(config, "tests.rtl.axi_slave.source")
+    slave_parameters = _configured_int_parameters(config, "tests.rtl.axi_slave.parameters")
+    suite_parameters = {
+        suite: {
+            **parameters, **slave_parameters,
+            **_configured_int_parameters(config, f"tests.rtl.{suite}.parameters"),
+        }
+        for suite in suites
+    }
+    # Headers next to a bench (its `include files) are build dependencies.
+    header_extensions = string_list(config, "hardware.sources.header_extensions")
+    bench_headers = {
+        suite: sorted(
+            path for path in testbench.parent.iterdir()
+            if path.is_file() and path.suffix in header_extensions
+        )
+        for suite, testbench in testbenches.items()
     }
     cases = _test_cases(cases_root)
     assembly_sources = [case / "program.asm" for case in cases]
@@ -270,13 +302,13 @@ def create_tasks(config: ResolvedConfig) -> list[dict[str, Any]]:
             # (USERFATAL): the RTL's parameter checks must stop the build.
             verilator, "--binary", "--timing", "--assert", "--autoflush", "-Wno-fatal",
             "-Werror-USERFATAL",
-            "--timescale", "1ns/1ps", f"-I{rtl_src_root}", "-DSIM",
+            "--timescale", "1ns/1ps", f"-I{rtl_src_root}", f"-I{testbench.parent}", "-DSIM",
             "--top-module", testbench_tops[suite], f"-GNUM_CORES={num_cores}",
-            *(f"-G{name}={value}" for name, value in parameters.items()),
+            *(f"-G{name}={value}" for name, value in suite_parameters[suite].items()),
             "--Mdir", str(suite_build_root), "-o", executable.name,
             "-MAKEFLAGS", shlex.join([f"CXX={cxx}", f"LINK={cxx}"]),
             *(trace_flags if trace else []),
-            *(str(source) for source in sources), str(testbench),
+            *(str(source) for source in sources), str(slave_source), str(testbench),
         ]
         tasks.extend(
             [
@@ -285,7 +317,9 @@ def create_tasks(config: ResolvedConfig) -> list[dict[str, Any]]:
                     "actions": [
                         (run_compilation, [compile_command, repo_root, suite_build_root, make, identity])
                     ],
-                    "file_dep": [str(testbench), *(str(source) for source in (*sources, *suite_headers[suite])),
+                    "file_dep": [str(testbench), str(slave_source),
+                                 *(str(source) for source in (*sources, *suite_headers[suite],
+                                                              *bench_headers[suite])),
                                  str(identity)],
                     "task_dep": ["hardware:identity"],
                     "targets": [str(executable)],
@@ -371,12 +405,12 @@ def create_tasks(config: ResolvedConfig) -> list[dict[str, Any]]:
             {
                 "name": "tests:rtl:build",
                 "actions": None,
-                "task_dep": ["tests:rtl:e2e:build", "tests:rtl:smx:build"],
+                "task_dep": [f"tests:rtl:{suite}:build" for suite in sorted(suites)],
             },
             {
                 "name": "tests:rtl:run",
                 "actions": None,
-                "task_dep": ["tests:rtl:e2e:run", "tests:rtl:smx:run"],
+                "task_dep": [f"tests:rtl:{suite}:run" for suite in sorted(suites)],
             },
             {
                 "name": "tests:rtl:all",

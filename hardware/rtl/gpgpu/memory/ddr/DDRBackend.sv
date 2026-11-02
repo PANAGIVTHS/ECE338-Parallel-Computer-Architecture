@@ -105,11 +105,11 @@ module DDRBackend
         .b_resp       (b_resp),
         .w_valid      (w_valid),
         .w_last       (w_last),
-        .wr_owed       (wr_owed),
+        .wr_owed      (wr_owed),
         .aw_cmd       (aw_cmd),
         // Group formation
         .free         (wr_ring_free),
-        .alloc        (wr_alloc),
+        .wr_alloc     (wr_alloc),
         .push_wr      (push_wr),
         .group_address(group_address),
         .first_beat   (first_beat),

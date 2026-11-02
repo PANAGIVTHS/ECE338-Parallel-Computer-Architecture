@@ -57,6 +57,12 @@ Example: `software:programs:simple:x86`
 
 • `tests:rtl:e2e:all` — Generate, build, and run the E2E suite. Set `tests.rtl.trace.enabled=true` for waveform tracing.
 
+• `tests:rtl:ddr:build` — Build the DDR bench (`tests.rtl.ddr.testbench`/`top`): the AXI4-Lite top with `tests.rtl.ddr.parameters` (DDR_ENABLE=1) and the AXI4 slave model `tests.rtl.axi_slave`.
+
+• `tests:rtl:ddr:run` — Run store kernels to the framebuffers and check DDR through the slave model's backdoor, burst counts, and the fault report for injected SLVERR/DECERR.
+
+• `tests:rtl:ddr:all` — Build and run the DDR suite.
+
 • `tests:rtl:smx:build` — Build `tb_GPGPU.sv` with Verilator (top `tb_GPGPU_smx_only`).
 
 • `tests:rtl:smx:run` — Run the SMX-only suite with direct memory access.

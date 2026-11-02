@@ -31,8 +31,17 @@ class StubResolvedConfig:
             "tests.rtl.e2e.testbench": "tests/hardware/rtl/tb_GPGPU_e2e.sv",
             "tests.rtl.e2e.top": "tb_GPGPU_e2e",
             "tests.rtl.e2e.plusargs": {"TEST_ROOT": "cases", "TEST_IDX": 1},
+            "tests.rtl.ddr.testbench": "tests/hardware/rtl/tb_GPGPU_ddr.sv",
+            "tests.rtl.ddr.top": "tb_GPGPU_ddr",
+            "tests.rtl.ddr.plusargs": {},
             "tests.rtl.smx.exclude_sources": ["interfaces"],
             "tests.rtl.e2e.exclude_sources": [],
+            "tests.rtl.ddr.exclude_sources": [],
+            "tests.rtl.smx.parameters": {},
+            "tests.rtl.e2e.parameters": {},
+            "tests.rtl.ddr.parameters": {"DDR_ENABLE": 1, "AXI_SLAVE_SEED": 7},
+            "tests.rtl.axi_slave.source": "tests/hardware/rtl/AXI4SlaveMemory.sv",
+            "tests.rtl.axi_slave.parameters": {"AXI_SLAVE_LATENCY_MAX": 9, "AXI_SLAVE_SEED": 3},
             "paths.rtl.sources.gpgpu": "hardware/rtl/gpgpu",
             "hardware.sources.extensions": [".sv", ".v"],
             "hardware.sources.header_extensions": [".svh"],
@@ -61,6 +70,9 @@ def make_repo(tmp_path):
     (case / "program.asm").write_text("addi x1, x0, 1\n")
     (test_root / "tb_GPGPU.sv").write_text("// smx bench\n")
     (test_root / "tb_GPGPU_e2e.sv").write_text("// e2e bench\n")
+    (test_root / "tb_GPGPU_ddr.sv").write_text("// ddr bench\n")
+    (test_root / "tb_e2e_host.svh").write_text("// shared bench harness\n")
+    (test_root / "AXI4SlaveMemory.sv").write_text("// slave model\n")
     return StubResolvedConfig(tmp_path)
 
 
@@ -72,7 +84,7 @@ def test_current_layout_generation_and_build_dependencies(tmp_path):
     tasks = tasks_by_name(make_repo(tmp_path))
     assert set(tasks) == {
         "hardware:identity", "tests:rtl:generate", "tests:rtl:random",
-        *(f"tests:rtl:{suite}:{stage}" for suite in ("smx", "e2e") for stage in ("build", "run", "all")),
+        *(f"tests:rtl:{suite}:{stage}" for suite in ("smx", "e2e", "ddr") for stage in ("build", "run", "all")),
         *(f"tests:rtl:{stage}" for stage in ("build", "run", "all")),
     }
     generate = tasks["tests:rtl:generate"]
@@ -103,6 +115,41 @@ def test_current_layout_generation_and_build_dependencies(tmp_path):
     e2e = tasks["tests:rtl:e2e:build"]["actions"][0][1][0]
     assert str(rtl_root / "interfaces/AXI4Top.v") in e2e
     assert e2e[e2e.index("--top-module") + 1] == "tb_GPGPU_e2e"
+
+
+def test_every_bench_compiles_the_axi_slave_model_with_its_parameters(tmp_path):
+    tasks = tasks_by_name(make_repo(tmp_path))
+    test_root = tmp_path / "tests/hardware/rtl"
+    model = str(test_root / "AXI4SlaveMemory.sv")
+    for suite, bench in (("smx", "tb_GPGPU.sv"), ("e2e", "tb_GPGPU_e2e.sv"), ("ddr", "tb_GPGPU_ddr.sv")):
+        build = tasks[f"tests:rtl:{suite}:build"]
+        command = build["actions"][0][1][0]
+        # The model defines AXI4_SLAVE_CONNECT, so it precedes the bench.
+        assert command[-2:] == [model, str(test_root / bench)]
+        assert model in build["file_dep"]
+        # Headers beside the bench are found with -I and tracked.
+        assert f"-I{test_root}" in command
+        assert str(test_root / "tb_e2e_host.svh") in build["file_dep"]
+        assert "-GAXI_SLAVE_LATENCY_MAX=9" in command
+
+
+def test_suite_parameters_override_static_and_slave_parameters(tmp_path):
+    tasks = tasks_by_name(make_repo(tmp_path))
+    smx = tasks["tests:rtl:smx:build"]["actions"][0][1][0]
+    ddr = tasks["tests:rtl:ddr:build"]["actions"][0][1][0]
+    assert "-GDDR_ENABLE=0" in smx and "-GAXI_SLAVE_SEED=3" in smx
+    assert "-GDDR_ENABLE=1" in ddr and "-GDDR_ENABLE=0" not in ddr
+    assert "-GAXI_SLAVE_SEED=7" in ddr and "-GAXI_SLAVE_SEED=3" not in ddr
+
+
+@pytest.mark.parametrize("key", ["tests.rtl.axi_slave.parameters", "tests.rtl.ddr.parameters"])
+@pytest.mark.parametrize("value", [{"AXI_SLAVE_SEED": "1"}, {"AXI_SLAVE_SEED": True}, [1]])
+def test_hdl_parameter_mappings_must_be_integers(tmp_path, key, value):
+    config = make_repo(tmp_path)
+    lookup = config.get
+    config.get = lambda k: value if k == key else lookup(k)
+    with pytest.raises(TypeError, match=key):
+        tasks_by_name(config)
 
 
 def test_random_task_omits_seed_argument_when_configured_for_auto_seed(tmp_path):
