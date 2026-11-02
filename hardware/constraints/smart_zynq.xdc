@@ -10,6 +10,14 @@ set_property PACKAGE_PIN L17 [get_ports UART_0_0_txd]
 set_property PACKAGE_PIN M17 [get_ports UART_0_0_rxd]
 set_property IOSTANDARD LVCMOS33 [get_ports UART_0_0_txd]
 set_property IOSTANDARD LVCMOS33 [get_ports UART_0_0_rxd]
+# HDMI TMDS clock
+set_property PACKAGE_PIN N19 [get_ports TMDS_0_clk_p]
+# HDMI TMDS data lane 0
+set_property PACKAGE_PIN M21 [get_ports {TMDS_0_data_p[0]}]
+# HDMI TMDS data lane 1
+set_property PACKAGE_PIN L21 [get_ports {TMDS_0_data_p[1]}]
+# HDMI TMDS data lane 2
+set_property PACKAGE_PIN J21 [get_ports {TMDS_0_data_p[2]}]
 
 set_property -dict {PACKAGE_PIN P20 IOSTANDARD LVCMOS33} [get_ports o_core_idle_0]
 set_property -dict {PACKAGE_PIN P21 IOSTANDARD LVCMOS33} [get_ports o_core_running_0]

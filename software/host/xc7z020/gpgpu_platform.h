@@ -11,6 +11,11 @@
 /* gpu_pkg */
 #define GPGPU_IMEM_ENTRIES                 2048U
 #define GPGPU_DMEM_ENTRIES                 2048U
+#define GPGPU_FB0_BASE                     402653184U
+#define GPGPU_FB1_BASE                     406847488U
+#define GPGPU_TEX_BASE                     411041792U
+#define GPGPU_FB_SIZE                      3686400U
+#define GPGPU_TEX_SIZE                     8388608U
 
 /* MemorySubsystemPkg */
 #define GPGPU_ST_OK                        0U
