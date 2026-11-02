@@ -24,6 +24,14 @@ HDL_PARAMETERS = {
     'C_S00_AXI_ADDR_WIDTH': lambda value: value == 32,
 }
 AXI_PORTS = 'AWADDR AWPROT AWVALID AWREADY WDATA WSTRB WVALID WREADY BRESP BVALID BREADY ARADDR ARPROT ARVALID ARREADY RDATA RRESP RVALID RREADY'.split()
+# Every port of the AXI4 DDR master, m00_axi.
+AXI4_PORTS = ('AWID AWADDR AWLEN AWSIZE AWBURST AWLOCK AWCACHE AWPROT AWQOS AWVALID AWREADY '
+              'WDATA WSTRB WLAST WVALID WREADY BID BRESP BVALID BREADY '
+              'ARID ARADDR ARLEN ARSIZE ARBURST ARLOCK ARCACHE ARPROT ARQOS ARVALID ARREADY '
+              'RID RDATA RRESP RLAST RVALID RREADY').split()
+# The top's HDL parameters that size m00_axi.
+M00_WIDTHS = {'ID_WIDTH': 'C_M00_AXI_ID_WIDTH', 'ADDR_WIDTH': 'C_M00_AXI_ADDR_WIDTH',
+              'DATA_WIDTH': 'C_M00_AXI_DATA_WIDTH'}
 
 
 def validate_package(path: str | Path, memory_init: Path, sources: Sequence[Path],
@@ -229,8 +237,9 @@ def validate_package(path: str | Path, memory_init: Path, sources: Sequence[Path
     buses = named(component, 's:busInterfaces/s:busInterface')
     for name, kind, role, maps in [
         ('s00_axi','aximm','slave',{p: 's00_axi_'+p.lower() for p in AXI_PORTS}),
-        ('s00_axi_aclk','clock','slave',{'CLK':'s00_axi_aclk'}),
-        ('s00_axi_aresetn','reset','slave',{'RST':'s00_axi_aresetn'}),
+        ('m00_axi','aximm','master',{p: 'm00_axi_'+p.lower() for p in AXI4_PORTS}),
+        ('aclk','clock','slave',{'CLK':'aclk'}),
+        ('aresetn','reset','slave',{'RST':'aresetn'}),
         ('irq','interrupt','master',{'INTERRUPT':'irq'})]:
         require(name in buses, f'Missing interface: {name}')
         b = buses[name]; bt = b.find('s:busType', N)
@@ -238,14 +247,30 @@ def validate_package(path: str | Path, memory_init: Path, sources: Sequence[Path
         require(b.find('s:'+role,N) is not None, f'Wrong interface role: {name}')
         actual = {text(e.find('s:logicalPort',N),'name'): text(e.find('s:physicalPort',N),'name') for e in b.findall('s:portMaps/s:portMap',N)}
         require(actual == maps, f'Wrong port mapping: {name}')
+    # m00_axi is sized by the top's HDL parameters, never by fixed numbers here.
+    m00_widths = {}
+    for bus_parameter, model in M00_WIDTHS.items():
+        require(model in models, f'Missing HDL parameter: {model}')
+        width = number(text(models[model], 'value'))
+        require(width > 0, f'Invalid HDL parameter: {model}')
+        m00_widths[bus_parameter] = width
     for name, values in {
         's00_axi': {'PROTOCOL':'AXI4LITE','DATA_WIDTH':'32','ADDR_WIDTH':'32'},
-        's00_axi_aclk': {'ASSOCIATED_BUSIF':'s00_axi','ASSOCIATED_RESET':'s00_axi_aresetn'},
-        's00_axi_aresetn': {'POLARITY':'ACTIVE_LOW'},
+        'm00_axi': {'PROTOCOL':'AXI4', **{k: str(v) for k, v in m00_widths.items()}},
+        'aclk': {'ASSOCIATED_BUSIF':'s00_axi:m00_axi','ASSOCIATED_RESET':'aresetn'},
+        'aresetn': {'POLARITY':'ACTIVE_LOW'},
         'irq': {'SENSITIVITY':'LEVEL_HIGH'},
     }.items():
         actual = parameters(buses[name])
         require(all(actual.get(k) == v for k,v in values.items()), f'Wrong interface parameters: {name}')
+    # The DDR master needs an address space, or the block design cannot map HP0.
+    ref = buses['m00_axi'].find('s:master/s:addressSpaceRef', N)
+    require(ref is not None and ref.get(f'{{{NS}}}addressSpaceRef') == 'm00_axi', 'Wrong m00_axi address space reference')
+    spaces = named(component, 's:addressSpaces/s:addressSpace')
+    require('m00_axi' in spaces, 'Missing m00_axi address space')
+    require(number(text(spaces['m00_axi'], 'range')) == 1 << m00_widths['ADDR_WIDTH'] and
+            number(text(spaces['m00_axi'], 'width')) == m00_widths['DATA_WIDTH'],
+            'm00_axi address space must span the AXI address range, one data word wide')
     ref = buses['s00_axi'].find('s:slave/s:memoryMapRef',N)
     require(ref is not None and ref.get(f'{{{NS}}}memoryMapRef') == 's00_axi', 'Wrong memory map reference')
     maps = named(component,'s:memoryMaps/s:memoryMap')

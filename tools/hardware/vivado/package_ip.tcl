@@ -47,10 +47,13 @@ set_property description {Production GPGPU peripheral: 32-bit AXI4-Lite, 64-KiB 
 set_property core_revision $IP_REVISION $core
 
 # Pin names are lowercase in the public contract; fail rather than guess aliases.
+# One clock and one reset serve both bus interfaces: s00_axi (AXI4-Lite CSR
+# slave) and m00_axi (AXI4 DDR master).
 foreach {name bus} {
     s00_axi xilinx.com:interface:aximm_rtl:1.0
-    s00_axi_aclk xilinx.com:signal:clock_rtl:1.0
-    s00_axi_aresetn xilinx.com:signal:reset_rtl:1.0
+    m00_axi xilinx.com:interface:aximm_rtl:1.0
+    aclk xilinx.com:signal:clock_rtl:1.0
+    aresetn xilinx.com:signal:reset_rtl:1.0
     irq xilinx.com:signal:interrupt_rtl:1.0
 } {
     if {[llength [ipx::get_bus_interfaces $name -of_objects $core]] == 0} {
@@ -60,8 +63,9 @@ foreach {name bus} {
         error "Required packaged interface not inferred: $name"
     }
 }
-ipx::associate_bus_interfaces -busif s00_axi -clock s00_axi_aclk $core
-ipx::associate_bus_interfaces -clock s00_axi_aclk -reset s00_axi_aresetn $core
+ipx::associate_bus_interfaces -busif s00_axi -clock aclk $core
+ipx::associate_bus_interfaces -busif m00_axi -clock aclk $core
+ipx::associate_bus_interfaces -clock aclk -reset aresetn $core
 proc set_ip_bus_parameter {core bus name value} {
     set interface [ipx::get_bus_interfaces $bus -of_objects $core]
     set parameter [ipx::get_bus_parameters $name -of_objects $interface]
@@ -71,10 +75,34 @@ proc set_ip_bus_parameter {core bus name value} {
 set_ip_bus_parameter $core s00_axi PROTOCOL AXI4LITE
 set_ip_bus_parameter $core s00_axi DATA_WIDTH 32
 set_ip_bus_parameter $core s00_axi ADDR_WIDTH 32
-set_ip_bus_parameter $core s00_axi_aclk ASSOCIATED_BUSIF s00_axi
-set_ip_bus_parameter $core s00_axi_aclk ASSOCIATED_RESET s00_axi_aresetn
-set_ip_bus_parameter $core s00_axi_aresetn POLARITY ACTIVE_LOW
+set_ip_bus_parameter $core aclk ASSOCIATED_BUSIF s00_axi:m00_axi
+set_ip_bus_parameter $core aclk ASSOCIATED_RESET aresetn
+set_ip_bus_parameter $core aresetn POLARITY ACTIVE_LOW
 set_ip_bus_parameter $core irq SENSITIVITY LEVEL_HIGH
+
+# m00_axi: the DDR master. Its widths are the top's C_M00_AXI_* HDL parameters
+# (which must equal the RTL's AXI4FullPkg widths), never repeated here. Its
+# address space spans the whole AXI address range, so the block design can map
+# the PS DDR (HP0) segment, and is one data word wide.
+proc ip_hdl_parameter {core name} {
+    set model [ipx::get_hdl_parameters $name -of_objects $core]
+    if {[llength $model] != 1} {error "Required HDL parameter missing: $name"}
+    set value [get_property value $model]
+    if {![string is entier -strict $value] || $value <= 0} {error "Invalid HDL parameter $name: $value"}
+    return $value
+}
+set m00_id_width [ip_hdl_parameter $core C_M00_AXI_ID_WIDTH]
+set m00_addr_width [ip_hdl_parameter $core C_M00_AXI_ADDR_WIDTH]
+set m00_data_width [ip_hdl_parameter $core C_M00_AXI_DATA_WIDTH]
+set_ip_bus_parameter $core m00_axi PROTOCOL AXI4
+set_ip_bus_parameter $core m00_axi ID_WIDTH $m00_id_width
+set_ip_bus_parameter $core m00_axi ADDR_WIDTH $m00_addr_width
+set_ip_bus_parameter $core m00_axi DATA_WIDTH $m00_data_width
+set address_space [ipx::get_address_spaces m00_axi -of_objects $core]
+if {[llength $address_space] == 0} {set address_space [ipx::add_address_space m00_axi $core]}
+set_property range [expr {wide(1) << $m00_addr_width}] $address_space
+set_property width $m00_data_width $address_space
+set_property master_address_space_ref m00_axi [ipx::get_bus_interfaces m00_axi -of_objects $core]
 
 # MMIOController decodes CSR, IMEM 0x2000..0x3fff, DMEM 0x4000..0x5fff.
 # 32 address wires do NOT imply a 4-GiB peripheral aperture.

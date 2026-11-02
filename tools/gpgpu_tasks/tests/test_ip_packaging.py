@@ -101,29 +101,38 @@ def package_fixture(tmp_path):
     for tag, value in [('vendor','user.org'), ('library','user'), ('name','gpgpu_axi'), ('version','1.0')]:
         add(r,tag,value)
     buses = add(r,'busInterfaces')
+    axi_lite = ['AWADDR','AWPROT','AWVALID','AWREADY','WDATA','WSTRB','WVALID','WREADY','BRESP','BVALID','BREADY','ARADDR','ARPROT','ARVALID','ARREADY','RDATA','RRESP','RVALID','RREADY']
+    axi4 = ('AWID AWADDR AWLEN AWSIZE AWBURST AWLOCK AWCACHE AWPROT AWQOS AWVALID AWREADY WDATA WSTRB WLAST WVALID WREADY '
+            'BID BRESP BVALID BREADY ARID ARADDR ARLEN ARSIZE ARBURST ARLOCK ARCACHE ARPROT ARQOS ARVALID ARREADY '
+            'RID RDATA RRESP RLAST RVALID RREADY').split()
     for name, kind, role, params in [
         ('s00_axi','aximm','slave',{'PROTOCOL':'AXI4LITE','DATA_WIDTH':'32','ADDR_WIDTH':'32'}),
-        ('s00_axi_aclk','clock','slave',{'ASSOCIATED_BUSIF':'s00_axi','ASSOCIATED_RESET':'s00_axi_aresetn'}),
-        ('s00_axi_aresetn','reset','slave',{'POLARITY':'ACTIVE_LOW'}),
+        ('m00_axi','aximm','master',{'PROTOCOL':'AXI4','ID_WIDTH':'1','ADDR_WIDTH':'32','DATA_WIDTH':'64'}),
+        ('aclk','clock','slave',{'ASSOCIATED_BUSIF':'s00_axi:m00_axi','ASSOCIATED_RESET':'aresetn'}),
+        ('aresetn','reset','slave',{'POLARITY':'ACTIVE_LOW'}),
         ('irq','interrupt','master',{'SENSITIVITY':'LEVEL_HIGH'})]:
         b=add(buses,'busInterface'); add(b,'name',name)
         add(b,'busType',vendor='xilinx.com',library='interface' if kind=='aximm' else 'signal',name=kind,version='1.0')
         role_node=add(b,role)
         if name=='s00_axi': add(role_node,'memoryMapRef',memoryMapRef='s00_axi')
+        if name=='m00_axi': add(role_node,'addressSpaceRef',addressSpaceRef='m00_axi')
         maps=add(b,'portMaps')
-        logicals = ['AWADDR','AWPROT','AWVALID','AWREADY','WDATA','WSTRB','WVALID','WREADY','BRESP','BVALID','BREADY','ARADDR','ARPROT','ARVALID','ARREADY','RDATA','RRESP','RVALID','RREADY'] if kind=='aximm' else [{'clock':'CLK','reset':'RST','interrupt':'INTERRUPT'}[kind]]
+        logicals = (axi_lite if name=='s00_axi' else axi4) if kind=='aximm' else [{'clock':'CLK','reset':'RST','interrupt':'INTERRUPT'}[kind]]
         for logical in logicals:
             m=add(maps,'portMap'); add(add(m,'logicalPort'),'name',logical)
-            add(add(m,'physicalPort'),'name', 's00_axi_'+logical.lower() if kind=='aximm' else name)
+            add(add(m,'physicalPort'),'name', name+'_'+logical.lower() if kind=='aximm' else name)
         p=add(b,'parameters')
         for key,value in params.items():
             item=add(p,'parameter'); add(item,'name',key); add(item,'value',value)
+    space=add(add(r,'addressSpaces'),'addressSpace'); add(space,'name','m00_axi')
+    add(space,'range','4294967296'); add(space,'width','64')
     mm=add(add(r,'memoryMaps'),'memoryMap'); add(mm,'name','s00_axi')
     block=add(mm,'addressBlock')
     for tag,value in [('name','reg0'),('baseAddress','0'),('range','65536'),('width','32'),('usage','register')]: add(block,tag,value)
     model=add(r,'model'); mp=add(model,'modelParameters'); up=add(r,'parameters')
     for name,value in [('SP_PER_SM','8'),('INTERFACE_VERSION','2'),('CLOCK_KHZ','35000'),('BUILD_HASH','12'),
-                       ('BUILD_DIRTY','0'),('DDR_ENABLE','0'),('C_S00_AXI_DATA_WIDTH','32'),('C_S00_AXI_ADDR_WIDTH','32')]:
+                       ('BUILD_DIRTY','0'),('DDR_ENABLE','0'),('C_S00_AXI_DATA_WIDTH','32'),('C_S00_AXI_ADDR_WIDTH','32'),
+                       ('C_M00_AXI_ID_WIDTH','1'),('C_M00_AXI_ADDR_WIDTH','32'),('C_M00_AXI_DATA_WIDTH','64')]:
         p=add(up,'parameter');add(p,'name',name);add(p,'value',value,resolve='user')
         p=add(mp,'modelParameter');add(p,'name',name);add(p,'value',value,resolve='generated',dependency=f"spirit:decode(id('PARAM_VALUE.{name}'))")
     files=add(r,'fileSets')
@@ -156,6 +165,7 @@ def test_validate_portable_production_package(tmp_path):
     'missing_memory','missing_source','absolute_path','traversal','external_symlink',
     'extra_source','header_not_include','header_type','memory_type','interface_order','memory_last','top_not_last',
     'range_4gb','range_dependency','wrong_clock','wrong_reset','edge_irq',
+    'm00_unclocked','m00_no_address_space','m00_short_address_space','m00_width_mismatch','m00_missing_port',
     'wrong_bus_map','wrong_protocol','wrong_vlnv','missing_hdl_mapping',
     'wrong_xgui_mapping','missing_gui','invalid_xml','external_metadata','external_include','external_memory', 'header_not_sibling',
 ])
@@ -210,6 +220,18 @@ def test_package_validation_fails_closed(tmp_path, mutation):
     elif mutation=='range_4gb': r.find('s:memoryMaps/s:memoryMap/s:addressBlock/s:range',ns).text='0x100000000'
     elif mutation=='range_dependency': r.find('s:memoryMaps/s:memoryMap/s:addressBlock/s:range',ns).set(q('dependency'),'pow(2,32)')
     elif mutation=='wrong_clock': value('ASSOCIATED_BUSIF').text='other'
+    elif mutation=='m00_unclocked': value('ASSOCIATED_BUSIF').text='s00_axi'
+    elif mutation=='m00_no_address_space':
+        r.remove(r.find('s:addressSpaces',ns))
+    elif mutation=='m00_short_address_space':
+        r.find('s:addressSpaces/s:addressSpace/s:range',ns).text='65536'
+    elif mutation=='m00_width_mismatch':
+        # The bus says 32-bit data while the HDL parameter says 64.
+        m00=next(b for b in r.findall('s:busInterfaces/s:busInterface',ns) if b.findtext('s:name',namespaces=ns)=='m00_axi')
+        next(p for p in m00.findall('s:parameters/s:parameter',ns) if p.findtext('s:name',namespaces=ns)=='DATA_WIDTH').find('s:value',ns).text='32'
+    elif mutation=='m00_missing_port':
+        m00=next(b for b in r.findall('s:busInterfaces/s:busInterface',ns) if b.findtext('s:name',namespaces=ns)=='m00_axi')
+        maps=m00.find('s:portMaps',ns); maps.remove(maps.findall('s:portMap',ns)[-1])
     elif mutation=='wrong_reset': value('POLARITY').text='ACTIVE_HIGH'
     elif mutation=='edge_irq': value('SENSITIVITY').text='EDGE_RISING'
     elif mutation=='wrong_bus_map': r.find('.//s:physicalPort/s:name',ns).text='wrong'
@@ -295,8 +317,15 @@ def tcl_driver(tmp_path, script, *, group_types=None, **overrides):
         'vendor_synth_group': 'synthesis',
         'vendor_sim_group': 'simulation',
     })
+    # The top's C_M00_AXI_* defaults, as the packager reads them from the HDL.
+    top = (ROOT/'hardware/rtl/gpgpu/interfaces/AXI4Top.v').read_text()
+    hdl = dict(re.findall(r'parameter integer (C_M00_AXI_\w+)\s*=\s*(\d+)', top))
     def record(name,*args):
         commands.append((name,args))
+        if name == 'ipx::get_hdl_parameters' and args[0] in hdl:
+            return args[0]
+        if name == 'get_property' and args[0] == 'value' and args[1] in hdl:
+            return hdl[args[1]]
         if name == 'ipx::get_file_groups':
             # A guessed group NAME does not select these real typed objects.
             return tuple(groups) if args == ('-of_objects', 'object') else ''
@@ -393,6 +422,17 @@ def test_ip_package_driver_configures_contract_without_reference_opens(tmp_path,
     assert any(n=='set_property' and a[:2]==('range','65536') for n,a in calls)
     assert any(n=='set_property' and a[:2]==('value','LEVEL_HIGH') for n,a in calls)
     assert any(n=='set_property' and a[:2]==('value','AXI4LITE') for n,a in calls)
+    # m00_axi: clocked by aclk like s00_axi, AXI4, with an address space over
+    # the whole 32-bit range, one 64-bit word wide (the top's HDL parameters).
+    assert ('ipx::associate_bus_interfaces', ('-busif', 'm00_axi', '-clock', 'aclk', 'object')) in calls
+    assert ('ipx::associate_bus_interfaces', ('-clock', 'aclk', '-reset', 'aresetn', 'object')) in calls
+    assert any(n=='set_property' and a[:2]==('value','s00_axi:m00_axi') for n,a in calls)
+    assert any(n=='set_property' and a[:2]==('value','AXI4') for n,a in calls)
+    assert any(n=='ipx::add_address_space' and a[0]=='m00_axi' for n,a in calls) or \
+        any(n=='ipx::get_address_spaces' and a[0]=='m00_axi' for n,a in calls)
+    assert any(n=='set_property' and a[:2]==('range',str(1 << 32)) for n,a in calls)
+    assert any(n=='set_property' and a[:2]==('width','64') for n,a in calls)
+    assert any(n=='set_property' and a[:2]==('master_address_space_ref','m00_axi') for n,a in calls)
     assert any(n=='ipx::check_integrity' for n,a in calls)
     assert (values['IP_REPO_DIR']/'xgui/gpgpu_axi_v1_0.tcl').read_bytes()==(FLOW/'ip/xgui/gpgpu_axi_v1_0.tcl').read_bytes()
 

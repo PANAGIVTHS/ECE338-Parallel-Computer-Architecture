@@ -34,9 +34,11 @@
 		// Do not modify the ports beyond this line
 
 
+		// Clock and active-low reset of both bus interfaces and the GPGPU
+		input wire  aclk,
+		input wire  aresetn,
+
 		// Ports of Axi Slave Bus Interface S00_AXI
-		input wire  s00_axi_aclk,
-		input wire  s00_axi_aresetn,
 		input wire [C_S00_AXI_ADDR_WIDTH-1 : 0] s00_axi_awaddr,
 		input wire [2 : 0] s00_axi_awprot,
 		input wire  s00_axi_awvalid,
@@ -57,7 +59,7 @@
 		output wire  s00_axi_rvalid,
 		input wire  s00_axi_rready,
 
-		// Ports of Axi Master Bus Interface M00_AXI (DDR, clocked by s00_axi_aclk)
+		// Ports of Axi Master Bus Interface M00_AXI (DDR, clocked by aclk)
 		output wire [C_M00_AXI_ID_WIDTH-1 : 0] m00_axi_awid,
 		output wire [C_M00_AXI_ADDR_WIDTH-1 : 0] m00_axi_awaddr,
 		output wire [7 : 0] m00_axi_awlen,
@@ -122,8 +124,8 @@
 		.C_S_AXI_DATA_WIDTH(C_S00_AXI_DATA_WIDTH),
 		.C_S_AXI_ADDR_WIDTH(C_S00_AXI_ADDR_WIDTH)
 	) gpgpu_axi_slave_lite_v1_0_S00_AXI_inst (
-		.S_AXI_ACLK(s00_axi_aclk),
-		.S_AXI_ARESETN(s00_axi_aresetn),
+		.S_AXI_ACLK(aclk),
+		.S_AXI_ARESETN(aresetn),
 		.S_AXI_AWADDR(s00_axi_awaddr),
 		.S_AXI_AWPROT(s00_axi_awprot),
 		.S_AXI_AWVALID(s00_axi_awvalid),
@@ -168,8 +170,8 @@
         .BUILD_DIRTY(BUILD_DIRTY != 0),
         .DDR_ENABLE(DDR_ENABLE != 0)
     ) gpu (
-        .clk(s00_axi_aclk),
-        .rst_n(s00_axi_aresetn),
+        .clk(aclk),
+        .rst_n(aresetn),
         
         .o_core_idle(o_core_idle),
         .o_core_running(o_core_running),

@@ -49,11 +49,11 @@ proc create_block_design {} {
     connect_bd_intf_net [get_bd_intf_pins axi_smc/M00_AXI] [get_bd_intf_pins gpgpu_axi_0/s00_axi]
     connect_bd_net [get_bd_pins processing_system7_0/FCLK_CLK0] \
         [get_bd_pins processing_system7_0/M_AXI_GP0_ACLK] [get_bd_pins axi_smc/aclk] \
-        [get_bd_pins gpgpu_axi_0/s00_axi_aclk] [get_bd_pins rst_ps7_0_35M/slowest_sync_clk]
+        [get_bd_pins gpgpu_axi_0/aclk] [get_bd_pins rst_ps7_0_35M/slowest_sync_clk]
     connect_bd_net [get_bd_pins processing_system7_0/FCLK_RESET0_N] [get_bd_pins rst_ps7_0_35M/ext_reset_in]
     connect_bd_net [get_bd_pins reset_locked/dout] [get_bd_pins rst_ps7_0_35M/dcm_locked]
     connect_bd_net [get_bd_pins rst_ps7_0_35M/peripheral_aresetn] \
-        [get_bd_pins gpgpu_axi_0/s00_axi_aresetn] [get_bd_pins axi_smc/aresetn]
+        [get_bd_pins gpgpu_axi_0/aresetn] [get_bd_pins axi_smc/aresetn]
     # In0 is bit 0 of the 16-bit fabric IRQ bus (PS interrupt ID 61).
     connect_bd_net [get_bd_pins gpgpu_axi_0/irq] [get_bd_pins irq_concat/In0]
     connect_bd_net [get_bd_pins irq_zero/dout] [get_bd_pins irq_concat/In1]
