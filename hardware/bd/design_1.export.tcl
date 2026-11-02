@@ -133,8 +133,8 @@ xilinx.com:ip:processing_system7:5.5\
 user.org:user:gpgpu_axi:1.0\
 xilinx.com:ip:smartconnect:1.0\
 xilinx.com:ip:proc_sys_reset:5.0\
-xilinx.com:inline_hdl:ilconcat:1.0\
 xilinx.com:inline_hdl:ilconstant:1.0\
+xilinx.com:inline_hdl:ilconcat:1.0\
 xilinx.com:ip:axi_vdma:6.3\
 xilinx.com:ip:axis_subset_converter:1.1\
 xilinx.com:ip:v_axi4s_vid_out:4.0\
@@ -247,7 +247,23 @@ proc create_root_design { parentCell } {
     CONFIG.PCW_CLK1_FREQ {100000000} \
     CONFIG.PCW_CLK2_FREQ {10000000} \
     CONFIG.PCW_CLK3_FREQ {10000000} \
+    CONFIG.PCW_DDR_HPRLPR_QUEUE_PARTITION {HPR(16)/LPR(16)} \
+    CONFIG.PCW_DDR_HPR_TO_CRITICAL_PRIORITY_LEVEL {15} \
+    CONFIG.PCW_DDR_LPR_TO_CRITICAL_PRIORITY_LEVEL {2} \
+    CONFIG.PCW_DDR_PORT0_HPR_ENABLE {0} \
+    CONFIG.PCW_DDR_PORT1_HPR_ENABLE {0} \
+    CONFIG.PCW_DDR_PORT2_HPR_ENABLE {1} \
+    CONFIG.PCW_DDR_PORT3_HPR_ENABLE {1} \
+    CONFIG.PCW_DDR_PRIORITY_READPORT_0 {Low} \
+    CONFIG.PCW_DDR_PRIORITY_READPORT_1 {Low} \
+    CONFIG.PCW_DDR_PRIORITY_READPORT_2 {Low} \
+    CONFIG.PCW_DDR_PRIORITY_READPORT_3 {Low} \
+    CONFIG.PCW_DDR_PRIORITY_WRITEPORT_0 {Low} \
+    CONFIG.PCW_DDR_PRIORITY_WRITEPORT_1 {Low} \
+    CONFIG.PCW_DDR_PRIORITY_WRITEPORT_2 {Low} \
+    CONFIG.PCW_DDR_PRIORITY_WRITEPORT_3 {Low} \
     CONFIG.PCW_DDR_RAM_HIGHADDR {0x1FFFFFFF} \
+    CONFIG.PCW_DDR_WRITE_TO_CRITICAL_PRIORITY_LEVEL {2} \
     CONFIG.PCW_EN_CLK1_PORT {1} \
     CONFIG.PCW_EN_EMIO_UART0 {1} \
     CONFIG.PCW_EN_UART0 {1} \
@@ -263,6 +279,7 @@ proc create_root_design { parentCell } {
     CONFIG.PCW_UART_PERIPHERAL_FREQMHZ {100} \
     CONFIG.PCW_UART_PERIPHERAL_VALID {1} \
     CONFIG.PCW_UIPARAM_ACT_DDR_FREQ_MHZ {533.333374} \
+    CONFIG.PCW_UIPARAM_DDR_ADV_ENABLE {1} \
     CONFIG.PCW_UIPARAM_DDR_BUS_WIDTH {16 Bit} \
     CONFIG.PCW_UIPARAM_DDR_ECC {Disabled} \
     CONFIG.PCW_UIPARAM_DDR_PARTNO {MT41K256M16 RE-125} \
@@ -287,8 +304,17 @@ proc create_root_design { parentCell } {
   ] $gpgpu_ctrl
 
 
+  # Create instance: gpu_sys_reset, and set properties
+  set gpu_sys_reset [ create_bd_cell -type ip -vlnv xilinx.com:ip:proc_sys_reset:5.0 gpu_sys_reset ]
+
+  # Create instance: reset_locked1, and set properties
+  set reset_locked1 [ create_bd_cell -type inline_hdl -vlnv xilinx.com:inline_hdl:ilconstant:1.0 reset_locked1 ]
+
   # Create instance: rst_ps7_0_35M, and set properties
   set rst_ps7_0_35M [ create_bd_cell -type ip -vlnv xilinx.com:ip:proc_sys_reset:5.0 rst_ps7_0_35M ]
+
+  # Create instance: reset_locked, and set properties
+  set reset_locked [ create_bd_cell -type inline_hdl -vlnv xilinx.com:inline_hdl:ilconstant:1.0 reset_locked ]
 
   # Create instance: irq_concat, and set properties
   set irq_concat [ create_bd_cell -type inline_hdl -vlnv xilinx.com:inline_hdl:ilconcat:1.0 irq_concat ]
@@ -300,9 +326,6 @@ proc create_root_design { parentCell } {
     CONFIG.CONST_WIDTH {15} \
   ] $irq_zero
 
-
-  # Create instance: reset_locked, and set properties
-  set reset_locked [ create_bd_cell -type inline_hdl -vlnv xilinx.com:inline_hdl:ilconstant:1.0 reset_locked ]
 
   # Create instance: gpgpu_ddr, and set properties
   set gpgpu_ddr [ create_bd_cell -type ip -vlnv xilinx.com:ip:smartconnect:1.0 gpgpu_ddr ]
@@ -419,19 +442,13 @@ proc create_root_design { parentCell } {
   set_property CONFIG.CONST_VAL {0} $clk_en1
 
 
-  # Create instance: gpu_sys_reset, and set properties
-  set gpu_sys_reset [ create_bd_cell -type ip -vlnv xilinx.com:ip:proc_sys_reset:5.0 gpu_sys_reset ]
-
-  # Create instance: reset_locked1, and set properties
-  set reset_locked1 [ create_bd_cell -type inline_hdl -vlnv xilinx.com:inline_hdl:ilconstant:1.0 reset_locked1 ]
-
   # Create interface connections
   connect_bd_intf_net -intf_net axi_smc_1_M00_AXI [get_bd_intf_pins axi_smc_1/M00_AXI] [get_bd_intf_pins axi_vdma_0/S_AXI_LITE]
-  connect_bd_intf_net -intf_net axi_smc_M00_AXI [get_bd_intf_pins gpgpu_ctrl/M00_AXI] [get_bd_intf_pins gpgpu_axi_0/s00_axi]
   connect_bd_intf_net -intf_net axi_vdma_0_M_AXIS_MM2S [get_bd_intf_pins axi_vdma_0/M_AXIS_MM2S] [get_bd_intf_pins axis_subset_converter_0/S_AXIS]
   connect_bd_intf_net -intf_net axi_vdma_0_M_AXI_MM2S [get_bd_intf_pins axi_vdma_0/M_AXI_MM2S] [get_bd_intf_pins vdma_ddr/S00_AXI]
   connect_bd_intf_net -intf_net axis_subset_converter_0_M_AXIS [get_bd_intf_pins axis_subset_converter_0/M_AXIS] [get_bd_intf_pins v_axi4s_vid_out_0/video_in]
   connect_bd_intf_net -intf_net gpgpu_axi_0_m00_axi [get_bd_intf_pins gpgpu_axi_0/m00_axi] [get_bd_intf_pins gpgpu_ddr/S00_AXI]
+  connect_bd_intf_net -intf_net gpgpu_ctrl_M00_AXI [get_bd_intf_pins gpgpu_ctrl/M00_AXI] [get_bd_intf_pins gpgpu_axi_0/s00_axi]
   connect_bd_intf_net -intf_net gpgpu_ddr_M00_AXI [get_bd_intf_pins gpgpu_ddr/M00_AXI] [get_bd_intf_pins processing_system7_0/S_AXI_HP0]
   connect_bd_intf_net -intf_net processing_system7_0_DDR [get_bd_intf_ports DDR] [get_bd_intf_pins processing_system7_0/DDR]
   connect_bd_intf_net -intf_net processing_system7_0_FIXED_IO [get_bd_intf_ports FIXED_IO] [get_bd_intf_pins processing_system7_0/FIXED_IO]
@@ -465,8 +482,8 @@ proc create_root_design { parentCell } {
   [get_bd_ports o_core_running_0]
   connect_bd_net -net gpu_sys_reset_peripheral_aresetn  [get_bd_pins gpu_sys_reset/peripheral_aresetn] \
   [get_bd_pins gpgpu_axi_0/aresetn] \
-  [get_bd_pins gpgpu_ddr/aresetn] \
-  [get_bd_pins gpgpu_ctrl/aresetn]
+  [get_bd_pins gpgpu_ctrl/aresetn] \
+  [get_bd_pins gpgpu_ddr/aresetn]
   connect_bd_net -net irq_concat_dout  [get_bd_pins irq_concat/dout] \
   [get_bd_pins processing_system7_0/IRQ_F2P]
   connect_bd_net -net irq_zero_dout  [get_bd_pins irq_zero/dout] \
@@ -477,36 +494,36 @@ proc create_root_design { parentCell } {
   [get_bd_pins v_axi4s_vid_out_0/vid_io_out_reset] \
   [get_bd_pins rgb2dvi_0/aRst]
   connect_bd_net -net processing_system7_0_FCLK_CLK0  [get_bd_pins processing_system7_0/FCLK_CLK0] \
-  [get_bd_pins gpgpu_axi_0/aclk] \
-  [get_bd_pins gpgpu_ctrl/aclk] \
-  [get_bd_pins gpgpu_ddr/aclk] \
   [get_bd_pins processing_system7_0/M_AXI_GP0_ACLK] \
   [get_bd_pins processing_system7_0/S_AXI_HP0_ACLK] \
+  [get_bd_pins gpgpu_ctrl/aclk] \
+  [get_bd_pins gpgpu_ddr/aclk] \
+  [get_bd_pins gpgpu_axi_0/aclk] \
   [get_bd_pins gpu_sys_reset/slowest_sync_clk]
   connect_bd_net -net processing_system7_0_FCLK_CLK1  [get_bd_pins processing_system7_0/FCLK_CLK1] \
-  [get_bd_pins processing_system7_0/S_AXI_HP2_ACLK] \
   [get_bd_pins processing_system7_0/M_AXI_GP1_ACLK] \
+  [get_bd_pins processing_system7_0/S_AXI_HP2_ACLK] \
+  [get_bd_pins axi_smc_1/aclk] \
   [get_bd_pins vdma_ddr/aclk] \
-  [get_bd_pins axis_subset_converter_0/aclk] \
   [get_bd_pins axi_vdma_0/s_axi_lite_aclk] \
   [get_bd_pins axi_vdma_0/m_axi_mm2s_aclk] \
   [get_bd_pins axi_vdma_0/m_axis_mm2s_aclk] \
-  [get_bd_pins axi_smc_1/aclk] \
+  [get_bd_pins axis_subset_converter_0/aclk] \
   [get_bd_pins v_axi4s_vid_out_0/aclk] \
   [get_bd_pins clk_wiz_0/clk_in1] \
   [get_bd_pins rst_ps7_0_35M/slowest_sync_clk]
   connect_bd_net -net processing_system7_0_FCLK_RESET0_N  [get_bd_pins processing_system7_0/FCLK_RESET0_N] \
+  [get_bd_pins gpu_sys_reset/ext_reset_in] \
   [get_bd_pins rst_ps7_0_35M/ext_reset_in] \
-  [get_bd_pins proc_sys_reset_0/ext_reset_in] \
-  [get_bd_pins gpu_sys_reset/ext_reset_in]
+  [get_bd_pins proc_sys_reset_0/ext_reset_in]
   connect_bd_net -net reset_locked1_dout  [get_bd_pins reset_locked1/dout] \
   [get_bd_pins gpu_sys_reset/dcm_locked]
   connect_bd_net -net reset_locked_dout  [get_bd_pins reset_locked/dout] \
   [get_bd_pins rst_ps7_0_35M/dcm_locked]
   connect_bd_net -net rst_ps7_0_35M_peripheral_aresetn  [get_bd_pins rst_ps7_0_35M/peripheral_aresetn] \
   [get_bd_pins axi_smc_1/aresetn] \
-  [get_bd_pins axi_vdma_0/axi_resetn] \
   [get_bd_pins vdma_ddr/aresetn] \
+  [get_bd_pins axi_vdma_0/axi_resetn] \
   [get_bd_pins axis_subset_converter_0/aresetn] \
   [get_bd_pins v_axi4s_vid_out_0/aresetn]
   connect_bd_net -net v_axi4s_vid_out_0_vid_active_video  [get_bd_pins v_axi4s_vid_out_0/vid_active_video] \

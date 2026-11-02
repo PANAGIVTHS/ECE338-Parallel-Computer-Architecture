@@ -29,6 +29,10 @@ proc create_block_design {} {
     create_bd_port -dir O o_core_running_0
 
     # GP0: GPGPU CSRs. GP1: VDMA registers. HP0: GPGPU to DDR. HP2: VDMA to DDR.
+    # DDR controller: HP0/HP1 reach its port 2, HP2/HP3 its port 3. Both read
+    # through the high-priority queue (16 of the 32 read entries), so the
+    # scanout's reads are not held behind the GPGPU's write bursts; without
+    # it the video out underflows and blanks while the GPGPU writes DDR.
     # FCLK_CLK1: 100 MHz, which the PS makes exactly (I/O PLL / 10).
     # PCW_EN_CLK1_PORT creates its pin; the enable alone does not.
     set ps [create_bd_cell -type ip -vlnv xilinx.com:ip:processing_system7:5.5 processing_system7_0]
@@ -50,6 +54,23 @@ proc create_block_design {} {
         CONFIG.PCW_UIPARAM_DDR_PARTNO {MT41K256M16 RE-125} \
         CONFIG.PCW_UIPARAM_DDR_BUS_WIDTH {16 Bit} \
         CONFIG.PCW_UIPARAM_DDR_ECC {Disabled} \
+        CONFIG.PCW_UIPARAM_DDR_ADV_ENABLE {1} \
+        CONFIG.PCW_DDR_HPRLPR_QUEUE_PARTITION {HPR(16)/LPR(16)} \
+        CONFIG.PCW_DDR_HPR_TO_CRITICAL_PRIORITY_LEVEL {15} \
+        CONFIG.PCW_DDR_LPR_TO_CRITICAL_PRIORITY_LEVEL {2} \
+        CONFIG.PCW_DDR_WRITE_TO_CRITICAL_PRIORITY_LEVEL {2} \
+        CONFIG.PCW_DDR_PORT0_HPR_ENABLE {0} \
+        CONFIG.PCW_DDR_PORT1_HPR_ENABLE {0} \
+        CONFIG.PCW_DDR_PORT2_HPR_ENABLE {1} \
+        CONFIG.PCW_DDR_PORT3_HPR_ENABLE {1} \
+        CONFIG.PCW_DDR_PRIORITY_READPORT_0 {Low} \
+        CONFIG.PCW_DDR_PRIORITY_READPORT_1 {Low} \
+        CONFIG.PCW_DDR_PRIORITY_READPORT_2 {Low} \
+        CONFIG.PCW_DDR_PRIORITY_READPORT_3 {Low} \
+        CONFIG.PCW_DDR_PRIORITY_WRITEPORT_0 {Low} \
+        CONFIG.PCW_DDR_PRIORITY_WRITEPORT_1 {Low} \
+        CONFIG.PCW_DDR_PRIORITY_WRITEPORT_2 {Low} \
+        CONFIG.PCW_DDR_PRIORITY_WRITEPORT_3 {Low} \
         CONFIG.PCW_USE_FABRIC_INTERRUPT {1} \
         CONFIG.PCW_IRQ_F2P_INTR {1}] $ps
     create_bd_cell -type ip -vlnv user.org:user:gpgpu_axi:1.0 gpgpu_axi_0

@@ -46,6 +46,12 @@ def test_bootstrap_uses_saved_ps_user_settings_not_computed_overrides():
     assert "CONFIG.PCW_ACT_" not in text
     assert "CONFIG.PCW_UIPARAM_ACT_" not in text
     assert "CONFIG.PCW_PERIPHERAL_BOARD_PRESET" not in text
+    # The scanout's HP2 reads (DDR controller port 3) use the high-priority
+    # read queue; without it the video out underflows while the GPGPU writes.
+    for setting in ("CONFIG.PCW_UIPARAM_DDR_ADV_ENABLE {1}",
+                    "CONFIG.PCW_DDR_HPRLPR_QUEUE_PARTITION {HPR(16)/LPR(16)}",
+                    "CONFIG.PCW_DDR_PORT3_HPR_ENABLE {1}"):
+        assert setting in text
 
 
 CONFIGURATION_API = r'''
