@@ -119,3 +119,44 @@ def test_generated_ip_callback_tracks_content_after_first_creation(tmp_path):
     assert callback(None, saved) is True
     source.write_text('two')
     assert callback(None, saved) is False
+
+
+def test_vendor_ip_beside_the_gpgpu_package_follows_configuration(tmp_path):
+    cfg = config(tmp_path)
+    rtl = ROOT / 'hardware/rtl'
+    expected = sorted(p for p in rtl.iterdir() if p.is_dir() and p.name != 'gpgpu')
+    assert tasks.vendor_ip_dirs(cfg) == expected and expected
+    build = {t['name']: t for t in tasks.create_tasks(cfg)}['vivado:ip:build']
+    assert build['actions'][0][1][-1] == expected
+    # Every vendor file is a dependency, so editing one republishes the repository.
+    for directory in expected:
+        assert all(str(p) in build['file_dep'] for p in directory.rglob('*') if p.is_file())
+    assert not any('/hardware/rtl/gpgpu/experimental/' in f for f in build['file_dep'])
+    narrowed = config(tmp_path, 'hardware.vivado.vendor_ip.exclude=[gpgpu, smart_zynq_sl]')
+    assert [p.name for p in tasks.vendor_ip_dirs(narrowed)] == [p.name for p in expected if p.name != 'smart_zynq_sl']
+
+
+@pytest.mark.parametrize('override', [
+    'hardware.vivado.vendor_ip.root=""', 'hardware.vivado.vendor_ip.root=missing/dir',
+    'hardware.vivado.vendor_ip.exclude=gpgpu',
+])
+def test_vendor_ip_configuration_has_no_fallback(tmp_path, override):
+    with pytest.raises((TypeError, FileNotFoundError)):
+        tasks.vendor_ip_dirs(config(tmp_path, override))
+
+
+def test_vendor_ip_is_copied_into_staging_without_shadowing_the_package(tmp_path):
+    vendor = tmp_path / 'rtl/rgb2dvi'
+    (vendor / 'src').mkdir(parents=True)
+    (vendor / 'component.xml').write_text('<vendor/>')
+    (vendor / 'src/rgb2dvi.vhd').write_text('-- vhdl')
+    staging = tmp_path / 'staging'
+    (staging / 'src').mkdir(parents=True)
+    (staging / 'component.xml').write_text('<gpgpu/>')
+    tasks.copy_vendor_ip(staging, [vendor])
+    assert (staging / 'rgb2dvi/src/rgb2dvi.vhd').read_text() == '-- vhdl'
+    assert (staging / 'component.xml').read_text() == '<gpgpu/>'
+    clash = tmp_path / 'rtl/src'
+    clash.mkdir()
+    with pytest.raises(RuntimeError, match='collides'):
+        tasks.copy_vendor_ip(staging, [clash])

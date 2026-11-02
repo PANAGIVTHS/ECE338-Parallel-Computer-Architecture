@@ -26,7 +26,7 @@ proc get_bd_pins {args} {return [lindex $args end]}
 proc get_bd_ports {args} {return [lindex $args end]}
 proc get_bd_intf_ports {args} {return [lindex $args end]}
 proc get_bd_intf_pins {args} {return [lindex $args end]}
-foreach command {create_bd_design current_bd_design create_bd_intf_port create_bd_port connect_bd_net connect_bd_intf_net} {
+foreach command {create_bd_design current_bd_design create_bd_intf_port create_bd_port connect_bd_net connect_bd_intf_net exclude_bd_addr_seg} {
     proc $command {args} {puts [list [lindex [info level 0] 0] {*}$args]}
 }
 '''
@@ -217,10 +217,10 @@ proc get_property {{key object}} {{
     if {{$key eq "VLNV"}} {{
         switch -- $object {{
             processing_system7_0 {{return xilinx.com:ip:processing_system7:5.5}}
-            axi_smc {{return xilinx.com:ip:smartconnect:1.0}}
+            axi_smc - gpgpu_ddr {{return xilinx.com:ip:smartconnect:1.0}}
             rst_ps7_0_35M {{return xilinx.com:ip:proc_sys_reset:5.0}}
-            irq_concat {{return xilinx.com:ip:xlconcat:2.1}}
-            irq_zero - reset_locked {{return xilinx.com:ip:xlconstant:1.1}}
+            irq_concat {{return xilinx.com:inline_hdl:ilconcat:1.0}}
+            irq_zero - reset_locked {{return xilinx.com:inline_hdl:ilconstant:1.0}}
         }}
     }}
     return [original_get_property $key $object]
@@ -246,8 +246,57 @@ def test_system_creates_catalog_first_then_products_wrapper_and_top(tmp_path):
     assert "connect_bd_net gpgpu_axi_0/irq irq_concat/In0" in out
     assert "connect_bd_net irq_zero/dout irq_concat/In1" in out
     assert "connect_bd_net irq_concat/dout processing_system7_0/IRQ_F2P" in out
-    assert "CONFIG.IN1_WIDTH 15" in out
+    assert "create_bd_cell -type inline_hdl -vlnv xilinx.com:inline_hdl:ilconcat:1.0 irq_concat" in out
+    assert "CONFIG.CONST_WIDTH 15 CONFIG.CONST_VAL 0" in out
     assert "SET CONFIG.C_EXT_RESET_HIGH 0 rst_ps7_0_35M" in out
+
+
+def test_bootstrap_connects_gpgpu_ddr_master_and_hdmi_scanout(tmp_path):
+    result = run_tcl(system_script(tmp_path))
+    assert result.returncode == 0, result.stderr
+    out = result.stdout
+    lines = out.splitlines()
+    # The GPGPU's DDR master on HP0, the VDMA on HP2 (separate DDR controller
+    # ports); one FCLK_CLK0 domain.
+    for setting in ("CONFIG.PCW_USE_S_AXI_HP0 1", "CONFIG.PCW_USE_S_AXI_HP2 1", "CONFIG.PCW_USE_M_AXI_GP1 1"):
+        assert setting in out
+    assert "PCW_USE_S_AXI_HP1" not in out
+    assert "connect_bd_intf_net gpgpu_axi_0/m00_axi gpgpu_ddr/S00_AXI" in out
+    assert "connect_bd_intf_net gpgpu_ddr/M00_AXI processing_system7_0/S_AXI_HP0" in out
+    assert "connect_bd_intf_net axi_vdma_0/M_AXI_MM2S vdma_ddr/S00_AXI" in out
+    assert "connect_bd_intf_net vdma_ddr/M00_AXI processing_system7_0/S_AXI_HP2" in out
+    clock = next(line for line in lines if line.startswith("connect_bd_net processing_system7_0/FCLK_CLK0"))
+    for pin in ("gpgpu_axi_0/aclk", "gpgpu_ddr/aclk", "vdma_ddr/aclk", "processing_system7_0/S_AXI_HP0_ACLK",
+                "processing_system7_0/S_AXI_HP2_ACLK", "axi_vdma_0/m_axi_mm2s_aclk", "clk_wiz_0/clk_in1"):
+        assert pin in clock
+    reset = next(line for line in lines if line.startswith("connect_bd_net rst_ps7_0_35M/peripheral_aresetn"))
+    for pin in ("gpgpu_axi_0/aresetn", "gpgpu_ddr/aresetn", "vdma_ddr/aresetn", "axi_vdma_0/axi_resetn"):
+        assert pin in reset
+    # Both DDR masters map PS DDR identity-mapped, nothing excluded.
+    assert sum(line.startswith("MAP -offset 0x00000000 -range 0x20000000") for line in lines) == 2
+    assert not any(line.startswith("exclude_bd_addr_seg") for line in lines)
+    # Scanout: 32-bit framebuffer pixels to 24-bit video, out on the TMDS port.
+    assert "CONFIG.S_TDATA_NUM_BYTES 4 CONFIG.M_TDATA_NUM_BYTES 3" in out
+    assert "connect_bd_intf_net rgb2dvi_0/TMDS TMDS_0" in out
+    assert "create_bd_intf_port -mode Master -vlnv digilentinc.com:interface:tmds_rtl:1.0 TMDS_0" in out
+    # rgb2dvi's 720p range: its PLL is out of range at 74.25 MHz with the default.
+    assert "SET CONFIG.kClkRange 3 rgb2dvi_0" in out
+    assert "CONFIG.CLKOUT1_REQUESTED_OUT_FREQ 74.25" in out
+    assert "SET CONFIG.C_EXT_RESET_HIGH 0 proc_sys_reset_0" in out
+
+
+def test_bootstrap_ports_match_the_board_constraints():
+    text = (VIVADO / "create_block_design.tcl").read_text()
+    constrained = set()
+    for line in (ROOT / "hardware/constraints/smart_zynq.xdc").read_text().splitlines():
+        if line.lstrip().startswith("#"):
+            continue
+        for port in re.findall(r"get_ports \{?([\w\[\]]+)\}?\]", line):
+            # Interface ports expand to <port>_<signal>[index] in the wrapper.
+            constrained.add(re.sub(r"_(?:txd|rxd|clk_p|data_p)(?:\[\d+\])?$", "", port))
+    assert {"UART_0_0", "TMDS_0", "o_core_idle_0", "o_core_running_0"} <= constrained
+    for port in constrained:
+        assert re.search(rf"create_bd_(?:intf_)?port [^\n]* {port}$", text, re.M), port
 
 
 def test_system_reuses_saved_gui_design_without_bootstrap(tmp_path):
@@ -261,7 +310,8 @@ def test_system_reuses_saved_gui_design_without_bootstrap(tmp_path):
     assert "SET CONFIG.SP_PER_SM" not in out
 
 
-@pytest.mark.parametrize("missing", ["gpgpu_axi_0", "axi_smc", "irq_concat", "irq_zero", "rst_ps7_0_35M"])
+@pytest.mark.parametrize("missing", ["gpgpu_axi_0", "axi_smc", "gpgpu_ddr", "irq_concat", "irq_zero",
+                                     "rst_ps7_0_35M"])
 def test_incomplete_saved_design_refused_before_refresh_or_save(tmp_path, missing):
     result = run_tcl(system_script(tmp_path, existing=True, missing_cell=missing))
     assert result.returncode != 0

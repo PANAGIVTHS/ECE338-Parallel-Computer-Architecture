@@ -5,24 +5,28 @@ source [file join $system_script_dir common.tcl]
 source [file join $system_script_dir configure_block_design.tcl]
 source [file join $system_script_dir create_block_design.tcl]
 
+# The GPGPU's host path, interrupt and DDR path. The display pipeline is the
+# saved design's own business.
 proc assert_system_bd_cells {} {
     foreach {name vlnv} {
         processing_system7_0 xilinx.com:ip:processing_system7:5.5
         gpgpu_axi_0 user.org:user:gpgpu_axi:1.0
         axi_smc xilinx.com:ip:smartconnect:1.0
-        irq_concat xilinx.com:ip:xlconcat:2.1
-        irq_zero xilinx.com:ip:xlconstant:1.1
-        reset_locked xilinx.com:ip:xlconstant:1.1
+        gpgpu_ddr xilinx.com:ip:smartconnect:1.0
+        irq_concat xilinx.com:inline_hdl:ilconcat:1.0
+        irq_zero xilinx.com:inline_hdl:ilconstant:1.0
+        reset_locked xilinx.com:inline_hdl:ilconstant:1.0
     } {
         set cell [get_bd_cells -quiet $name]
         if {[llength $cell] != 1 || [get_property VLNV $cell] ne $vlnv} {
             error "Expected cell $name with VLNV $vlnv; refusing saved design mutation"
         }
     }
-    # The reset instance may have a user-chosen name in saved GUI state.
+    # Reset instances may have user-chosen names in saved GUI state (one for
+    # FCLK_CLK0, one for the pixel clock).
     set resets [get_bd_cells -quiet -hierarchical -filter {VLNV == xilinx.com:ip:proc_sys_reset:5.0}]
-    if {[llength $resets] != 1} {
-        error "Expected exactly one proc_sys_reset cell; refusing saved design mutation"
+    if {[llength $resets] == 0} {
+        error "Expected a proc_sys_reset cell; refusing saved design mutation"
     }
     foreach pattern {GPGPU_0 axi_gpio*} {
         if {[llength [get_bd_cells -quiet $pattern]]} {
@@ -51,13 +55,21 @@ if {$existing_project} {
 # This must precede both open_bd_design and create_bd_design.
 set_property ip_repo_paths [list $IP_REPO_DIR] [current_project]
 update_ip_catalog
+# Every IP the bootstrap design instantiates (create_block_design.tcl);
+# rgb2dvi comes from the vendor IP published beside the GPGPU package.
 foreach vlnv {
     user.org:user:gpgpu_axi:1.0
     xilinx.com:ip:processing_system7:5.5
     xilinx.com:ip:smartconnect:1.0
     xilinx.com:ip:proc_sys_reset:5.0
-    xilinx.com:ip:xlconcat:2.1
-    xilinx.com:ip:xlconstant:1.1
+    xilinx.com:inline_hdl:ilconcat:1.0
+    xilinx.com:inline_hdl:ilconstant:1.0
+    xilinx.com:ip:axi_vdma:6.3
+    xilinx.com:ip:axis_subset_converter:1.1
+    xilinx.com:ip:v_axi4s_vid_out:4.0
+    xilinx.com:ip:v_tc:6.2
+    xilinx.com:ip:clk_wiz:6.0
+    digilentinc.com:ip:rgb2dvi:1.4
 } {
     if {[llength [get_ipdefs -all -quiet $vlnv]] == 0} {
         error "Required IP missing from configured catalog: $vlnv"

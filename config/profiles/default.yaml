@@ -76,6 +76,13 @@ hardware:
     # file name must match the RTL's default $readmemh name.
     exclude_sources: [experimental, HostControllerProcessor.sv]
     memory_init: tools/hardware/vivado/ip/empty.mem
+    # Other IP published beside the packaged GPGPU in the IP repository
+    # (<paths.build.root>/hardware/vivado/ip_repo): every directory under
+    # `root` except those named in `exclude`, copied as is. The block design
+    # finds their IP and interface definitions there.
+    vendor_ip:
+      root: hardware/rtl
+      exclude: [gpgpu]
   vitis:
     version: "2025.2"
     platform_name: gpgpu_platform

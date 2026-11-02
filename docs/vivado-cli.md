@@ -21,6 +21,13 @@ vivado:ip:create
 - **ip:build** packages and validates `user.org:user:gpgpu_axi:1.0` into a
   self-contained repository. It never builds a standalone bitstream. Publication
   occurs only after Tcl integrity checks and Python file/interface validation.
+  The same repository also publishes the other IP the block design uses:
+  every directory under `hardware.vivado.vendor_ip.root` (`hardware/rtl`)
+  except `hardware.vivado.vendor_ip.exclude` (`gpgpu`, the GPGPU's own RTL),
+  copied beside the package, e.g. `ip_repo/rgb2dvi/` and the `tmds` interface
+  definition in `ip_repo/tmds_v1_0/`. Vivado's IP catalog scans the repository
+  recursively. A vendor directory may not reuse a name the package produced
+  (`src`, `xgui`); editing, adding or removing one republishes the repository.
 - **system:create** registers that repository before catalog/BD creation,
   creates or reuses `gpgpu_system/design_1`, applies config-owned parameters,
   validates, generates products and registers `design_1_wrapper`.
@@ -110,7 +117,19 @@ frequency from its dividers.
 The system connects PS GP0 -> SmartConnect -> `gpgpu_axi_0/s00_axi`, with
 clock/reset distribution, DDR/FIXED_IO external ports and UART/LED ports.
 `irq` connects through width handling to `IRQ_F2P[0]` (GIC ID 61), matching
-the IRQ-enabled driver; polling is not silently enabled.
+the IRQ-enabled driver; polling is not silently enabled. The GPGPU's DDR master
+`m00_axi` reaches `S_AXI_HP0` through `gpgpu_ddr` and the scanout VDMA
+reaches `S_AXI_HP2` through `vdma_ddr` (1x1 SmartConnects, which also convert
+AXI4 to AXI3), so the two meet only in the DDR controller; both see PS DDR
+identity-mapped (0x0000_0000-0x1FFF_FFFF). PS GP1 reaches the VDMA registers
+at 0x8300_0000. Scanout:
+VDMA (32-bit pixels, two frame stores) -> AXI4-Stream subset converter (4 to
+3 bytes, `0x00RRGGBB` to the video order) -> AXI4-Stream video out, timed by a
+VTC in its default mode -> `rgb2dvi` (`kClkRange` 3, its 720p range) -> the `TMDS_0` HDMI
+port. Everything runs on FCLK0 except the 74.25 MHz (720p60) pixel clock from
+`clk_wiz_0`, with its own reset. The bootstrap is `create_block_design.tcl`;
+`create_system.tcl` refuses a saved design that lacks the GPGPU's host,
+interrupt or DDR cells. `smart_zynq.xdc` places the TMDS pairs (TMDS_33).
 
 `smart_zynq.xdc` owns UART TX/RX L17/M17 and idle/running P20/P21, all
 LVCMOS33. DRC severity is not relaxed. The system consumes the packaged IP,

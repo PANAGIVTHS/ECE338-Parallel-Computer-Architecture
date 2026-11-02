@@ -23,6 +23,21 @@ from src.hardware_contract import (
 IP_TOP = 'gpgpu_axi'
 
 
+def vendor_ip_dirs(config):
+    """Directories published beside the GPGPU package in the IP repository:
+    every directory under hardware.vivado.vendor_ip.root except the names in
+    hardware.vivado.vendor_ip.exclude (hidden entries are never published)."""
+    value = config.get('hardware.vivado.vendor_ip.root')
+    if not isinstance(value, str) or not value:
+        raise TypeError('hardware.vivado.vendor_ip.root must be a non-empty string')
+    root = (config.repo_root / value).resolve()
+    if not root.is_dir():
+        raise FileNotFoundError(f'hardware.vivado.vendor_ip.root not found: {root}')
+    exclude = set(string_list(config, 'hardware.vivado.vendor_ip.exclude'))
+    return sorted(path for path in root.iterdir()
+                  if path.is_dir() and not path.name.startswith('.') and path.name not in exclude)
+
+
 def production_inputs(config):
     """(memory_init, sources, headers) for the IP: hardware.sources minus
     hardware.vivado.exclude_sources, headers first so they precede every consumer.
@@ -226,7 +241,17 @@ class GeneratedIPChanged:
         return values.get('generated_ip') == self.state()
 
 
-def package_ip(command, repo, project, ip_repo, inputs):
+def copy_vendor_ip(staging, vendor_dirs):
+    """Copy each vendor IP directory into the staged repository, beside the
+    GPGPU package, refusing to shadow anything the package produced."""
+    for source in vendor_dirs:
+        target = Path(staging) / source.name
+        if target.exists():
+            raise RuntimeError(f'Vendor IP {source.name} collides with the packaged GPGPU in {staging}')
+        shutil.copytree(source, target, symlinks=False)
+
+
+def package_ip(command, repo, project, ip_repo, inputs, vendor_dirs=()):
     project = Path(project)
     ip_repo = Path(ip_repo)
     complete = ip_repo / '.gpgpu-package.json'
@@ -244,6 +269,7 @@ def package_ip(command, repo, project, ip_repo, inputs):
     write_source_manifest(command[command.index('-sources-manifest') + 1], inputs)
     # Existing valid repository remains untouched until a fully validated package exists.
     run_vivado(command, repo, project)
+    copy_vendor_ip(staging, vendor_dirs)
     _validate_package(staging, repo, inputs)
     (staging / '.gpgpu-package.json').write_text(json.dumps(
         {'revision': revision, 'files': _tree_hash(staging)}, sort_keys=True, indent=2) + '\n')
@@ -413,22 +439,28 @@ def create_tasks(config):
     source_deps = [str(memory_init), *map(str, sources)]
     result = []
 
-    def stage(task, script, action, args, deps, targets, parent=(), ip=False, kwargs=None):
+    def stage(task, script, action, args, deps, targets, parent=(), ip=False, kwargs=None, fingerprint=None):
         cmd = command(script, ip)
+        # One config_changed per task: doit saves every instance under the same key.
         result.append({'name': task, 'actions': [(action, [cmd, *args], kwargs or {})], 'task_dep': list(parent),
                        'file_dep': [*shared, str(scripts / script), *map(str, deps)],
                        'targets': list(map(str, targets)),
-                       'uptodate': [config_changed({'command': cmd}), (tool_current, [vendor, version])],
+                       'uptodate': [config_changed({'command': cmd, **(fingerprint or {})}),
+                                    (tool_current, [vendor, version])],
                        'clean': []})
 
     # The IP stages read the build identity (BUILD_HASH, BUILD_DIRTY) when they run.
     stage('vivado:ip:create', 'create_ip_project.tcl', create_ip,
           [repo, ip_dir, ip_name, part, version, inputs], [*source_deps, scripts / 'production_sources.tcl', identity],
           [ip_xpr], ['hardware:identity'], ip=True)
-    stage('vivado:ip:build', 'package_ip.tcl', package_ip, [repo, ip_dir, ip_repo, inputs],
+    vendor_dirs = vendor_ip_dirs(config)
+    vendor_files = [path for directory in vendor_dirs for path in sorted(directory.rglob('*')) if path.is_file()]
+    stage('vivado:ip:build', 'package_ip.tcl', package_ip, [repo, ip_dir, ip_repo, inputs, vendor_dirs],
           [ip_xpr, *source_deps, scripts / 'production_sources.tcl', scripts / 'package.py', scripts / 'ip/xgui/gpgpu_axi_v1_0.tcl',
-           identity],
-          [component, stamp], ['vivado:ip:create', 'hardware:identity'], ip=True)
+           identity, *vendor_files],
+          [component, stamp], ['vivado:ip:create', 'hardware:identity'], ip=True,
+          # A removed vendor directory leaves no changed file behind; its name does.
+          fingerprint={'vendor_ip': [d.name for d in vendor_dirs]})
     result[-1]['uptodate'].append((package_current, [ip_repo, repo, inputs]))
     stage('vivado:system:create', 'create_system.tcl', create_system,
           [repo, system, name, part, bd, wrapper, ip_repo, version, inputs],
