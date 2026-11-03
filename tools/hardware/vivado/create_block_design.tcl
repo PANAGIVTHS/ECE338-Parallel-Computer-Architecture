@@ -13,8 +13,10 @@
 # Clocks: FCLK_CLK0 (configuration-owned, follows the GPGPU's timing) runs only
 # the GPGPU, GP0 and HP0. The display runs on a fixed 100 MHz FCLK_CLK1 (GP1,
 # the VDMA, HP2 and the stream into the video out, faster than the pixel clock
-# so the stream keeps up) and its 74.25 MHz (720p60) pixel clock, made from
-# FCLK_CLK1 so that it never depends on the GPGPU's clock.
+# so the stream keeps up) and its 74.25 MHz (720p60) pixel clock, made from the
+# board's 50 MHz PL oscillator, not from a PS clock: the PS PLLs jitter, and
+# the oscillator sits in the HDMI bank. The video out's asynchronous FIFO
+# crosses from FCLK_CLK1 to the pixel clock.
 proc create_block_design {} {
     global BD_NAME FCLK0_MHZ
     if {[version -short] ne "2025.2"} { error "This system requires Vivado 2025.2" }
@@ -27,6 +29,7 @@ proc create_block_design {} {
     create_bd_intf_port -mode Master -vlnv digilentinc.com:interface:tmds_rtl:1.0 TMDS_0
     create_bd_port -dir O o_core_idle_0
     create_bd_port -dir O o_core_running_0
+    create_bd_port -dir I -type clk -freq_hz 50000000 clk_50m
 
     # GP0: GPGPU CSRs. GP1: VDMA registers. HP0: GPGPU to DDR. HP2: VDMA to DDR.
     # DDR controller: HP0/HP1 reach its port 2, HP2/HP3 its port 3. Both read
@@ -138,15 +141,21 @@ proc create_block_design {} {
         CONFIG.enable_detection {false} \
         CONFIG.max_clocks_per_line {2048} \
         CONFIG.max_lines_per_frame {1024}] $vtc
-    # 720p60 pixel clock from FCLK_CLK1; the MMCM settings are Vivado's.
+    # 720p60 pixel clock and its 5x TMDS serial clock from the 50 MHz
+    # oscillator (clk_50m, whose frequency the wizard takes as its input),
+    # both from one MMCM set to filter input jitter (low bandwidth). The MMCM
+    # settings are Vivado's. rgb2dvi takes the serial clock instead of making
+    # it with a second PLL of its own, which would add that PLL's jitter.
     set pixel_clk [create_bd_cell -type ip -vlnv xilinx.com:ip:clk_wiz:6.0 clk_wiz_0]
-    set_property -dict [list CONFIG.CLKOUT1_REQUESTED_OUT_FREQ {74.25} CONFIG.USE_RESET {false}] $pixel_clk
+    set_property -dict [list \
+        CONFIG.CLKOUT1_REQUESTED_OUT_FREQ {74.25} \
+        CONFIG.CLKOUT2_USED {true} \
+        CONFIG.CLKOUT2_REQUESTED_OUT_FREQ {371.25} \
+        CONFIG.JITTER_SEL {Max_I_Jitter} \
+        CONFIG.USE_RESET {false}] $pixel_clk
     create_bd_cell -type ip -vlnv xilinx.com:ip:proc_sys_reset:5.0 proc_sys_reset_0
-    # kClkRange 3 is rgb2dvi's "< 80 MHz (720p)" range. Its serial PLL runs at
-    # PixelClk * (kClkRange + 1) * 5 = 1485 MHz, inside the -1 grade's
-    # 800-1600 MHz; the default 1 (">= 120 MHz") gives 742.5 MHz, below it.
     set hdmi [create_bd_cell -type ip -vlnv digilentinc.com:ip:rgb2dvi:1.4 rgb2dvi_0]
-    set_property CONFIG.kClkRange {3} $hdmi
+    set_property CONFIG.kGenerateSerialClk {false} $hdmi
     # Clock enables tied on; field id tied to 0 (progressive).
     create_bd_cell -type inline_hdl -vlnv xilinx.com:inline_hdl:ilconstant:1.0 clk_en
     set field [create_bd_cell -type inline_hdl -vlnv xilinx.com:inline_hdl:ilconstant:1.0 clk_en1]
@@ -174,15 +183,13 @@ proc create_block_design {} {
         [get_bd_pins processing_system7_0/M_AXI_GP0_ACLK] [get_bd_pins processing_system7_0/S_AXI_HP0_ACLK] \
         [get_bd_pins gpgpu_ctrl/aclk] [get_bd_pins gpgpu_ddr/aclk] [get_bd_pins gpgpu_axi_0/aclk] \
         [get_bd_pins gpu_sys_reset/slowest_sync_clk]
-    # FCLK_CLK1: GP1, the VDMA, HP2, the stream into the video out and the
-    # pixel clock's source
+    # FCLK_CLK1: GP1, the VDMA, HP2 and the stream into the video out
     connect_bd_net [get_bd_pins processing_system7_0/FCLK_CLK1] \
         [get_bd_pins processing_system7_0/M_AXI_GP1_ACLK] [get_bd_pins processing_system7_0/S_AXI_HP2_ACLK] \
         [get_bd_pins axi_smc_1/aclk] [get_bd_pins vdma_ddr/aclk] \
         [get_bd_pins axi_vdma_0/s_axi_lite_aclk] [get_bd_pins axi_vdma_0/m_axi_mm2s_aclk] \
         [get_bd_pins axi_vdma_0/m_axis_mm2s_aclk] [get_bd_pins axis_subset_converter_0/aclk] \
-        [get_bd_pins v_axi4s_vid_out_0/aclk] [get_bd_pins clk_wiz_0/clk_in1] \
-        [get_bd_pins rst_ps7_0_35M/slowest_sync_clk]
+        [get_bd_pins v_axi4s_vid_out_0/aclk] [get_bd_pins rst_ps7_0_35M/slowest_sync_clk]
     connect_bd_net [get_bd_pins processing_system7_0/FCLK_RESET0_N] \
         [get_bd_pins gpu_sys_reset/ext_reset_in] [get_bd_pins rst_ps7_0_35M/ext_reset_in] \
         [get_bd_pins proc_sys_reset_0/ext_reset_in]
@@ -194,9 +201,11 @@ proc create_block_design {} {
         [get_bd_pins axi_smc_1/aresetn] [get_bd_pins vdma_ddr/aresetn] [get_bd_pins axi_vdma_0/axi_resetn] \
         [get_bd_pins axis_subset_converter_0/aresetn] [get_bd_pins v_axi4s_vid_out_0/aresetn]
     # Pixel clock domain
+    connect_bd_net [get_bd_ports clk_50m] [get_bd_pins clk_wiz_0/clk_in1]
     connect_bd_net [get_bd_pins clk_wiz_0/clk_out1] \
         [get_bd_pins proc_sys_reset_0/slowest_sync_clk] [get_bd_pins v_axi4s_vid_out_0/vid_io_out_clk] \
         [get_bd_pins v_tc_0/clk] [get_bd_pins rgb2dvi_0/PixelClk]
+    connect_bd_net [get_bd_pins clk_wiz_0/clk_out2] [get_bd_pins rgb2dvi_0/SerialClk]
     connect_bd_net [get_bd_pins clk_wiz_0/locked] [get_bd_pins proc_sys_reset_0/dcm_locked]
     connect_bd_net [get_bd_pins proc_sys_reset_0/peripheral_aresetn] [get_bd_pins v_tc_0/resetn]
     connect_bd_net [get_bd_pins proc_sys_reset_0/peripheral_reset] \
@@ -212,9 +221,10 @@ proc create_block_design {} {
     connect_bd_net [get_bd_pins gpgpu_axi_0/irq] [get_bd_pins irq_concat/In0]
     connect_bd_net [get_bd_pins irq_zero/dout] [get_bd_pins irq_concat/In1]
     connect_bd_net [get_bd_pins irq_concat/dout] [get_bd_pins processing_system7_0/IRQ_F2P]
-    foreach signal {idle running} {
-        connect_bd_net [get_bd_pins gpgpu_axi_0/o_core_$signal] [get_bd_ports o_core_${signal}_0]
-    }
+    connect_bd_net [get_bd_pins gpgpu_axi_0/o_core_idle] [get_bd_ports o_core_idle_0]
+    # TEMPORARY (HDMI blanking test): the running LED shows whether the video
+    # out stays locked to the VTC; restore gpgpu_axi_0/o_core_running after.
+    connect_bd_net [get_bd_pins v_axi4s_vid_out_0/locked] [get_bd_ports o_core_running_0]
 
     # The GPGPU CSR aperture is configuration-owned (configure_block_design).
     # Both DDR masters see the PS DDR identity-mapped, each through its port.

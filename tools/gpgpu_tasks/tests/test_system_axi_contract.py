@@ -284,7 +284,7 @@ def test_bootstrap_keeps_the_display_off_the_gpgpu_clock(tmp_path):
     display = {"processing_system7_0/M_AXI_GP1_ACLK", "processing_system7_0/S_AXI_HP2_ACLK", "axi_smc_1/aclk",
                "vdma_ddr/aclk", "axi_vdma_0/s_axi_lite_aclk", "axi_vdma_0/m_axi_mm2s_aclk",
                "axi_vdma_0/m_axis_mm2s_aclk", "axis_subset_converter_0/aclk", "v_axi4s_vid_out_0/aclk",
-               "clk_wiz_0/clk_in1", "rst_ps7_0_35M/slowest_sync_clk"}
+               "rst_ps7_0_35M/slowest_sync_clk"}
     for source, pins in (("processing_system7_0/FCLK_CLK0", gpu), ("processing_system7_0/FCLK_CLK1", display)):
         net = next(line for line in lines if line.startswith(f"connect_bd_net {source}"))
         assert set(net.split()[2:]) == pins, source
@@ -317,9 +317,16 @@ def test_bootstrap_connects_gpgpu_ddr_master_and_hdmi_scanout(tmp_path):
     assert "CONFIG.S_TDATA_NUM_BYTES 4 CONFIG.M_TDATA_NUM_BYTES 3" in out
     assert "connect_bd_intf_net rgb2dvi_0/TMDS TMDS_0" in out
     assert "create_bd_intf_port -mode Master -vlnv digilentinc.com:interface:tmds_rtl:1.0 TMDS_0" in out
-    # rgb2dvi's 720p range: its PLL is out of range at 74.25 MHz with the default.
-    assert "SET CONFIG.kClkRange 3 rgb2dvi_0" in out
-    assert "CONFIG.CLKOUT1_REQUESTED_OUT_FREQ 74.25" in out
+    # One MMCM makes the pixel clock and rgb2dvi's 5x serial clock.
+    assert "SET CONFIG.kGenerateSerialClk false rgb2dvi_0" in out
+    for setting in ("CONFIG.CLKOUT1_REQUESTED_OUT_FREQ 74.25", "CONFIG.CLKOUT2_USED true",
+                    "CONFIG.CLKOUT2_REQUESTED_OUT_FREQ 371.25", "CONFIG.JITTER_SEL Max_I_Jitter"):
+        assert setting in out
+    assert "connect_bd_net clk_wiz_0/clk_out2 rgb2dvi_0/SerialClk" in out
+    # The pixel clock comes from the board's 50 MHz PL oscillator, not a PS
+    # clock; its port carries the frequency the wizard derives its MMCM from.
+    assert "create_bd_port -dir I -type clk -freq_hz 50000000 clk_50m" in out
+    assert "connect_bd_net clk_50m clk_wiz_0/clk_in1" in out
 
 
 def test_bootstrap_ports_match_the_board_constraints():

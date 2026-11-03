@@ -216,6 +216,7 @@ proc create_root_design { parentCell } {
   # Create ports
   set o_core_idle_0 [ create_bd_port -dir O o_core_idle_0 ]
   set o_core_running_0 [ create_bd_port -dir O o_core_running_0 ]
+  set clk_50m [ create_bd_port -dir I -type clk clk_50m ]
 
   # Create instance: processing_system7_0, and set properties
   set processing_system7_0 [ create_bd_cell -type ip -vlnv xilinx.com:ip:processing_system7:5.5 processing_system7_0 ]
@@ -225,7 +226,7 @@ proc create_root_design { parentCell } {
     CONFIG.PCW_ACT_DCI_PERIPHERAL_FREQMHZ {10.158730} \
     CONFIG.PCW_ACT_ENET0_PERIPHERAL_FREQMHZ {10.000000} \
     CONFIG.PCW_ACT_ENET1_PERIPHERAL_FREQMHZ {10.000000} \
-    CONFIG.PCW_ACT_FPGA0_PERIPHERAL_FREQMHZ {42.105263} \
+    CONFIG.PCW_ACT_FPGA0_PERIPHERAL_FREQMHZ {40.000000} \
     CONFIG.PCW_ACT_FPGA1_PERIPHERAL_FREQMHZ {100.000000} \
     CONFIG.PCW_ACT_FPGA2_PERIPHERAL_FREQMHZ {10.000000} \
     CONFIG.PCW_ACT_FPGA3_PERIPHERAL_FREQMHZ {10.000000} \
@@ -243,7 +244,7 @@ proc create_root_design { parentCell } {
     CONFIG.PCW_ACT_TTC1_CLK2_PERIPHERAL_FREQMHZ {111.111115} \
     CONFIG.PCW_ACT_UART_PERIPHERAL_FREQMHZ {100.000000} \
     CONFIG.PCW_ACT_WDT_PERIPHERAL_FREQMHZ {111.111115} \
-    CONFIG.PCW_CLK0_FREQ {42105263} \
+    CONFIG.PCW_CLK0_FREQ {40000000} \
     CONFIG.PCW_CLK1_FREQ {100000000} \
     CONFIG.PCW_CLK2_FREQ {10000000} \
     CONFIG.PCW_CLK3_FREQ {10000000} \
@@ -268,7 +269,7 @@ proc create_root_design { parentCell } {
     CONFIG.PCW_EN_EMIO_UART0 {1} \
     CONFIG.PCW_EN_UART0 {1} \
     CONFIG.PCW_FCLK_CLK1_BUF {TRUE} \
-    CONFIG.PCW_FPGA0_PERIPHERAL_FREQMHZ {42} \
+    CONFIG.PCW_FPGA0_PERIPHERAL_FREQMHZ {40} \
     CONFIG.PCW_FPGA1_PERIPHERAL_FREQMHZ {100} \
     CONFIG.PCW_FPGA_FCLK0_ENABLE {1} \
     CONFIG.PCW_FPGA_FCLK1_ENABLE {1} \
@@ -293,8 +294,6 @@ proc create_root_design { parentCell } {
 
   # Create instance: gpgpu_axi_0, and set properties
   set gpgpu_axi_0 [ create_bd_cell -type ip -vlnv user.org:user:gpgpu_axi:1.0 gpgpu_axi_0 ]
-  set_property CONFIG.CLOCK_KHZ {42105} $gpgpu_axi_0
-
 
   # Create instance: gpgpu_ctrl, and set properties
   set gpgpu_ctrl [ create_bd_cell -type ip -vlnv xilinx.com:ip:smartconnect:1.0 gpgpu_ctrl ]
@@ -422,6 +421,9 @@ proc create_root_design { parentCell } {
   set clk_wiz_0 [ create_bd_cell -type ip -vlnv xilinx.com:ip:clk_wiz:6.0 clk_wiz_0 ]
   set_property -dict [list \
     CONFIG.CLKOUT1_REQUESTED_OUT_FREQ {74.25} \
+    CONFIG.CLKOUT2_REQUESTED_OUT_FREQ {371.25} \
+    CONFIG.CLKOUT2_USED {true} \
+    CONFIG.JITTER_SEL {Max_I_Jitter} \
     CONFIG.USE_RESET {false} \
   ] $clk_wiz_0
 
@@ -431,7 +433,7 @@ proc create_root_design { parentCell } {
 
   # Create instance: rgb2dvi_0, and set properties
   set rgb2dvi_0 [ create_bd_cell -type ip -vlnv digilentinc.com:ip:rgb2dvi:1.4 rgb2dvi_0 ]
-  set_property CONFIG.kClkRange {3} $rgb2dvi_0
+  set_property CONFIG.kGenerateSerialClk {false} $rgb2dvi_0
 
 
   # Create instance: clk_en, and set properties
@@ -467,19 +469,21 @@ proc create_root_design { parentCell } {
   [get_bd_pins v_axi4s_vid_out_0/vid_io_out_ce] \
   [get_bd_pins v_tc_0/clken] \
   [get_bd_pins v_tc_0/gen_clken]
+  connect_bd_net -net clk_in1_0_1  [get_bd_ports clk_50m] \
+  [get_bd_pins clk_wiz_0/clk_in1]
   connect_bd_net -net clk_wiz_0_clk_out1  [get_bd_pins clk_wiz_0/clk_out1] \
   [get_bd_pins proc_sys_reset_0/slowest_sync_clk] \
   [get_bd_pins v_axi4s_vid_out_0/vid_io_out_clk] \
   [get_bd_pins v_tc_0/clk] \
   [get_bd_pins rgb2dvi_0/PixelClk]
+  connect_bd_net -net clk_wiz_0_clk_out2  [get_bd_pins clk_wiz_0/clk_out2] \
+  [get_bd_pins rgb2dvi_0/SerialClk]
   connect_bd_net -net clk_wiz_0_locked  [get_bd_pins clk_wiz_0/locked] \
   [get_bd_pins proc_sys_reset_0/dcm_locked]
   connect_bd_net -net gpgpu_axi_0_irq  [get_bd_pins gpgpu_axi_0/irq] \
   [get_bd_pins irq_concat/In0]
   connect_bd_net -net gpgpu_axi_0_o_core_idle  [get_bd_pins gpgpu_axi_0/o_core_idle] \
   [get_bd_ports o_core_idle_0]
-  connect_bd_net -net gpgpu_axi_0_o_core_running  [get_bd_pins gpgpu_axi_0/o_core_running] \
-  [get_bd_ports o_core_running_0]
   connect_bd_net -net gpu_sys_reset_peripheral_aresetn  [get_bd_pins gpu_sys_reset/peripheral_aresetn] \
   [get_bd_pins gpgpu_axi_0/aresetn] \
   [get_bd_pins gpgpu_ctrl/aresetn] \
@@ -510,7 +514,6 @@ proc create_root_design { parentCell } {
   [get_bd_pins axi_vdma_0/m_axis_mm2s_aclk] \
   [get_bd_pins axis_subset_converter_0/aclk] \
   [get_bd_pins v_axi4s_vid_out_0/aclk] \
-  [get_bd_pins clk_wiz_0/clk_in1] \
   [get_bd_pins rst_ps7_0_35M/slowest_sync_clk]
   connect_bd_net -net processing_system7_0_FCLK_RESET0_N  [get_bd_pins processing_system7_0/FCLK_RESET0_N] \
   [get_bd_pins gpu_sys_reset/ext_reset_in] \
@@ -526,6 +529,8 @@ proc create_root_design { parentCell } {
   [get_bd_pins axi_vdma_0/axi_resetn] \
   [get_bd_pins axis_subset_converter_0/aresetn] \
   [get_bd_pins v_axi4s_vid_out_0/aresetn]
+  connect_bd_net -net v_axi4s_vid_out_0_locked  [get_bd_pins v_axi4s_vid_out_0/locked] \
+  [get_bd_ports o_core_running_0]
   connect_bd_net -net v_axi4s_vid_out_0_vid_active_video  [get_bd_pins v_axi4s_vid_out_0/vid_active_video] \
   [get_bd_pins rgb2dvi_0/vid_pVDE]
   connect_bd_net -net v_axi4s_vid_out_0_vid_data  [get_bd_pins v_axi4s_vid_out_0/vid_data] \

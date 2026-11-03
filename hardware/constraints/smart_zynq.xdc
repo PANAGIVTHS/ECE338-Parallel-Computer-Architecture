@@ -1,6 +1,6 @@
-### Clock Signal (100 MHz onboard clock)
-#set_property -dict {PACKAGE_PIN Y9 IOSTANDARD LVCMOS33} [get_ports clk_in]
-#create_clock -period 10.000 -name sys_clk -waveform {0.000 5.000} -add [get_ports clk_in]
+# 50 MHz PL oscillator (X2, CLK_50M) on a clock-capable pin of bank 34, the
+# HDMI bank. clk_wiz_0 defines its clock from the block design port frequency.
+set_property -dict {PACKAGE_PIN M19 IOSTANDARD LVCMOS33} [get_ports clk_50m]
 
 ## Map i_rst to Slide Switch SW0 (Down = 0/Reset, Up = 1/Run)
 #set_property -dict {PACKAGE_PIN F22 IOSTANDARD LVCMOS33} [get_ports rst]
