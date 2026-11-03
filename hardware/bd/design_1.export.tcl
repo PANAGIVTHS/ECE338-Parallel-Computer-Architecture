@@ -216,7 +216,7 @@ proc create_root_design { parentCell } {
   # Create ports
   set o_core_idle_0 [ create_bd_port -dir O o_core_idle_0 ]
   set o_core_running_0 [ create_bd_port -dir O o_core_running_0 ]
-  set clk_50m [ create_bd_port -dir I -type clk clk_50m ]
+  set clk_50m [ create_bd_port -dir I -type clk -freq_hz 50000000 clk_50m ]
 
   # Create instance: processing_system7_0, and set properties
   set processing_system7_0 [ create_bd_cell -type ip -vlnv xilinx.com:ip:processing_system7:5.5 processing_system7_0 ]
@@ -232,7 +232,7 @@ proc create_root_design { parentCell } {
     CONFIG.PCW_ACT_FPGA3_PERIPHERAL_FREQMHZ {10.000000} \
     CONFIG.PCW_ACT_PCAP_PERIPHERAL_FREQMHZ {200.000000} \
     CONFIG.PCW_ACT_QSPI_PERIPHERAL_FREQMHZ {10.000000} \
-    CONFIG.PCW_ACT_SDIO_PERIPHERAL_FREQMHZ {10.000000} \
+    CONFIG.PCW_ACT_SDIO_PERIPHERAL_FREQMHZ {100.000000} \
     CONFIG.PCW_ACT_SMC_PERIPHERAL_FREQMHZ {10.000000} \
     CONFIG.PCW_ACT_SPI_PERIPHERAL_FREQMHZ {10.000000} \
     CONFIG.PCW_ACT_TPIU_PERIPHERAL_FREQMHZ {200.000000} \
@@ -266,7 +266,9 @@ proc create_root_design { parentCell } {
     CONFIG.PCW_DDR_RAM_HIGHADDR {0x1FFFFFFF} \
     CONFIG.PCW_DDR_WRITE_TO_CRITICAL_PRIORITY_LEVEL {15} \
     CONFIG.PCW_EN_CLK1_PORT {1} \
+    CONFIG.PCW_EN_EMIO_CD_SDIO0 {0} \
     CONFIG.PCW_EN_EMIO_UART0 {1} \
+    CONFIG.PCW_EN_SDIO0 {1} \
     CONFIG.PCW_EN_UART0 {1} \
     CONFIG.PCW_FCLK_CLK1_BUF {TRUE} \
     CONFIG.PCW_FPGA0_PERIPHERAL_FREQMHZ {40} \
@@ -274,6 +276,39 @@ proc create_root_design { parentCell } {
     CONFIG.PCW_FPGA_FCLK0_ENABLE {1} \
     CONFIG.PCW_FPGA_FCLK1_ENABLE {1} \
     CONFIG.PCW_IRQ_F2P_INTR {1} \
+    CONFIG.PCW_MIO_40_IOTYPE {LVCMOS 3.3V} \
+    CONFIG.PCW_MIO_40_PULLUP {enabled} \
+    CONFIG.PCW_MIO_40_SLEW {slow} \
+    CONFIG.PCW_MIO_41_IOTYPE {LVCMOS 3.3V} \
+    CONFIG.PCW_MIO_41_PULLUP {enabled} \
+    CONFIG.PCW_MIO_41_SLEW {slow} \
+    CONFIG.PCW_MIO_42_IOTYPE {LVCMOS 3.3V} \
+    CONFIG.PCW_MIO_42_PULLUP {enabled} \
+    CONFIG.PCW_MIO_42_SLEW {slow} \
+    CONFIG.PCW_MIO_43_IOTYPE {LVCMOS 3.3V} \
+    CONFIG.PCW_MIO_43_PULLUP {enabled} \
+    CONFIG.PCW_MIO_43_SLEW {slow} \
+    CONFIG.PCW_MIO_44_IOTYPE {LVCMOS 3.3V} \
+    CONFIG.PCW_MIO_44_PULLUP {enabled} \
+    CONFIG.PCW_MIO_44_SLEW {slow} \
+    CONFIG.PCW_MIO_45_IOTYPE {LVCMOS 3.3V} \
+    CONFIG.PCW_MIO_45_PULLUP {enabled} \
+    CONFIG.PCW_MIO_45_SLEW {slow} \
+    CONFIG.PCW_MIO_47_IOTYPE {LVCMOS 3.3V} \
+    CONFIG.PCW_MIO_47_PULLUP {enabled} \
+    CONFIG.PCW_MIO_47_SLEW {slow} \
+    CONFIG.PCW_MIO_TREE_PERIPHERALS {unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#SD\
+0#SD 0#SD 0#SD 0#SD 0#SD 0#unassigned#SD 0#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned} \
+    CONFIG.PCW_MIO_TREE_SIGNALS {unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#clk#cmd#data[0]#data[1]#data[2]#data[3]#unassigned#cd#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned}\
+\
+    CONFIG.PCW_SD0_GRP_CD_ENABLE {1} \
+    CONFIG.PCW_SD0_GRP_CD_IO {MIO 47} \
+    CONFIG.PCW_SD0_GRP_POW_ENABLE {0} \
+    CONFIG.PCW_SD0_GRP_WP_ENABLE {0} \
+    CONFIG.PCW_SD0_PERIPHERAL_ENABLE {1} \
+    CONFIG.PCW_SD0_SD0_IO {MIO 40 .. 45} \
+    CONFIG.PCW_SDIO_PERIPHERAL_FREQMHZ {100} \
+    CONFIG.PCW_SDIO_PERIPHERAL_VALID {1} \
     CONFIG.PCW_UART0_GRP_FULL_ENABLE {0} \
     CONFIG.PCW_UART0_PERIPHERAL_ENABLE {1} \
     CONFIG.PCW_UART0_UART0_IO {EMIO} \
@@ -462,6 +497,8 @@ proc create_root_design { parentCell } {
   connect_bd_intf_net -intf_net vdma_ddr_M00_AXI [get_bd_intf_pins vdma_ddr/M00_AXI] [get_bd_intf_pins processing_system7_0/S_AXI_HP2]
 
   # Create port connections
+  connect_bd_net -net clk_50m_1  [get_bd_ports clk_50m] \
+  [get_bd_pins clk_wiz_0/clk_in1]
   connect_bd_net -net clk_en1_dout  [get_bd_pins clk_en1/dout] \
   [get_bd_pins v_axi4s_vid_out_0/fid]
   connect_bd_net -net clk_en_dout  [get_bd_pins clk_en/dout] \
@@ -469,8 +506,6 @@ proc create_root_design { parentCell } {
   [get_bd_pins v_axi4s_vid_out_0/vid_io_out_ce] \
   [get_bd_pins v_tc_0/clken] \
   [get_bd_pins v_tc_0/gen_clken]
-  connect_bd_net -net clk_in1_0_1  [get_bd_ports clk_50m] \
-  [get_bd_pins clk_wiz_0/clk_in1]
   connect_bd_net -net clk_wiz_0_clk_out1  [get_bd_pins clk_wiz_0/clk_out1] \
   [get_bd_pins proc_sys_reset_0/slowest_sync_clk] \
   [get_bd_pins v_axi4s_vid_out_0/vid_io_out_clk] \

@@ -40,6 +40,9 @@ proc create_block_design {} {
     # starved before it goes critical: high-priority reads after 1, low-
     # priority reads and writes after 15, so the GPGPU's writes cannot
     # overtake the scanout.
+    # SD0: the TF card on MIO 40..45 (the only SD boot pins the BootROM
+    # supports), card detect on MIO 47, no write protect. The FSBL needs it to
+    # read the bitstream and the host from BOOT.BIN; bank 501 is 3.3 V.
     # FCLK_CLK1: 100 MHz, which the PS makes exactly (I/O PLL / 10).
     # PCW_EN_CLK1_PORT creates its pin; the enable alone does not.
     set ps [create_bd_cell -type ip -vlnv xilinx.com:ip:processing_system7:5.5 processing_system7_0]
@@ -58,6 +61,13 @@ proc create_block_design {} {
         CONFIG.PCW_UART0_UART0_IO {EMIO} \
         CONFIG.PCW_UART0_GRP_FULL_ENABLE {0} \
         CONFIG.PCW_UART_PERIPHERAL_FREQMHZ {100} \
+        CONFIG.PCW_SD0_PERIPHERAL_ENABLE {1} \
+        CONFIG.PCW_SD0_SD0_IO {MIO 40 .. 45} \
+        CONFIG.PCW_SD0_GRP_CD_ENABLE {1} \
+        CONFIG.PCW_SD0_GRP_CD_IO {MIO 47} \
+        CONFIG.PCW_SD0_GRP_WP_ENABLE {0} \
+        CONFIG.PCW_SD0_GRP_POW_ENABLE {0} \
+        CONFIG.PCW_SDIO_PERIPHERAL_FREQMHZ {100} \
         CONFIG.PCW_UIPARAM_DDR_PARTNO {MT41K256M16 RE-125} \
         CONFIG.PCW_UIPARAM_DDR_BUS_WIDTH {16 Bit} \
         CONFIG.PCW_UIPARAM_DDR_ECC {Disabled} \

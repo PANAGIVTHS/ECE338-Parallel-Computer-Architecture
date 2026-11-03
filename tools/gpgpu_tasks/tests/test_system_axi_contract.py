@@ -43,6 +43,13 @@ def test_bootstrap_uses_saved_ps_user_settings_not_computed_overrides():
     assert "CONFIG.PCW_UIPARAM_DDR_BUS_WIDTH {16 Bit}" in text
     assert "CONFIG.PCW_UIPARAM_DDR_ECC {Disabled}" in text
     assert "CONFIG.PCW_UART0_UART0_IO {EMIO}" in text
+    # SD boot: the FSBL reads BOOT.BIN from the TF card on SD0.
+    for setting in ("CONFIG.PCW_SD0_PERIPHERAL_ENABLE {1}",
+                    "CONFIG.PCW_SD0_SD0_IO {MIO 40 .. 45}",
+                    "CONFIG.PCW_SD0_GRP_CD_ENABLE {1}",
+                    "CONFIG.PCW_SD0_GRP_CD_IO {MIO 47}",
+                    "CONFIG.PCW_SD0_GRP_WP_ENABLE {0}"):
+        assert setting in text
     assert "CONFIG.PCW_ACT_" not in text
     assert "CONFIG.PCW_UIPARAM_ACT_" not in text
     assert "CONFIG.PCW_PERIPHERAL_BOARD_PRESET" not in text

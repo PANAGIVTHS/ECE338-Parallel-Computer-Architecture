@@ -107,7 +107,8 @@ Board XDC is excluded from the reusable IP.
 ## System contract
 
 The saved system BD, not its inconsistent neighboring Tcl export, supplied:
-DDR **16-bit MT41K256M16 RE-125**, UART0 **EMIO**. The fabric clock FCLK0
+DDR **16-bit MT41K256M16 RE-125**, UART0 **EMIO**, SD0 **MIO 40..45** with
+card detect on **MIO 47** (the TF card, for SD boot; bank 501 at 3.3 V). The fabric clock FCLK0
 (GPGPU, its SmartConnects and reset) is configuration-owned:
 `hardware.vivado.fabric_clock_mhz` (default **42 MHz**) is passed as
 `-fclk0-mhz`, used when bootstrapping a new BD and re-applied to a saved BD on
