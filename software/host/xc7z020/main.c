@@ -188,6 +188,11 @@ static void autorun(void) {
         xil_printf(" 0x%08x", gpgpu_autorun_args[i]);
     xil_printf("; press a key to stop\r\n");
 
+    /* Drop what the UART received before now: the EMIO RX pin is undriven
+     * until the bitstream loads, and that latches junk bytes in the FIFO. */
+    while (XUartPs_IsReceiveData(STDIN_BASEADDRESS))
+        (void)inbyte();
+
     while (!XUartPs_IsReceiveData(STDIN_BASEADDRESS)) {
         if (gpgpu_run_quiet() != GPGPU_OK) {
             xil_printf("AUTORUN: run %u failed\r\n", runs);
