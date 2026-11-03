@@ -43,6 +43,8 @@ Example: `software:programs:simple:x86`
 
 • `software:host:platform` — Regenerate the driver header `software.host.platform_header` from `ControlPkg`, `MemorySubsystemPkg`, `gpu_pkg`, `architecture.interface_version` and `software.host`.
 
+• `software:host:autorun` — Regenerate `software.host.autorun.header`: the program, arguments and framebuffer the host runs from boot until a UART key press (`software.host.autorun`, on with `enabled: true`).
+
 [bold cyan]Hardware[/bold cyan]
 
 • `hardware:identity` — Record the RTL's build identity (last commit touching `paths.rtl.sources.gpgpu` and whether it has uncommitted changes) for BUILD_ID. Runs before every RTL build and IP stage; they rebuild only when it changes.

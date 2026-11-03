@@ -114,6 +114,21 @@ software:
     use_irq: true
     # GIC interrupt ID of the GPU interrupt: IRQ_F2P[0] is ID 61 on Zynq-7000.
     irq_id: 61
+    # Boot-time autorun: when enabled, the host loads `program` (a directory
+    # under software/programs) into IMEM, writes `args` to GPGPU_ARGS, shows
+    # framebuffer `display` and runs the kernel back to back until a key
+    # arrives on the UART; then the monitor starts. software:host:autorun
+    # generates `header` from these and the program's RISC-V build; it is
+    # committed, like platform_header, so the Vitis host build needs no
+    # RISC-V toolchain.
+    autorun:
+      header: software/host/xc7z020/gpgpu_autorun.h
+      enabled: false
+      program: ripple
+      # GPGPU_ARGS words in order: 32-bit integers, or names from
+      # platform_header such as GPGPU_FB0_BASE. Unlisted words are 0.
+      args: [GPGPU_FB0_BASE, GPGPU_FB_WIDTH, GPGPU_FB_HEIGHT, 0]
+      display: 0
   riscv:
     march: rv32im
     abi: ilp32

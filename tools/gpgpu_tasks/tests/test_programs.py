@@ -9,9 +9,11 @@ from tools.software import host_platform, programs
 
 
 class StubResolvedConfig:
-    def __init__(self, repo_root: Path, build_root: Path | None = None) -> None:
+    def __init__(self, repo_root: Path, build_root: Path | None = None,
+                 overrides: dict | None = None) -> None:
         self.repo_root = repo_root
         self._build_root = build_root or repo_root / "build"
+        self._overrides = overrides or {}
 
     def get(self, key: str):
         values = {
@@ -20,6 +22,13 @@ class StubResolvedConfig:
             "software.riscv.abi": "ilp32",
             "tools.native_cc.command": "gcc",
             "tools.riscv_gcc.command": "/opt/riscv/bin/riscv64-unknown-elf-gcc",
+            "software.host.define_prefix": "GPGPU_",
+            "software.host.autorun.header": "host/gpgpu_autorun.h",
+            "software.host.autorun.enabled": False,
+            "software.host.autorun.program": "example",
+            "software.host.autorun.args": (),
+            "software.host.autorun.display": 0,
+            **self._overrides,
         }
         return values[key]
 
@@ -28,7 +37,8 @@ class StubResolvedConfig:
         return self._build_root
 
 
-def make_repo(tmp_path: Path, build_root: Path | None = None) -> StubResolvedConfig:
+def make_repo(tmp_path: Path, build_root: Path | None = None,
+              overrides: dict | None = None) -> StubResolvedConfig:
     programs_dir = tmp_path / "software/programs"
     program_dir = programs_dir / "example"
     program_dir.mkdir(parents=True)
@@ -36,7 +46,7 @@ def make_repo(tmp_path: Path, build_root: Path | None = None) -> StubResolvedCon
     (programs_dir / "gpgpu.ld").write_text("SECTIONS {}\n")
     (programs_dir / "gpgpu_config.h").write_text("#define GPGPU_NUM_CORES 32u\n")
     (programs_dir / "gpgpu_runtime.h").write_text('#include "gpgpu_config.h"\n')
-    return StubResolvedConfig(tmp_path, build_root)
+    return StubResolvedConfig(tmp_path, build_root, overrides)
 
 
 def tasks_by_name(config: StubResolvedConfig) -> dict[str, dict]:
@@ -58,6 +68,7 @@ def test_create_tasks_preserves_makefile_build_graph_and_flags(tmp_path: Path) -
         f"{prefix}:mem",
         f"{prefix}:riscv:build",
         f"{prefix}:all",
+        "software:host:autorun",
     }
 
     x86_command = tasks[f"{prefix}:x86:build"]["actions"][0][1][0]
@@ -343,3 +354,89 @@ def test_platform_settings_have_no_fallback(key: str, value: object) -> None:
 
     with pytest.raises(ValueError, match=key):
         host_platform.host_settings(Config())  # type: ignore[arg-type]
+
+
+def test_committed_autorun_header_matches_configuration(tmp_path: Path) -> None:
+    from config import resolve_config
+
+    config = resolve_config(REPO_ROOT)
+    [task] = [task for task in programs.create_tasks(config) if task["name"] == "software:host:autorun"]
+    settings, nm_command, memory, output = task["actions"][0][1]
+    assert output == REPO_ROOT / config.get("software.host.autorun.header")
+    assert task["targets"] == [str(output)]
+    assert task["uptodate"][0].config == settings
+    if settings["enabled"]:
+        pytest.skip("autorun is enabled: regenerating needs the program's RISC-V build")
+    fresh = tmp_path / output.name
+    programs.write_autorun_header(settings, nm_command, memory, fresh)
+    assert output.read_text(encoding="utf-8") == fresh.read_text(encoding="utf-8"), (
+        "gpgpu_autorun.h is stale: run software:host:autorun"
+    )
+
+
+def test_autorun_header_embeds_image_and_pads_args_to_the_window(tmp_path: Path) -> None:
+    config = make_repo(tmp_path, overrides={
+        "software.host.autorun.enabled": True,
+        "software.host.autorun.args": ("GPGPU_FB0_BASE", 0x1000),
+        "software.host.autorun.display": 1,
+    })
+    task = tasks_by_name(config)["software:host:autorun"]
+    elf = tmp_path / "build/software/programs/example/example.elf"
+    memory = tmp_path / "build/software/programs/example/example_instructions.mem"
+    assert task["task_dep"] == ["software:programs:example:mem"]
+    assert {str(elf), str(memory)} <= set(task["file_dep"])
+    assert task["actions"][0][1][1] == ["/opt/riscv/bin/riscv64-unknown-elf-nm", str(elf)]
+
+    settings = programs.autorun_settings(config, ["example"])  # type: ignore[arg-type]
+    header = programs.render_autorun_header(settings, [0x13, 0x6F], (16, 4), "GUARD_H")
+    assert header_values(header) == {
+        "GPGPU_AUTORUN": "1",
+        "GPGPU_AUTORUN_PROGRAM": '"example"',
+        "GPGPU_AUTORUN_ARGS_WORD": "16U",
+        "GPGPU_AUTORUN_DISPLAY": "1U",
+    }
+    assert "gpgpu_autorun_image[] = {\n    0x00000013U, 0x0000006FU,\n};" in header
+    assert ("gpgpu_autorun_args[] = { GPGPU_FB0_BASE, 0x00001000U, 0x00000000U, 0x00000000U };"
+            in header)
+    with pytest.raises(ValueError, match="GPGPU_ARGS holds 1 words"):
+        programs.render_autorun_header(settings, [0x13], (16, 1), "GUARD_H")
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("software.host.autorun.enabled", 1),
+        ("software.host.autorun.program", 3),
+        ("software.host.autorun.args", (1 << 32,)),
+        ("software.host.autorun.args", ("not a name",)),
+        ("software.host.autorun.args", (True,)),
+        ("software.host.autorun.display", -1),
+        ("software.host.autorun.header", "gpgpu_autorun.c"),
+    ],
+)
+def test_autorun_settings_have_no_fallback(tmp_path: Path, key: str, value: object) -> None:
+    config = make_repo(tmp_path, overrides={key: value})
+
+    with pytest.raises(ValueError, match=key):
+        programs.autorun_settings(config, ["example"])  # type: ignore[arg-type]
+
+
+def test_args_window_comes_from_the_linker_symbols(monkeypatch: pytest.MonkeyPatch) -> None:
+    class Listing:
+        stdout = "00000050 A __gpu_args_end\n00000040 A __gpu_args_base\n00000000 T _start\n"
+
+    monkeypatch.setattr(programs.subprocess, "run", lambda *args, **kwargs: Listing())
+
+    assert programs.read_args_window(["nm", "x.elf"]) == (16, 4)
+
+
+def test_enabled_autorun_needs_an_existing_program(tmp_path: Path) -> None:
+    config = make_repo(tmp_path, overrides={"software.host.autorun.enabled": True,
+                                            "software.host.autorun.program": "missing"})
+
+    with pytest.raises(ValueError, match="software.host.autorun.program"):
+        programs.autorun_settings(config, ["example"])  # type: ignore[arg-type]
+    assert programs.autorun_settings(
+        make_repo(tmp_path / "off", overrides={"software.host.autorun.program": "missing"}),  # type: ignore[arg-type]
+        ["example"],
+    )["program"] == "missing"
