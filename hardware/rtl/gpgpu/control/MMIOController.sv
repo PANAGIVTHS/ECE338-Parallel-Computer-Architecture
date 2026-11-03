@@ -44,6 +44,8 @@ module MMIOController
     access_state_t current_state, next_state;
 
     wire request_accepted = i_req_valid && o_req_ready;
+    logic decoded_memory;
+    logic memory_write;
 
     assign o_req_ready = current_state == ACCESS_IDLE;
     assign o_rsp_valid = current_state == ACCESS_RESPONSE;
@@ -101,7 +103,6 @@ module MMIOController
 
     word_t decoded_rdata;
     rsp_status_t decoded_status;
-    logic decoded_memory;
 
     always_comb begin
         decoded_rdata = '0;
@@ -153,7 +154,6 @@ module MMIOController
 
     // Retain the request payload while the BRAM operation completes.
     logic memory_imem;
-    logic memory_write;
     logic [HOST_ADDR_WIDTH-1:0] memory_address;
     word_t memory_wdata;
 

@@ -102,9 +102,6 @@ def execute_uart(uart, operation, words):
     checked_state(uart)
     if operation == 'load-imem':
         print(uart.load_imem_bin(words, offset=0), flush=True)
-        # The shared binary loader stops at its completion marker, not the
-        # following prompt. Consume it before issuing the readback command.
-        uart.wait_prompt()
         if uart.dump_imem_ascii(len(words), offset=0) != dict(enumerate(words)):
             raise RuntimeError('IMEM readback mismatch')
         print(f'Verified {len(words)} IMEM words', flush=True)

@@ -2,21 +2,33 @@ module HazardUnit
     import gpu_pkg::*;
     import riscv_pkg::*;
     import pipeline_pkg::*;
-(
+#(
+    parameter int unsigned MUL_LATENCY = 3
+)(
     input reg_addr_t i_id_rs1,
     input reg_addr_t i_id_rs2,
     input reg_addr_t i_idex_rd,
     input logic i_ex_is_load,
     input logic i_ex_is_mul,
     input logic i_id_is_mul,
-    input mul_hazard_t i_mul1,
-    input mul_hazard_t i_mul2,
-    input mul_hazard_t i_mul3,
+    input mul_hazard_t i_mul [0:MUL_LATENCY-1],
     input instr_type_t i_id_instr_type,
     input logic i_branch_taken,
     output logic o_data_hazard,
     output logic o_flush
 );
+
+    logic mul_pending, mul_dependency;
+
+    always_comb begin
+        mul_pending = 1'b0;
+        mul_dependency = 1'b0;
+        for (int stage = 0; stage < MUL_LATENCY; stage++) begin
+            mul_pending |= i_mul[stage].valid;
+            mul_dependency |= i_mul[stage].valid &&
+                ((i_id_rs1 == i_mul[stage].rd) || (i_id_rs2 == i_mul[stage].rd));
+        end
+    end
 
     always_comb begin
         o_data_hazard = 1'b0;
@@ -34,20 +46,14 @@ module HazardUnit
             //! When there is a mul in EX stall, EXCEPT when the id stage is
             //! a multiplication that has no dependency on the muls that are
             //! inside EX.
-        end else if ((i_ex_is_mul || i_mul1.valid || i_mul2.valid || i_mul3.valid) && !(
+        end else if ((i_ex_is_mul || mul_pending) && !(
             i_id_is_mul &&
             
             //! 1. Check dependency against the MUL currently in the EX stage
             (i_id_rs1 != i_idex_rd) && (i_id_rs2 != i_idex_rd) &&
 
-            //! 2. Check dependency against the MUL in the first DSP stage
-            (!i_mul1.valid || ((i_id_rs1 != i_mul1.rd) && (i_id_rs2 != i_mul1.rd))) &&
-
-            //! 3. Check dependency against the MUL in the second DSP stage
-            (!i_mul2.valid || ((i_id_rs1 != i_mul2.rd) && (i_id_rs2 != i_mul2.rd))) &&
-
-            //! 4. Check dependency against the MUL in the third DSP stage
-            (!i_mul3.valid || ((i_id_rs1 != i_mul3.rd) && (i_id_rs2 != i_mul3.rd)))
+            //! 2. Check dependency against every registered MUL stage
+            !mul_dependency
         )) begin
             o_data_hazard = 1'b1;
         end
