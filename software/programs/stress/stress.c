@@ -32,6 +32,12 @@
                             * four and eight instructions after their write */
 #define MODE_XOR_CONST 10u /* x ^= y: operand A forwarded, operand B constant */
 
+/* The mode word: bits 7:0 the mode; bits 15:8 the first lane and bits 23:16
+ * the number of lanes whose data toggles (0: every lane). */
+#define MODE_MASK        0xFFu
+#define LANE_FIRST_SHIFT 8u
+#define LANE_COUNT_SHIFT 16u
+
 /* Hides v's value from the optimizer, so a chain of steps is not folded
  * into fewer instructions (e.g. eight rotations into one). */
 #define KEEP(v) __asm__ volatile("" : "+r"(v))
@@ -47,6 +53,17 @@ static inline __attribute__((always_inline)) unsigned int stress_lane(
     volatile unsigned int *buf
 )
 {
+    /* The mode word's upper bits pick the lanes whose data toggles; the rest
+     * run the same instructions on zero data. The range is the same for
+     * every lane, so only the mask below differs, without a branch. */
+    unsigned int first = (mode >> LANE_FIRST_SHIFT) & 0xFFu;
+    unsigned int count = (mode >> LANE_COUNT_SHIFT) & 0xFFu;
+
+    mode &= MODE_MASK;
+    if (count == 0u)
+        count = CORES;
+    seed &= -(unsigned int)(tid - first < count);
+
     /* Odd multiples of the seed: zero for seed 0, odd for an odd seed. */
     unsigned int x = seed * (2u * tid + 1u);
     unsigned int y = seed * (2u * tid + 3u);
@@ -163,7 +180,7 @@ __attribute__((optimize("no-jump-tables"))) void main(void)
 
     /*
      * Args:
-     *   GPGPU_ARGS[0] = mode (MODE_*)
+     *   GPGPU_ARGS[0] = mode (MODE_*), optionally with a lane range (MODE_MASK)
      *   GPGPU_ARGS[1] = iterations
      *   GPGPU_ARGS[2] = seed; 0 keeps every data value at zero
      *   GPGPU_ARGS[3] = buffer, byte address: DMEM (e.g. 0x1000) for the

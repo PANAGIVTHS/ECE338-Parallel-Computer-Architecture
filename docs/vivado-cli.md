@@ -132,14 +132,17 @@ at 0x8300_0000. Scanout:
 VDMA (32-bit pixels, two frame stores, 64-beat bursts of its 64-bit memory
 side, 8192-pixel line buffer) -> AXI4-Stream subset converter (4 to
 3 bytes, `0x00RRGGBB` to the video order) -> AXI4-Stream video out, timed by a
-VTC in its default mode -> `rgb2dvi` (serial clock supplied, not generated) -> the
+VTC in its default mode -> `rgb2dvi` (serial clock generated, see below) -> the
 `TMDS_0` HDMI port. FCLK0 runs only the GPGPU, GP0 and HP0 (reset `gpu_sys_reset`), so it
 can follow the GPGPU's timing. The display has a fixed 100 MHz FCLK1 (GP1,
 the VDMA, HP2 and the stream into the video out, faster than the pixel clock;
 reset `rst_ps7_0_35M`) and the 74.25 MHz (720p60) pixel clock that `clk_wiz_0`
 makes from the board's 50 MHz PL oscillator `clk_50m` (M19, in the HDMI bank;
-reset `proc_sys_reset_0`), together with `rgb2dvi`'s 5x 371.25 MHz serial
-clock, from one MMCM set to filter input jitter. No PS clock feeds the HDMI
+reset `proc_sys_reset_0`) with a PLL set to filter input jitter. `rgb2dvi`
+makes the 5x 371.25 MHz serial clock itself with an MMCM in the TMDS pins'
+clock region (BUFIO for the serial clock, BUFR for the serializers' pixel
+clock), so the serializer clocks stay off the global clock network; see
+`docs/hdmi-blanking-investigation.md`. No PS clock feeds the HDMI
 output; the video out's asynchronous FIFO crosses from FCLK1 to the pixel
 clock. All three resets follow
 `FCLK_RESET0_N`. The bootstrap is `create_block_design.tcl`;

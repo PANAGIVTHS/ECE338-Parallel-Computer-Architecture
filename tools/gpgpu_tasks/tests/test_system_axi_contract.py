@@ -324,12 +324,13 @@ def test_bootstrap_connects_gpgpu_ddr_master_and_hdmi_scanout(tmp_path):
     assert "CONFIG.S_TDATA_NUM_BYTES 4 CONFIG.M_TDATA_NUM_BYTES 3" in out
     assert "connect_bd_intf_net rgb2dvi_0/TMDS TMDS_0" in out
     assert "create_bd_intf_port -mode Master -vlnv digilentinc.com:interface:tmds_rtl:1.0 TMDS_0" in out
-    # One MMCM makes the pixel clock and rgb2dvi's 5x serial clock.
-    assert "SET CONFIG.kGenerateSerialClk false rgb2dvi_0" in out
-    for setting in ("CONFIG.CLKOUT1_REQUESTED_OUT_FREQ 74.25", "CONFIG.CLKOUT2_USED true",
-                    "CONFIG.CLKOUT2_REQUESTED_OUT_FREQ 371.25", "CONFIG.JITTER_SEL Max_I_Jitter"):
+    # A PLL makes the pixel clock; rgb2dvi makes its 5x serial clock with its
+    # own MMCM in the TMDS pins' clock region.
+    assert "CONFIG.kClkPrimitive MMCM CONFIG.kClkRange 2 CONFIG.kGenerateSerialClk true" in out
+    for setting in ("CONFIG.CLKOUT1_REQUESTED_OUT_FREQ 74.25", "CONFIG.CLKOUT2_USED false",
+                    "CONFIG.JITTER_SEL Max_I_Jitter", "CONFIG.PRIMITIVE PLL"):
         assert setting in out
-    assert "connect_bd_net clk_wiz_0/clk_out2 rgb2dvi_0/SerialClk" in out
+    assert "rgb2dvi_0/SerialClk" not in out
     # The pixel clock comes from the board's 50 MHz PL oscillator, not a PS
     # clock; its port carries the frequency the wizard derives its MMCM from.
     assert "create_bd_port -dir I -type clk -freq_hz 50000000 clk_50m" in out

@@ -151,21 +151,27 @@ proc create_block_design {} {
         CONFIG.enable_detection {false} \
         CONFIG.max_clocks_per_line {2048} \
         CONFIG.max_lines_per_frame {1024}] $vtc
-    # 720p60 pixel clock and its 5x TMDS serial clock from the 50 MHz
-    # oscillator (clk_50m, whose frequency the wizard takes as its input),
-    # both from one MMCM set to filter input jitter (low bandwidth). The MMCM
-    # settings are Vivado's. rgb2dvi takes the serial clock instead of making
-    # it with a second PLL of its own, which would add that PLL's jitter.
+    # 720p60 pixel clock from the 50 MHz oscillator (clk_50m, whose frequency
+    # the wizard takes as its input), set to filter input jitter. The PLL
+    # settings are Vivado's. rgb2dvi makes the 5x TMDS serial clock itself
+    # with an MMCM in the TMDS pins' clock region (BUFIO for the serial clock,
+    # BUFR for the serializers' pixel clock), so the OSERDES clocks stay off
+    # the global clock network the GPGPU's switching disturbs (see
+    # docs/hdmi-blanking-investigation.md). That region has one MMCM, so
+    # clk_wiz_0 is a PLL.
     set pixel_clk [create_bd_cell -type ip -vlnv xilinx.com:ip:clk_wiz:6.0 clk_wiz_0]
     set_property -dict [list \
         CONFIG.CLKOUT1_REQUESTED_OUT_FREQ {74.25} \
-        CONFIG.CLKOUT2_USED {true} \
-        CONFIG.CLKOUT2_REQUESTED_OUT_FREQ {371.25} \
+        CONFIG.CLKOUT2_USED {false} \
         CONFIG.JITTER_SEL {Max_I_Jitter} \
+        CONFIG.PRIMITIVE {PLL} \
         CONFIG.USE_RESET {false}] $pixel_clk
     create_bd_cell -type ip -vlnv xilinx.com:ip:proc_sys_reset:5.0 proc_sys_reset_0
     set hdmi [create_bd_cell -type ip -vlnv digilentinc.com:ip:rgb2dvi:1.4 rgb2dvi_0]
-    set_property CONFIG.kGenerateSerialClk {false} $hdmi
+    set_property -dict [list \
+        CONFIG.kClkPrimitive {MMCM} \
+        CONFIG.kClkRange {2} \
+        CONFIG.kGenerateSerialClk {true}] $hdmi
     # Clock enables tied on; field id tied to 0 (progressive).
     create_bd_cell -type inline_hdl -vlnv xilinx.com:inline_hdl:ilconstant:1.0 clk_en
     set field [create_bd_cell -type inline_hdl -vlnv xilinx.com:inline_hdl:ilconstant:1.0 clk_en1]
@@ -215,7 +221,6 @@ proc create_block_design {} {
     connect_bd_net [get_bd_pins clk_wiz_0/clk_out1] \
         [get_bd_pins proc_sys_reset_0/slowest_sync_clk] [get_bd_pins v_axi4s_vid_out_0/vid_io_out_clk] \
         [get_bd_pins v_tc_0/clk] [get_bd_pins rgb2dvi_0/PixelClk]
-    connect_bd_net [get_bd_pins clk_wiz_0/clk_out2] [get_bd_pins rgb2dvi_0/SerialClk]
     connect_bd_net [get_bd_pins clk_wiz_0/locked] [get_bd_pins proc_sys_reset_0/dcm_locked]
     connect_bd_net [get_bd_pins proc_sys_reset_0/peripheral_aresetn] [get_bd_pins v_tc_0/resetn]
     connect_bd_net [get_bd_pins proc_sys_reset_0/peripheral_reset] \

@@ -457,8 +457,9 @@ proc create_root_design { parentCell } {
   set_property -dict [list \
     CONFIG.CLKOUT1_REQUESTED_OUT_FREQ {74.25} \
     CONFIG.CLKOUT2_REQUESTED_OUT_FREQ {371.25} \
-    CONFIG.CLKOUT2_USED {true} \
+    CONFIG.CLKOUT2_USED {false} \
     CONFIG.JITTER_SEL {Max_I_Jitter} \
+    CONFIG.PRIMITIVE {PLL} \
     CONFIG.USE_RESET {false} \
   ] $clk_wiz_0
 
@@ -468,7 +469,11 @@ proc create_root_design { parentCell } {
 
   # Create instance: rgb2dvi_0, and set properties
   set rgb2dvi_0 [ create_bd_cell -type ip -vlnv digilentinc.com:ip:rgb2dvi:1.4 rgb2dvi_0 ]
-  set_property CONFIG.kGenerateSerialClk {false} $rgb2dvi_0
+  set_property -dict [list \
+    CONFIG.kClkPrimitive {MMCM} \
+    CONFIG.kClkRange {2} \
+    CONFIG.kGenerateSerialClk {true} \
+  ] $rgb2dvi_0
 
 
   # Create instance: clk_en, and set properties
@@ -511,8 +516,6 @@ proc create_root_design { parentCell } {
   [get_bd_pins v_axi4s_vid_out_0/vid_io_out_clk] \
   [get_bd_pins v_tc_0/clk] \
   [get_bd_pins rgb2dvi_0/PixelClk]
-  connect_bd_net -net clk_wiz_0_clk_out2  [get_bd_pins clk_wiz_0/clk_out2] \
-  [get_bd_pins rgb2dvi_0/SerialClk]
   connect_bd_net -net clk_wiz_0_locked  [get_bd_pins clk_wiz_0/locked] \
   [get_bd_pins proc_sys_reset_0/dcm_locked]
   connect_bd_net -net gpgpu_axi_0_irq  [get_bd_pins gpgpu_axi_0/irq] \
