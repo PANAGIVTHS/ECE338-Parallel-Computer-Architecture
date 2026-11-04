@@ -122,15 +122,11 @@ the IRQ-enabled driver; polling is not silently enabled. The GPGPU's DDR master
 `m00_axi` reaches `S_AXI_HP0` through `gpgpu_ddr` and the scanout VDMA
 reaches `S_AXI_HP2` through `vdma_ddr` (1x1 SmartConnects, which also convert
 AXI4 to AXI3), so the two meet only in the DDR controller; both see PS DDR
-identity-mapped (0x0000_0000-0x1FFF_FFFF). The DDR controller's ports 2
-(HP0/HP1) and 3 (HP2/HP3) read through its high-priority queue
-(`HPR(16)/LPR(16)`), which goes critical first (level 1; low-priority reads
-and writes at 15), so the scanout's reads are not held behind the GPGPU's
-write bursts; without it the video out underflows and the monitor blanks
-while a kernel writes DDR. PS GP1 reaches the VDMA registers
+identity-mapped (0x0000_0000-0x1FFF_FFFF); the DDR controller keeps its
+default arbitration. PS GP1 reaches the VDMA registers
 at 0x8300_0000. Scanout:
-VDMA (32-bit pixels, two frame stores, 64-beat bursts of its 64-bit memory
-side, 8192-pixel line buffer) -> AXI4-Stream subset converter (4 to
+VDMA (32-bit pixels, two frame stores, 16-beat bursts, 4096-pixel line
+buffer) -> AXI4-Stream subset converter (4 to
 3 bytes, `0x00RRGGBB` to the video order) -> AXI4-Stream video out, timed by a
 VTC in its default mode -> `rgb2dvi` (serial clock generated, see below) -> the
 `TMDS_0` HDMI port. FCLK0 runs only the GPGPU, GP0 and HP0 (reset `gpu_sys_reset`), so it
@@ -138,7 +134,7 @@ can follow the GPGPU's timing. The display has a fixed 100 MHz FCLK1 (GP1,
 the VDMA, HP2 and the stream into the video out, faster than the pixel clock;
 reset `rst_ps7_0_35M`) and the 74.25 MHz (720p60) pixel clock that `clk_wiz_0`
 makes from the board's 50 MHz PL oscillator `clk_50m` (M19, in the HDMI bank;
-reset `proc_sys_reset_0`) with a PLL set to filter input jitter. `rgb2dvi`
+reset `proc_sys_reset_0`) with a PLL. `rgb2dvi`
 makes the 5x 371.25 MHz serial clock itself with an MMCM in the TMDS pins'
 clock region (BUFIO for the serial clock, BUFR for the serializers' pixel
 clock), so the serializer clocks stay off the global clock network; see

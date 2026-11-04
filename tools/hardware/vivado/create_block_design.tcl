@@ -32,14 +32,6 @@ proc create_block_design {} {
     create_bd_port -dir I -type clk -freq_hz 50000000 clk_50m
 
     # GP0: GPGPU CSRs. GP1: VDMA registers. HP0: GPGPU to DDR. HP2: VDMA to DDR.
-    # DDR controller: HP0/HP1 reach its port 2, HP2/HP3 its port 3. Both read
-    # through the high-priority queue (16 of the 32 read entries), so the
-    # scanout's reads are not held behind the GPGPU's write bursts; without
-    # it the video out underflows and blanks while the GPGPU writes DDR.
-    # The *_TO_CRITICAL levels are how long (x32 DDR clocks) a queue may be
-    # starved before it goes critical: high-priority reads after 1, low-
-    # priority reads and writes after 15, so the GPGPU's writes cannot
-    # overtake the scanout.
     # SD0: the TF card on MIO 40..45 (the only SD boot pins the BootROM
     # supports), card detect on MIO 47, no write protect. The FSBL needs it to
     # read the bitstream and the host from BOOT.BIN; bank 501 is 3.3 V.
@@ -71,23 +63,6 @@ proc create_block_design {} {
         CONFIG.PCW_UIPARAM_DDR_PARTNO {MT41K256M16 RE-125} \
         CONFIG.PCW_UIPARAM_DDR_BUS_WIDTH {16 Bit} \
         CONFIG.PCW_UIPARAM_DDR_ECC {Disabled} \
-        CONFIG.PCW_UIPARAM_DDR_ADV_ENABLE {1} \
-        CONFIG.PCW_DDR_HPRLPR_QUEUE_PARTITION {HPR(16)/LPR(16)} \
-        CONFIG.PCW_DDR_HPR_TO_CRITICAL_PRIORITY_LEVEL {1} \
-        CONFIG.PCW_DDR_LPR_TO_CRITICAL_PRIORITY_LEVEL {15} \
-        CONFIG.PCW_DDR_WRITE_TO_CRITICAL_PRIORITY_LEVEL {15} \
-        CONFIG.PCW_DDR_PORT0_HPR_ENABLE {0} \
-        CONFIG.PCW_DDR_PORT1_HPR_ENABLE {0} \
-        CONFIG.PCW_DDR_PORT2_HPR_ENABLE {1} \
-        CONFIG.PCW_DDR_PORT3_HPR_ENABLE {1} \
-        CONFIG.PCW_DDR_PRIORITY_READPORT_0 {Low} \
-        CONFIG.PCW_DDR_PRIORITY_READPORT_1 {Low} \
-        CONFIG.PCW_DDR_PRIORITY_READPORT_2 {Low} \
-        CONFIG.PCW_DDR_PRIORITY_READPORT_3 {Low} \
-        CONFIG.PCW_DDR_PRIORITY_WRITEPORT_0 {Low} \
-        CONFIG.PCW_DDR_PRIORITY_WRITEPORT_1 {Low} \
-        CONFIG.PCW_DDR_PRIORITY_WRITEPORT_2 {Low} \
-        CONFIG.PCW_DDR_PRIORITY_WRITEPORT_3 {Low} \
         CONFIG.PCW_USE_FABRIC_INTERRUPT {1} \
         CONFIG.PCW_IRQ_F2P_INTR {1}] $ps
     create_bd_cell -type ip -vlnv user.org:user:gpgpu_axi:1.0 gpgpu_axi_0
@@ -117,16 +92,14 @@ proc create_block_design {} {
     set_property CONFIG.NUM_SI {1} $vdma_smc
 
     # Scanout: read-only VDMA of 32-bit pixels (one framebuffer word each),
-    # two frame stores (FB0, FB1). 64-beat bursts of the 64-bit memory side
-    # (512 bytes, 10 per 1280-pixel line) and an 8192-pixel (~6 line) buffer
-    # ride out DDR stalls while the GPGPU writes.
+    # two frame stores (FB0, FB1), 16-beat bursts.
     set vdma [create_bd_cell -type ip -vlnv xilinx.com:ip:axi_vdma:6.3 axi_vdma_0]
     set_property -dict [list \
         CONFIG.c_include_s2mm {0} \
         CONFIG.c_m_axis_mm2s_tdata_width {32} \
         CONFIG.c_mm2s_genlock_mode {0} \
-        CONFIG.c_mm2s_linebuffer_depth {8192} \
-        CONFIG.c_mm2s_max_burst_length {64} \
+        CONFIG.c_mm2s_linebuffer_depth {4096} \
+        CONFIG.c_mm2s_max_burst_length {16} \
         CONFIG.c_num_fstores {2}] $vdma
     # 0x00RRGGBB pixels to the 24-bit AXI4-Stream video order {R, B, G}.
     # TKEEP/TREADY/TSTRB/TID/TDEST follow the connected streams.
@@ -152,8 +125,7 @@ proc create_block_design {} {
         CONFIG.max_clocks_per_line {2048} \
         CONFIG.max_lines_per_frame {1024}] $vtc
     # 720p60 pixel clock from the 50 MHz oscillator (clk_50m, whose frequency
-    # the wizard takes as its input), set to filter input jitter. The PLL
-    # settings are Vivado's. rgb2dvi makes the 5x TMDS serial clock itself
+    # the wizard takes as its input); the PLL settings are Vivado's. rgb2dvi makes the 5x TMDS serial clock itself
     # with an MMCM in the TMDS pins' clock region (BUFIO for the serial clock,
     # BUFR for the serializers' pixel clock), so the OSERDES clocks stay off
     # the global clock network the GPGPU's switching disturbs (see
@@ -163,7 +135,6 @@ proc create_block_design {} {
     set_property -dict [list \
         CONFIG.CLKOUT1_REQUESTED_OUT_FREQ {74.25} \
         CONFIG.CLKOUT2_USED {false} \
-        CONFIG.JITTER_SEL {Max_I_Jitter} \
         CONFIG.PRIMITIVE {PLL} \
         CONFIG.USE_RESET {false}] $pixel_clk
     create_bd_cell -type ip -vlnv xilinx.com:ip:proc_sys_reset:5.0 proc_sys_reset_0
@@ -236,10 +207,9 @@ proc create_block_design {} {
     connect_bd_net [get_bd_pins gpgpu_axi_0/irq] [get_bd_pins irq_concat/In0]
     connect_bd_net [get_bd_pins irq_zero/dout] [get_bd_pins irq_concat/In1]
     connect_bd_net [get_bd_pins irq_concat/dout] [get_bd_pins processing_system7_0/IRQ_F2P]
-    connect_bd_net [get_bd_pins gpgpu_axi_0/o_core_idle] [get_bd_ports o_core_idle_0]
-    # TEMPORARY (HDMI blanking test): the running LED shows whether the video
-    # out stays locked to the VTC; restore gpgpu_axi_0/o_core_running after.
-    connect_bd_net [get_bd_pins v_axi4s_vid_out_0/locked] [get_bd_ports o_core_running_0]
+    foreach signal {idle running} {
+        connect_bd_net [get_bd_pins gpgpu_axi_0/o_core_$signal] [get_bd_ports o_core_${signal}_0]
+    }
 
     # The GPGPU CSR aperture is configuration-owned (configure_block_design).
     # Both DDR masters see the PS DDR identity-mapped, each through its port.

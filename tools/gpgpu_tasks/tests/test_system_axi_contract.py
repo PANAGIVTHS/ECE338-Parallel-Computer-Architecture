@@ -53,16 +53,12 @@ def test_bootstrap_uses_saved_ps_user_settings_not_computed_overrides():
     assert "CONFIG.PCW_ACT_" not in text
     assert "CONFIG.PCW_UIPARAM_ACT_" not in text
     assert "CONFIG.PCW_PERIPHERAL_BOARD_PRESET" not in text
-    # The scanout's HP2 reads (DDR controller port 3) use the high-priority
-    # read queue, which goes critical before the GPGPU's writes; without it
-    # the video out underflows while the GPGPU writes.
-    for setting in ("CONFIG.PCW_UIPARAM_DDR_ADV_ENABLE {1}",
-                    "CONFIG.PCW_DDR_HPRLPR_QUEUE_PARTITION {HPR(16)/LPR(16)}",
-                    "CONFIG.PCW_DDR_PORT3_HPR_ENABLE {1}",
-                    "CONFIG.PCW_DDR_HPR_TO_CRITICAL_PRIORITY_LEVEL {1}",
-                    "CONFIG.PCW_DDR_WRITE_TO_CRITICAL_PRIORITY_LEVEL {15}",
-                    "CONFIG.c_mm2s_linebuffer_depth {8192}",
-                    "CONFIG.c_mm2s_max_burst_length {64}"):
+    # The DDR controller keeps its default arbitration: the scanout and the
+    # GPGPU together use a fraction of its bandwidth.
+    assert "CONFIG.PCW_UIPARAM_DDR_ADV_ENABLE" not in text
+    assert "CONFIG.PCW_DDR_" not in text
+    for setting in ("CONFIG.c_mm2s_linebuffer_depth {4096}",
+                    "CONFIG.c_mm2s_max_burst_length {16}"):
         assert setting in text
 
 
@@ -328,7 +324,7 @@ def test_bootstrap_connects_gpgpu_ddr_master_and_hdmi_scanout(tmp_path):
     # own MMCM in the TMDS pins' clock region.
     assert "CONFIG.kClkPrimitive MMCM CONFIG.kClkRange 2 CONFIG.kGenerateSerialClk true" in out
     for setting in ("CONFIG.CLKOUT1_REQUESTED_OUT_FREQ 74.25", "CONFIG.CLKOUT2_USED false",
-                    "CONFIG.JITTER_SEL Max_I_Jitter", "CONFIG.PRIMITIVE PLL"):
+                    "CONFIG.PRIMITIVE PLL"):
         assert setting in out
     assert "rgb2dvi_0/SerialClk" not in out
     # The pixel clock comes from the board's 50 MHz PL oscillator, not a PS

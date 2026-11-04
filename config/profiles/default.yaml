@@ -60,8 +60,7 @@ hardware:
     # interconnect and reset; Vivado selects the nearest achievable frequency.
     # Applied to new and saved block designs on vivado:system:create. The
     # display has its own fixed clock (FCLK_CLK1), so this follows the
-    # GPGPU's timing alone.
-    fabric_clock_mhz: 42
+    fabric_clock_mhz: 40
     # phys_opt_design after routing in impl_1, with its -directive (e.g.
     # AggressiveExplore, Explore, AlternateFlowWithRetiming, Default). Applied
     # on every implementation run, so disabling it also takes effect.
