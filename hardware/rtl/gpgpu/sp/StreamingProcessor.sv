@@ -153,6 +153,7 @@ module StreamingProcessor
     assign o_feedback.branch_target_idx = ex_is_jalr
         ? ex_jalr_target_addr[$clog2(IMEM_ENTRIES)+1:2]
         : ex_branch_target_addr;
+    assign o_feedback.mem_program_counter = exmem.program_counter;
 
     //* =========================================================================
     //* PIPELINE REGISTER 3: EXECUTE -> MEMORY

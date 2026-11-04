@@ -58,6 +58,7 @@ package pipeline_pkg;
     typedef struct packed {
         logic branch_taken;
         gpu_pkg::imem_idx_t branch_target_idx;
+        gpu_pkg::pc_t mem_program_counter;
     } sp_feedback_t;
 
 endpackage
