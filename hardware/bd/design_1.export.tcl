@@ -133,8 +133,8 @@ xilinx.com:ip:processing_system7:5.5\
 user.org:user:gpgpu_axi:1.0\
 xilinx.com:ip:smartconnect:1.0\
 xilinx.com:ip:proc_sys_reset:5.0\
-xilinx.com:inline_hdl:ilconcat:1.0\
 xilinx.com:inline_hdl:ilconstant:1.0\
+xilinx.com:inline_hdl:ilconcat:1.0\
 xilinx.com:ip:axi_vdma:6.3\
 xilinx.com:ip:axis_subset_converter:1.1\
 xilinx.com:ip:v_axi4s_vid_out:4.0\
@@ -216,6 +216,7 @@ proc create_root_design { parentCell } {
   # Create ports
   set o_core_idle_0 [ create_bd_port -dir O o_core_idle_0 ]
   set o_core_running_0 [ create_bd_port -dir O o_core_running_0 ]
+  set clk_50m [ create_bd_port -dir I -type clk -freq_hz 50000000 clk_50m ]
 
   # Create instance: processing_system7_0, and set properties
   set processing_system7_0 [ create_bd_cell -type ip -vlnv xilinx.com:ip:processing_system7:5.5 processing_system7_0 ]
@@ -225,13 +226,13 @@ proc create_root_design { parentCell } {
     CONFIG.PCW_ACT_DCI_PERIPHERAL_FREQMHZ {10.158730} \
     CONFIG.PCW_ACT_ENET0_PERIPHERAL_FREQMHZ {10.000000} \
     CONFIG.PCW_ACT_ENET1_PERIPHERAL_FREQMHZ {10.000000} \
-    CONFIG.PCW_ACT_FPGA0_PERIPHERAL_FREQMHZ {42.105263} \
+    CONFIG.PCW_ACT_FPGA0_PERIPHERAL_FREQMHZ {40.000000} \
     CONFIG.PCW_ACT_FPGA1_PERIPHERAL_FREQMHZ {100.000000} \
     CONFIG.PCW_ACT_FPGA2_PERIPHERAL_FREQMHZ {10.000000} \
     CONFIG.PCW_ACT_FPGA3_PERIPHERAL_FREQMHZ {10.000000} \
     CONFIG.PCW_ACT_PCAP_PERIPHERAL_FREQMHZ {200.000000} \
     CONFIG.PCW_ACT_QSPI_PERIPHERAL_FREQMHZ {10.000000} \
-    CONFIG.PCW_ACT_SDIO_PERIPHERAL_FREQMHZ {10.000000} \
+    CONFIG.PCW_ACT_SDIO_PERIPHERAL_FREQMHZ {100.000000} \
     CONFIG.PCW_ACT_SMC_PERIPHERAL_FREQMHZ {10.000000} \
     CONFIG.PCW_ACT_SPI_PERIPHERAL_FREQMHZ {10.000000} \
     CONFIG.PCW_ACT_TPIU_PERIPHERAL_FREQMHZ {200.000000} \
@@ -243,26 +244,78 @@ proc create_root_design { parentCell } {
     CONFIG.PCW_ACT_TTC1_CLK2_PERIPHERAL_FREQMHZ {111.111115} \
     CONFIG.PCW_ACT_UART_PERIPHERAL_FREQMHZ {100.000000} \
     CONFIG.PCW_ACT_WDT_PERIPHERAL_FREQMHZ {111.111115} \
-    CONFIG.PCW_CLK0_FREQ {42105263} \
+    CONFIG.PCW_CLK0_FREQ {40000000} \
     CONFIG.PCW_CLK1_FREQ {100000000} \
     CONFIG.PCW_CLK2_FREQ {10000000} \
     CONFIG.PCW_CLK3_FREQ {10000000} \
+    CONFIG.PCW_DDR_HPRLPR_QUEUE_PARTITION {HPR(16)/LPR(16)} \
+    CONFIG.PCW_DDR_HPR_TO_CRITICAL_PRIORITY_LEVEL {1} \
+    CONFIG.PCW_DDR_LPR_TO_CRITICAL_PRIORITY_LEVEL {15} \
+    CONFIG.PCW_DDR_PORT0_HPR_ENABLE {0} \
+    CONFIG.PCW_DDR_PORT1_HPR_ENABLE {0} \
+    CONFIG.PCW_DDR_PORT2_HPR_ENABLE {1} \
+    CONFIG.PCW_DDR_PORT3_HPR_ENABLE {1} \
+    CONFIG.PCW_DDR_PRIORITY_READPORT_0 {Low} \
+    CONFIG.PCW_DDR_PRIORITY_READPORT_1 {Low} \
+    CONFIG.PCW_DDR_PRIORITY_READPORT_2 {Low} \
+    CONFIG.PCW_DDR_PRIORITY_READPORT_3 {Low} \
+    CONFIG.PCW_DDR_PRIORITY_WRITEPORT_0 {Low} \
+    CONFIG.PCW_DDR_PRIORITY_WRITEPORT_1 {Low} \
+    CONFIG.PCW_DDR_PRIORITY_WRITEPORT_2 {Low} \
+    CONFIG.PCW_DDR_PRIORITY_WRITEPORT_3 {Low} \
     CONFIG.PCW_DDR_RAM_HIGHADDR {0x1FFFFFFF} \
+    CONFIG.PCW_DDR_WRITE_TO_CRITICAL_PRIORITY_LEVEL {15} \
     CONFIG.PCW_EN_CLK1_PORT {1} \
+    CONFIG.PCW_EN_EMIO_CD_SDIO0 {0} \
     CONFIG.PCW_EN_EMIO_UART0 {1} \
+    CONFIG.PCW_EN_SDIO0 {1} \
     CONFIG.PCW_EN_UART0 {1} \
     CONFIG.PCW_FCLK_CLK1_BUF {TRUE} \
-    CONFIG.PCW_FPGA0_PERIPHERAL_FREQMHZ {42} \
+    CONFIG.PCW_FPGA0_PERIPHERAL_FREQMHZ {40} \
     CONFIG.PCW_FPGA1_PERIPHERAL_FREQMHZ {100} \
     CONFIG.PCW_FPGA_FCLK0_ENABLE {1} \
     CONFIG.PCW_FPGA_FCLK1_ENABLE {1} \
     CONFIG.PCW_IRQ_F2P_INTR {1} \
+    CONFIG.PCW_MIO_40_IOTYPE {LVCMOS 3.3V} \
+    CONFIG.PCW_MIO_40_PULLUP {enabled} \
+    CONFIG.PCW_MIO_40_SLEW {slow} \
+    CONFIG.PCW_MIO_41_IOTYPE {LVCMOS 3.3V} \
+    CONFIG.PCW_MIO_41_PULLUP {enabled} \
+    CONFIG.PCW_MIO_41_SLEW {slow} \
+    CONFIG.PCW_MIO_42_IOTYPE {LVCMOS 3.3V} \
+    CONFIG.PCW_MIO_42_PULLUP {enabled} \
+    CONFIG.PCW_MIO_42_SLEW {slow} \
+    CONFIG.PCW_MIO_43_IOTYPE {LVCMOS 3.3V} \
+    CONFIG.PCW_MIO_43_PULLUP {enabled} \
+    CONFIG.PCW_MIO_43_SLEW {slow} \
+    CONFIG.PCW_MIO_44_IOTYPE {LVCMOS 3.3V} \
+    CONFIG.PCW_MIO_44_PULLUP {enabled} \
+    CONFIG.PCW_MIO_44_SLEW {slow} \
+    CONFIG.PCW_MIO_45_IOTYPE {LVCMOS 3.3V} \
+    CONFIG.PCW_MIO_45_PULLUP {enabled} \
+    CONFIG.PCW_MIO_45_SLEW {slow} \
+    CONFIG.PCW_MIO_47_IOTYPE {LVCMOS 3.3V} \
+    CONFIG.PCW_MIO_47_PULLUP {enabled} \
+    CONFIG.PCW_MIO_47_SLEW {slow} \
+    CONFIG.PCW_MIO_TREE_PERIPHERALS {unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#SD\
+0#SD 0#SD 0#SD 0#SD 0#SD 0#unassigned#SD 0#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned} \
+    CONFIG.PCW_MIO_TREE_SIGNALS {unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned#clk#cmd#data[0]#data[1]#data[2]#data[3]#unassigned#cd#unassigned#unassigned#unassigned#unassigned#unassigned#unassigned}\
+\
+    CONFIG.PCW_SD0_GRP_CD_ENABLE {1} \
+    CONFIG.PCW_SD0_GRP_CD_IO {MIO 47} \
+    CONFIG.PCW_SD0_GRP_POW_ENABLE {0} \
+    CONFIG.PCW_SD0_GRP_WP_ENABLE {0} \
+    CONFIG.PCW_SD0_PERIPHERAL_ENABLE {1} \
+    CONFIG.PCW_SD0_SD0_IO {MIO 40 .. 45} \
+    CONFIG.PCW_SDIO_PERIPHERAL_FREQMHZ {100} \
+    CONFIG.PCW_SDIO_PERIPHERAL_VALID {1} \
     CONFIG.PCW_UART0_GRP_FULL_ENABLE {0} \
     CONFIG.PCW_UART0_PERIPHERAL_ENABLE {1} \
     CONFIG.PCW_UART0_UART0_IO {EMIO} \
     CONFIG.PCW_UART_PERIPHERAL_FREQMHZ {100} \
     CONFIG.PCW_UART_PERIPHERAL_VALID {1} \
     CONFIG.PCW_UIPARAM_ACT_DDR_FREQ_MHZ {533.333374} \
+    CONFIG.PCW_UIPARAM_DDR_ADV_ENABLE {1} \
     CONFIG.PCW_UIPARAM_DDR_BUS_WIDTH {16 Bit} \
     CONFIG.PCW_UIPARAM_DDR_ECC {Disabled} \
     CONFIG.PCW_UIPARAM_DDR_PARTNO {MT41K256M16 RE-125} \
@@ -276,8 +329,6 @@ proc create_root_design { parentCell } {
 
   # Create instance: gpgpu_axi_0, and set properties
   set gpgpu_axi_0 [ create_bd_cell -type ip -vlnv user.org:user:gpgpu_axi:1.0 gpgpu_axi_0 ]
-  set_property CONFIG.CLOCK_KHZ {42105} $gpgpu_axi_0
-
 
   # Create instance: gpgpu_ctrl, and set properties
   set gpgpu_ctrl [ create_bd_cell -type ip -vlnv xilinx.com:ip:smartconnect:1.0 gpgpu_ctrl ]
@@ -287,8 +338,17 @@ proc create_root_design { parentCell } {
   ] $gpgpu_ctrl
 
 
+  # Create instance: gpu_sys_reset, and set properties
+  set gpu_sys_reset [ create_bd_cell -type ip -vlnv xilinx.com:ip:proc_sys_reset:5.0 gpu_sys_reset ]
+
+  # Create instance: reset_locked1, and set properties
+  set reset_locked1 [ create_bd_cell -type inline_hdl -vlnv xilinx.com:inline_hdl:ilconstant:1.0 reset_locked1 ]
+
   # Create instance: rst_ps7_0_35M, and set properties
   set rst_ps7_0_35M [ create_bd_cell -type ip -vlnv xilinx.com:ip:proc_sys_reset:5.0 rst_ps7_0_35M ]
+
+  # Create instance: reset_locked, and set properties
+  set reset_locked [ create_bd_cell -type inline_hdl -vlnv xilinx.com:inline_hdl:ilconstant:1.0 reset_locked ]
 
   # Create instance: irq_concat, and set properties
   set irq_concat [ create_bd_cell -type inline_hdl -vlnv xilinx.com:inline_hdl:ilconcat:1.0 irq_concat ]
@@ -300,9 +360,6 @@ proc create_root_design { parentCell } {
     CONFIG.CONST_WIDTH {15} \
   ] $irq_zero
 
-
-  # Create instance: reset_locked, and set properties
-  set reset_locked [ create_bd_cell -type inline_hdl -vlnv xilinx.com:inline_hdl:ilconstant:1.0 reset_locked ]
 
   # Create instance: gpgpu_ddr, and set properties
   set gpgpu_ddr [ create_bd_cell -type ip -vlnv xilinx.com:ip:smartconnect:1.0 gpgpu_ddr ]
@@ -331,8 +388,8 @@ proc create_root_design { parentCell } {
     CONFIG.c_include_s2mm {0} \
     CONFIG.c_m_axis_mm2s_tdata_width {32} \
     CONFIG.c_mm2s_genlock_mode {0} \
-    CONFIG.c_mm2s_linebuffer_depth {4096} \
-    CONFIG.c_mm2s_max_burst_length {16} \
+    CONFIG.c_mm2s_linebuffer_depth {8192} \
+    CONFIG.c_mm2s_max_burst_length {64} \
     CONFIG.c_num_fstores {2} \
   ] $axi_vdma_0
 
@@ -399,6 +456,10 @@ proc create_root_design { parentCell } {
   set clk_wiz_0 [ create_bd_cell -type ip -vlnv xilinx.com:ip:clk_wiz:6.0 clk_wiz_0 ]
   set_property -dict [list \
     CONFIG.CLKOUT1_REQUESTED_OUT_FREQ {74.25} \
+    CONFIG.CLKOUT2_REQUESTED_OUT_FREQ {371.25} \
+    CONFIG.CLKOUT2_USED {false} \
+    CONFIG.JITTER_SEL {Max_I_Jitter} \
+    CONFIG.PRIMITIVE {PLL} \
     CONFIG.USE_RESET {false} \
   ] $clk_wiz_0
 
@@ -408,7 +469,11 @@ proc create_root_design { parentCell } {
 
   # Create instance: rgb2dvi_0, and set properties
   set rgb2dvi_0 [ create_bd_cell -type ip -vlnv digilentinc.com:ip:rgb2dvi:1.4 rgb2dvi_0 ]
-  set_property CONFIG.kClkRange {3} $rgb2dvi_0
+  set_property -dict [list \
+    CONFIG.kClkPrimitive {MMCM} \
+    CONFIG.kClkRange {2} \
+    CONFIG.kGenerateSerialClk {true} \
+  ] $rgb2dvi_0
 
 
   # Create instance: clk_en, and set properties
@@ -419,19 +484,13 @@ proc create_root_design { parentCell } {
   set_property CONFIG.CONST_VAL {0} $clk_en1
 
 
-  # Create instance: gpu_sys_reset, and set properties
-  set gpu_sys_reset [ create_bd_cell -type ip -vlnv xilinx.com:ip:proc_sys_reset:5.0 gpu_sys_reset ]
-
-  # Create instance: reset_locked1, and set properties
-  set reset_locked1 [ create_bd_cell -type inline_hdl -vlnv xilinx.com:inline_hdl:ilconstant:1.0 reset_locked1 ]
-
   # Create interface connections
   connect_bd_intf_net -intf_net axi_smc_1_M00_AXI [get_bd_intf_pins axi_smc_1/M00_AXI] [get_bd_intf_pins axi_vdma_0/S_AXI_LITE]
-  connect_bd_intf_net -intf_net axi_smc_M00_AXI [get_bd_intf_pins gpgpu_ctrl/M00_AXI] [get_bd_intf_pins gpgpu_axi_0/s00_axi]
   connect_bd_intf_net -intf_net axi_vdma_0_M_AXIS_MM2S [get_bd_intf_pins axi_vdma_0/M_AXIS_MM2S] [get_bd_intf_pins axis_subset_converter_0/S_AXIS]
   connect_bd_intf_net -intf_net axi_vdma_0_M_AXI_MM2S [get_bd_intf_pins axi_vdma_0/M_AXI_MM2S] [get_bd_intf_pins vdma_ddr/S00_AXI]
   connect_bd_intf_net -intf_net axis_subset_converter_0_M_AXIS [get_bd_intf_pins axis_subset_converter_0/M_AXIS] [get_bd_intf_pins v_axi4s_vid_out_0/video_in]
   connect_bd_intf_net -intf_net gpgpu_axi_0_m00_axi [get_bd_intf_pins gpgpu_axi_0/m00_axi] [get_bd_intf_pins gpgpu_ddr/S00_AXI]
+  connect_bd_intf_net -intf_net gpgpu_ctrl_M00_AXI [get_bd_intf_pins gpgpu_ctrl/M00_AXI] [get_bd_intf_pins gpgpu_axi_0/s00_axi]
   connect_bd_intf_net -intf_net gpgpu_ddr_M00_AXI [get_bd_intf_pins gpgpu_ddr/M00_AXI] [get_bd_intf_pins processing_system7_0/S_AXI_HP0]
   connect_bd_intf_net -intf_net processing_system7_0_DDR [get_bd_intf_ports DDR] [get_bd_intf_pins processing_system7_0/DDR]
   connect_bd_intf_net -intf_net processing_system7_0_FIXED_IO [get_bd_intf_ports FIXED_IO] [get_bd_intf_pins processing_system7_0/FIXED_IO]
@@ -443,6 +502,8 @@ proc create_root_design { parentCell } {
   connect_bd_intf_net -intf_net vdma_ddr_M00_AXI [get_bd_intf_pins vdma_ddr/M00_AXI] [get_bd_intf_pins processing_system7_0/S_AXI_HP2]
 
   # Create port connections
+  connect_bd_net -net clk_50m_1  [get_bd_ports clk_50m] \
+  [get_bd_pins clk_wiz_0/clk_in1]
   connect_bd_net -net clk_en1_dout  [get_bd_pins clk_en1/dout] \
   [get_bd_pins v_axi4s_vid_out_0/fid]
   connect_bd_net -net clk_en_dout  [get_bd_pins clk_en/dout] \
@@ -461,12 +522,10 @@ proc create_root_design { parentCell } {
   [get_bd_pins irq_concat/In0]
   connect_bd_net -net gpgpu_axi_0_o_core_idle  [get_bd_pins gpgpu_axi_0/o_core_idle] \
   [get_bd_ports o_core_idle_0]
-  connect_bd_net -net gpgpu_axi_0_o_core_running  [get_bd_pins gpgpu_axi_0/o_core_running] \
-  [get_bd_ports o_core_running_0]
   connect_bd_net -net gpu_sys_reset_peripheral_aresetn  [get_bd_pins gpu_sys_reset/peripheral_aresetn] \
   [get_bd_pins gpgpu_axi_0/aresetn] \
-  [get_bd_pins gpgpu_ddr/aresetn] \
-  [get_bd_pins gpgpu_ctrl/aresetn]
+  [get_bd_pins gpgpu_ctrl/aresetn] \
+  [get_bd_pins gpgpu_ddr/aresetn]
   connect_bd_net -net irq_concat_dout  [get_bd_pins irq_concat/dout] \
   [get_bd_pins processing_system7_0/IRQ_F2P]
   connect_bd_net -net irq_zero_dout  [get_bd_pins irq_zero/dout] \
@@ -477,38 +536,39 @@ proc create_root_design { parentCell } {
   [get_bd_pins v_axi4s_vid_out_0/vid_io_out_reset] \
   [get_bd_pins rgb2dvi_0/aRst]
   connect_bd_net -net processing_system7_0_FCLK_CLK0  [get_bd_pins processing_system7_0/FCLK_CLK0] \
-  [get_bd_pins gpgpu_axi_0/aclk] \
-  [get_bd_pins gpgpu_ctrl/aclk] \
-  [get_bd_pins gpgpu_ddr/aclk] \
   [get_bd_pins processing_system7_0/M_AXI_GP0_ACLK] \
   [get_bd_pins processing_system7_0/S_AXI_HP0_ACLK] \
+  [get_bd_pins gpgpu_ctrl/aclk] \
+  [get_bd_pins gpgpu_ddr/aclk] \
+  [get_bd_pins gpgpu_axi_0/aclk] \
   [get_bd_pins gpu_sys_reset/slowest_sync_clk]
   connect_bd_net -net processing_system7_0_FCLK_CLK1  [get_bd_pins processing_system7_0/FCLK_CLK1] \
-  [get_bd_pins processing_system7_0/S_AXI_HP2_ACLK] \
   [get_bd_pins processing_system7_0/M_AXI_GP1_ACLK] \
+  [get_bd_pins processing_system7_0/S_AXI_HP2_ACLK] \
+  [get_bd_pins axi_smc_1/aclk] \
   [get_bd_pins vdma_ddr/aclk] \
-  [get_bd_pins axis_subset_converter_0/aclk] \
   [get_bd_pins axi_vdma_0/s_axi_lite_aclk] \
   [get_bd_pins axi_vdma_0/m_axi_mm2s_aclk] \
   [get_bd_pins axi_vdma_0/m_axis_mm2s_aclk] \
-  [get_bd_pins axi_smc_1/aclk] \
+  [get_bd_pins axis_subset_converter_0/aclk] \
   [get_bd_pins v_axi4s_vid_out_0/aclk] \
-  [get_bd_pins clk_wiz_0/clk_in1] \
   [get_bd_pins rst_ps7_0_35M/slowest_sync_clk]
   connect_bd_net -net processing_system7_0_FCLK_RESET0_N  [get_bd_pins processing_system7_0/FCLK_RESET0_N] \
+  [get_bd_pins gpu_sys_reset/ext_reset_in] \
   [get_bd_pins rst_ps7_0_35M/ext_reset_in] \
-  [get_bd_pins proc_sys_reset_0/ext_reset_in] \
-  [get_bd_pins gpu_sys_reset/ext_reset_in]
+  [get_bd_pins proc_sys_reset_0/ext_reset_in]
   connect_bd_net -net reset_locked1_dout  [get_bd_pins reset_locked1/dout] \
   [get_bd_pins gpu_sys_reset/dcm_locked]
   connect_bd_net -net reset_locked_dout  [get_bd_pins reset_locked/dout] \
   [get_bd_pins rst_ps7_0_35M/dcm_locked]
   connect_bd_net -net rst_ps7_0_35M_peripheral_aresetn  [get_bd_pins rst_ps7_0_35M/peripheral_aresetn] \
   [get_bd_pins axi_smc_1/aresetn] \
-  [get_bd_pins axi_vdma_0/axi_resetn] \
   [get_bd_pins vdma_ddr/aresetn] \
+  [get_bd_pins axi_vdma_0/axi_resetn] \
   [get_bd_pins axis_subset_converter_0/aresetn] \
   [get_bd_pins v_axi4s_vid_out_0/aresetn]
+  connect_bd_net -net v_axi4s_vid_out_0_locked  [get_bd_pins v_axi4s_vid_out_0/locked] \
+  [get_bd_ports o_core_running_0]
   connect_bd_net -net v_axi4s_vid_out_0_vid_active_video  [get_bd_pins v_axi4s_vid_out_0/vid_active_video] \
   [get_bd_pins rgb2dvi_0/vid_pVDE]
   connect_bd_net -net v_axi4s_vid_out_0_vid_data  [get_bd_pins v_axi4s_vid_out_0/vid_data] \

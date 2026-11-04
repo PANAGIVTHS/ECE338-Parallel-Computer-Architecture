@@ -6,7 +6,10 @@
 #include "xil_types.h"
 #include "xiltimer.h"
 #include "xcortexa9_config.h"
+#include "xuartps_hw.h"
 #include "sleep.h"
+
+#include "gpgpu_autorun.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -150,6 +153,58 @@ static int bench(u32 frames) {
                (u32)((elapsed * 1000000U) / counts_per_second / frames));
     return 0;
 }
+
+#if GPGPU_AUTORUN
+#define AUTORUN_IMAGE_WORDS (sizeof(gpgpu_autorun_image) / sizeof(gpgpu_autorun_image[0]))
+#define AUTORUN_ARG_WORDS   (sizeof(gpgpu_autorun_args) / sizeof(gpgpu_autorun_args[0]))
+
+_Static_assert(AUTORUN_IMAGE_WORDS <= GPGPU_IMEM_ENTRIES, "autorun image does not fit IMEM");
+
+/* Load the configured program (gpgpu_autorun.h, software.host.autorun) and run
+ * it back to back until a key arrives on the UART or a run fails; then the
+ * monitor starts. The key is consumed. The kernel must need no host writes
+ * between runs (ripple advances its own frame counter). */
+static void autorun(void) {
+    u32 word, runs = 0U;
+
+    for (u32 i = 0U; i < AUTORUN_IMAGE_WORDS; i++) {
+        if (gpgpu_write_imem(i, gpgpu_autorun_image[i]) != 0 ||
+            gpgpu_read_imem(i, &word) != 0 || word != gpgpu_autorun_image[i]) {
+            xil_printf("AUTORUN: IMEM word %u did not load\r\n", i);
+            return;
+        }
+    }
+    for (u32 i = 0U; i < AUTORUN_ARG_WORDS; i++) {
+        if (gpgpu_write_dmem(GPGPU_AUTORUN_ARGS_WORD + i, gpgpu_autorun_args[i]) != 0) {
+            xil_printf("AUTORUN: argument word %u did not load\r\n", i);
+            return;
+        }
+    }
+    if (display_show(GPGPU_AUTORUN_DISPLAY) != 0)
+        return;
+
+    xil_printf("AUTORUN: %s, args", GPGPU_AUTORUN_PROGRAM);
+    for (u32 i = 0U; i < AUTORUN_ARG_WORDS; i++)
+        xil_printf(" 0x%08x", gpgpu_autorun_args[i]);
+    xil_printf("; press a key to stop\r\n");
+
+    /* Drop what the UART received before now: the EMIO RX pin is undriven
+     * until the bitstream loads, and that latches junk bytes in the FIFO. */
+    while (XUartPs_IsReceiveData(STDIN_BASEADDRESS))
+        (void)inbyte();
+
+    while (!XUartPs_IsReceiveData(STDIN_BASEADDRESS)) {
+        if (gpgpu_run_quiet() != GPGPU_OK) {
+            xil_printf("AUTORUN: run %u failed\r\n", runs);
+            gpgpu_print_status();
+            return;
+        }
+        runs++;
+    }
+    (void)inbyte();
+    xil_printf("AUTORUN: stopped after %u runs\r\n", runs);
+}
+#endif
 
 static void read_line(char *buf, int max_len) {
     int idx = 0;
@@ -412,6 +467,9 @@ int main(void) {
 
     gpgpu_print_status();
     display_start(shown_fb);
+#if GPGPU_AUTORUN
+    autorun();
+#endif
     print_help();
 
     while (1) {
