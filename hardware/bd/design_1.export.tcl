@@ -248,23 +248,7 @@ proc create_root_design { parentCell } {
     CONFIG.PCW_CLK1_FREQ {100000000} \
     CONFIG.PCW_CLK2_FREQ {10000000} \
     CONFIG.PCW_CLK3_FREQ {10000000} \
-    CONFIG.PCW_DDR_HPRLPR_QUEUE_PARTITION {HPR(16)/LPR(16)} \
-    CONFIG.PCW_DDR_HPR_TO_CRITICAL_PRIORITY_LEVEL {1} \
-    CONFIG.PCW_DDR_LPR_TO_CRITICAL_PRIORITY_LEVEL {15} \
-    CONFIG.PCW_DDR_PORT0_HPR_ENABLE {0} \
-    CONFIG.PCW_DDR_PORT1_HPR_ENABLE {0} \
-    CONFIG.PCW_DDR_PORT2_HPR_ENABLE {1} \
-    CONFIG.PCW_DDR_PORT3_HPR_ENABLE {1} \
-    CONFIG.PCW_DDR_PRIORITY_READPORT_0 {Low} \
-    CONFIG.PCW_DDR_PRIORITY_READPORT_1 {Low} \
-    CONFIG.PCW_DDR_PRIORITY_READPORT_2 {Low} \
-    CONFIG.PCW_DDR_PRIORITY_READPORT_3 {Low} \
-    CONFIG.PCW_DDR_PRIORITY_WRITEPORT_0 {Low} \
-    CONFIG.PCW_DDR_PRIORITY_WRITEPORT_1 {Low} \
-    CONFIG.PCW_DDR_PRIORITY_WRITEPORT_2 {Low} \
-    CONFIG.PCW_DDR_PRIORITY_WRITEPORT_3 {Low} \
     CONFIG.PCW_DDR_RAM_HIGHADDR {0x1FFFFFFF} \
-    CONFIG.PCW_DDR_WRITE_TO_CRITICAL_PRIORITY_LEVEL {15} \
     CONFIG.PCW_EN_CLK1_PORT {1} \
     CONFIG.PCW_EN_EMIO_CD_SDIO0 {0} \
     CONFIG.PCW_EN_EMIO_UART0 {1} \
@@ -315,7 +299,6 @@ proc create_root_design { parentCell } {
     CONFIG.PCW_UART_PERIPHERAL_FREQMHZ {100} \
     CONFIG.PCW_UART_PERIPHERAL_VALID {1} \
     CONFIG.PCW_UIPARAM_ACT_DDR_FREQ_MHZ {533.333374} \
-    CONFIG.PCW_UIPARAM_DDR_ADV_ENABLE {1} \
     CONFIG.PCW_UIPARAM_DDR_BUS_WIDTH {16 Bit} \
     CONFIG.PCW_UIPARAM_DDR_ECC {Disabled} \
     CONFIG.PCW_UIPARAM_DDR_PARTNO {MT41K256M16 RE-125} \
@@ -388,8 +371,8 @@ proc create_root_design { parentCell } {
     CONFIG.c_include_s2mm {0} \
     CONFIG.c_m_axis_mm2s_tdata_width {32} \
     CONFIG.c_mm2s_genlock_mode {0} \
-    CONFIG.c_mm2s_linebuffer_depth {8192} \
-    CONFIG.c_mm2s_max_burst_length {64} \
+    CONFIG.c_mm2s_linebuffer_depth {4096} \
+    CONFIG.c_mm2s_max_burst_length {16} \
     CONFIG.c_num_fstores {2} \
   ] $axi_vdma_0
 
@@ -458,7 +441,6 @@ proc create_root_design { parentCell } {
     CONFIG.CLKOUT1_REQUESTED_OUT_FREQ {74.25} \
     CONFIG.CLKOUT2_REQUESTED_OUT_FREQ {371.25} \
     CONFIG.CLKOUT2_USED {false} \
-    CONFIG.JITTER_SEL {Max_I_Jitter} \
     CONFIG.PRIMITIVE {PLL} \
     CONFIG.USE_RESET {false} \
   ] $clk_wiz_0
@@ -522,6 +504,8 @@ proc create_root_design { parentCell } {
   [get_bd_pins irq_concat/In0]
   connect_bd_net -net gpgpu_axi_0_o_core_idle  [get_bd_pins gpgpu_axi_0/o_core_idle] \
   [get_bd_ports o_core_idle_0]
+  connect_bd_net -net gpgpu_axi_0_o_core_running  [get_bd_pins gpgpu_axi_0/o_core_running] \
+  [get_bd_ports o_core_running_0]
   connect_bd_net -net gpu_sys_reset_peripheral_aresetn  [get_bd_pins gpu_sys_reset/peripheral_aresetn] \
   [get_bd_pins gpgpu_axi_0/aresetn] \
   [get_bd_pins gpgpu_ctrl/aresetn] \
@@ -567,8 +551,6 @@ proc create_root_design { parentCell } {
   [get_bd_pins axi_vdma_0/axi_resetn] \
   [get_bd_pins axis_subset_converter_0/aresetn] \
   [get_bd_pins v_axi4s_vid_out_0/aresetn]
-  connect_bd_net -net v_axi4s_vid_out_0_locked  [get_bd_pins v_axi4s_vid_out_0/locked] \
-  [get_bd_ports o_core_running_0]
   connect_bd_net -net v_axi4s_vid_out_0_vid_active_video  [get_bd_pins v_axi4s_vid_out_0/vid_active_video] \
   [get_bd_pins rgb2dvi_0/vid_pVDE]
   connect_bd_net -net v_axi4s_vid_out_0_vid_data  [get_bd_pins v_axi4s_vid_out_0/vid_data] \
