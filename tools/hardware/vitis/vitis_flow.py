@@ -132,8 +132,7 @@ def create_project(workspace: Path, xsa: Path, platform_name: str,
             raise FileNotFoundError(f"Vitis did not create platform metadata: {root}")
 
 
-def configure_host(host_root: Path, sources: list[Path], base_address: str,
-                   optimization: str) -> None:
+def configure_host(host_root: Path, sources: list[Path], base_address: str) -> None:
     """Edit the SDK's actual CMake input (2025.2 root or older src layout)."""
     candidates = [host_root / "UserConfig.cmake", host_root / "src/UserConfig.cmake"]
     existing = [path for path in candidates if path.is_file()]
@@ -149,7 +148,6 @@ def configure_host(host_root: Path, sources: list[Path], base_address: str,
         if count != 1:
             raise ValueError(f"Missing {variable} in {path}")
     replace_variable("USER_COMPILE_SOURCES", [str(source.resolve()) for source in sources])
-    replace_variable("USER_COMPILE_OPTIMIZATION_LEVEL", [optimization])
     match = re.search(r"set\(USER_INCLUDE_DIRECTORIES\b([^)]*)\)", text, re.DOTALL)
     if match is None:
         raise ValueError(f"Missing USER_INCLUDE_DIRECTORIES in {path}")
@@ -168,8 +166,8 @@ def configure_host(host_root: Path, sources: list[Path], base_address: str,
 
 
 def build_host(workspace: Path, host_name: str, platform_name: str, domain: str,
-               template: str, sources: list[Path], base_address: str, optimization: str,
-               archive: Path, repo_root: Path | None = None) -> None:
+               template: str, sources: list[Path], base_address: str, archive: Path,
+               repo_root: Path | None = None) -> None:
     xpfm = workspace / platform_name / f"export/{platform_name}/{platform_name}.xpfm"
     if not xpfm.is_file():
         raise FileNotFoundError(f"Build platform before host: {xpfm}")
@@ -230,7 +228,7 @@ def build_host(workspace: Path, host_name: str, platform_name: str, domain: str,
             config_text = config_text.replace(marker, value)
         if config_text != config.read_text(encoding="utf-8"):
             config.write_text(config_text, encoding="utf-8")
-        configure_host(root, sources, base_address, optimization)
+        configure_host(root, sources, base_address)
         prepare_bsp_output_directories(workspace / platform_name)
         if component.build() is False:
             raise RuntimeError(f"Vitis build failed for component {host_name!r}")
@@ -277,8 +275,6 @@ def main() -> None:
     host.add_argument("--template", required=True)
     host.add_argument("--source", type=Path, action="append", required=True)
     host.add_argument("--base-address", required=True)
-    # Passed as --optimization=-O2: argparse reads a separate "-O2" as an option.
-    host.add_argument("--optimization", required=True)
     host.add_argument("--archive", type=Path, required=True)
     host.add_argument("--repo-root", type=Path, required=True)
     # The vendor launcher may forward its argument separator to the script.
@@ -295,8 +291,7 @@ def main() -> None:
     elif arguments.action == "host":
         build_host(arguments.workspace, arguments.component, arguments.platform,
                    arguments.domain, arguments.template, arguments.source,
-                   arguments.base_address, arguments.optimization, arguments.archive,
-                   arguments.repo_root)
+                   arguments.base_address, arguments.archive, arguments.repo_root)
 
 
 if __name__ == "__main__":

@@ -6,7 +6,6 @@ import json
 import re
 import shlex
 import subprocess
-from collections.abc import Mapping
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
 
@@ -226,13 +225,9 @@ def create_tasks(config: ResolvedConfig) -> list[dict[str, Any]]:
     ]
 
 
-def run_program_uart(
-    config: ResolvedConfig, program: str, operation: str, arguments: tuple[Any, ...] = (),
-) -> str | None:
-    """Stream the shared UART client and driver to Python in the SSH namespace.
-
-    A benchmark's remote output is also returned, for its result line."""
-    if operation not in ("load-imem", "run", "bench"):
+def run_program_uart(config: ResolvedConfig, program: str, operation: str) -> None:
+    """Stream the shared UART client and driver to Python in the SSH namespace."""
+    if operation not in ("load-imem", "run"):
         raise ValueError("Unknown UART operation")
     if not isinstance(program, str) or not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.-]*", program):
         raise ValueError("Unsafe program basename")
@@ -253,82 +248,9 @@ def run_program_uart(
     driver = Path(__file__).with_name("program_uart.py").read_text()
     # Separate exec scopes preserve __future__ imports without rewriting the client.
     imem = str(PurePosixPath(directory) / f"{program}_instructions.mem")
-    payload = (f"exec({client!r}, globals())\nexec({driver!r}, globals())\n"
-               f"remote_main({operation!r}, {imem!r}, {port!r}, {baud!r}, {tuple(arguments)!r})\n")
-    argv = [command, "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "--", destination, shlex.join(remote)]
-    if operation != "bench":
-        subprocess.run(argv, cwd=config.repo_root, input=payload, text=True, check=True)
-        return None
-    result = subprocess.run(argv, cwd=config.repo_root, input=payload, text=True, stdout=subprocess.PIPE)
-    print(result.stdout, end="", flush=True)
-    if result.returncode:
-        raise subprocess.CalledProcessError(result.returncode, argv, output=result.stdout)
-    return result.stdout
-
-
-def _benchmark_settings(config: ResolvedConfig, program: str) -> tuple[int, int]:
-    values = []
-    for name in ("steps", "repetitions"):
-        key = f"hardware.fpga.benchmarks.{program}.{name}"
-        value = config.get(key)
-        if type(value) is not int or value < 1:
-            raise ValueError(f"{key} must be a positive integer")
-        values.append(value)
-    return values[0], values[1]
-
-
-def parse_benchmark(output: str) -> dict[str, Any]:
-    """The last BENCH_RESULT line: key=value fields, integers except `program`."""
-    lines = re.findall(r"BENCH_RESULT ([^\r\n]*)", output)
-    if not lines:
-        raise RuntimeError("Benchmark output has no BENCH_RESULT line")
-    fields = dict(field.split("=", 1) for field in lines[-1].split())
-    return {key: value if key == "program" else int(value) for key, value in fields.items()}
-
-
-def benchmark_record(result: dict[str, Any], config: ResolvedConfig) -> dict[str, Any]:
-    """Raw timer ticks plus derived times, cycles per step and speedup (medians)."""
-    timer_hz = result["timer_hz"]
-    steps = result["steps"]
-    # The A9 global timer runs at half the CPU clock. The fabric clock is the
-    # requested FCLK0; the PS may pick a slightly different achievable one.
-    clocks = {"arm": 2 * timer_hz, "gpgpu": round(config.get("hardware.vivado.fabric_clock_mhz") * 1e6)}
-    record: dict[str, Any] = {
-        key: result[key] for key in ("program", "bodies", "steps", "repetitions", "timer_hz", "mismatches")
-    }
-    record["host_optimization"] = config.get("hardware.vitis.optimization")
-    for side, clock_hz in clocks.items():
-        ticks = {stat: result[f"{side}_{stat}"] for stat in ("min", "median", "max")}
-        seconds = ticks["median"] / timer_hz
-        record[side] = {
-            "clock_hz": clock_hz,
-            "ticks": ticks,
-            "median_seconds": seconds,
-            "median_us_per_step": seconds / steps * 1e6,
-            "median_cycles_per_step": seconds * clock_hz / steps,
-        }
-    record["speedup"] = result["arm_median"] / result["gpgpu_median"]
-    return record
-
-
-def benchmark_program(config: ResolvedConfig, program: str, output: Path) -> None:
-    """Run the board benchmark and keep its result, also when results differ."""
-    steps, repetitions = _benchmark_settings(config, program)
-    text = run_program_uart(config, program, "bench", (program, steps, repetitions))
-    assert text is not None
-    record = benchmark_record(parse_benchmark(text), config)
-    output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(json.dumps(record, indent=2) + "\n")
-    for side in ("gpgpu", "arm"):
-        data = record[side]
-        print(f"{side:>5}: {data['median_us_per_step']:.3f} us/step, "
-              f"{data['median_cycles_per_step']:.0f} cycles/step at {data['clock_hz'] / 1e6:g} MHz", flush=True)
-    print(f"speedup (ARM time / GPGPU time): {record['speedup']:.3f}; result: {output}", flush=True)
-    cores = config.get("architecture.num_cores")
-    if record["bodies"] != cores:
-        raise RuntimeError(f"Board reports {record['bodies']} cores; the kernel was built for {cores}")
-    if record["mismatches"]:
-        raise RuntimeError(f"GPGPU and ARM final states differ in {record['mismatches']} words")
+    payload = f"exec({client!r}, globals())\nexec({driver!r}, globals())\nremote_main({operation!r}, {imem!r}, {port!r}, {baud!r})\n"
+    subprocess.run([command, "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "--", destination, shlex.join(remote)],
+                   cwd=config.repo_root, input=payload, text=True, check=True)
 
 
 def _program_tasks(config: ResolvedConfig, paths: ProjectPaths) -> list[dict[str, Any]]:
@@ -345,11 +267,7 @@ def _program_tasks(config: ResolvedConfig, paths: ProjectPaths) -> list[dict[str
     software = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(software)
 
-    programs = software._program_names(paths.software_programs)
-    benchmarks = config.get("hardware.fpga.benchmarks")
-    if not isinstance(benchmarks, Mapping):
-        raise ValueError("hardware.fpga.benchmarks must map program names to benchmark settings")
-    for program in programs:
+    for program in software._program_names(paths.software_programs):
         prefix = f"fpga:programs:{program}"
         filename = f"{program}_instructions.mem"
         tasks.append({
@@ -368,10 +286,4 @@ def _program_tasks(config: ResolvedConfig, paths: ProjectPaths) -> list[dict[str
                 "uptodate": [False], "actions": [(run_program_uart, [config, program, operation])],
             })
         tasks.append({"name": f"{prefix}:all", "task_dep": [f"{prefix}:run"], "actions": []})
-        if program in benchmarks:
-            _benchmark_settings(config, program)
-            tasks.append({
-                "name": f"{prefix}:bench", "task_dep": [f"{prefix}:load-imem"], "uptodate": [False],
-                "actions": [(benchmark_program, [config, program, paths.program_builds / program / "benchmark.json"])],
-            })
     return tasks

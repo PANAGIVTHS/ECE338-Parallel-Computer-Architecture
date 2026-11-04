@@ -73,14 +73,10 @@ GPGPU_START(main)
 #include <stdio.h>
 #include <stdlib.h>
 
-#include "nbody_reference.h"
-
 static int pos_x[CORES];
 static int pos_y[CORES];
 static int vel_x[CORES];
 static int vel_y[CORES];
-static int next_x[CORES];
-static int next_y[CORES];
 
 static void print_csv_header(void)
 {
@@ -104,6 +100,58 @@ static void print_csv_row(int step)
     printf("\n");
 }
 
+static void init_bodies(void)
+{
+    for (unsigned int tid = 0; tid < CORES; tid++) {
+        pos_x[tid] = init_x(tid);
+        pos_y[tid] = init_y(tid);
+        vel_x[tid] = init_vx(tid);
+        vel_y[tid] = init_vy(tid);
+    }
+}
+
+static void simulate_one_step(void)
+{
+    int next_x[CORES];
+    int next_y[CORES];
+    int next_vx[CORES];
+    int next_vy[CORES];
+
+    for (unsigned int tid = 0; tid < CORES; tid++) {
+        int xi = pos_x[tid];
+        int yi = pos_y[tid];
+
+        int ax = 0;
+        int ay = 0;
+
+        for (unsigned int j = 0; j < CORES; j++) {
+            int xj = pos_x[j];
+            int yj = pos_y[j];
+
+            int dx = xj - xi;
+            int dy = yj - yi;
+
+            int w = force_weight(dx, dy) * body_mass(j);
+
+            ax += sign_int(dx) * w;
+            ay += sign_int(dy) * w;
+        }
+
+        next_vx[tid] = vel_x[tid] + (ax >> 2);
+        next_vy[tid] = vel_y[tid] + (ay >> 2);
+
+        next_x[tid] = xi + next_vx[tid];
+        next_y[tid] = yi + next_vy[tid];
+    }
+
+    for (unsigned int tid = 0; tid < CORES; tid++) {
+        pos_x[tid] = next_x[tid];
+        pos_y[tid] = next_y[tid];
+        vel_x[tid] = next_vx[tid];
+        vel_y[tid] = next_vy[tid];
+    }
+}
+
 int main(int argc, char **argv)
 {
     int steps = 100;
@@ -116,12 +164,12 @@ int main(int argc, char **argv)
         }
     }
 
-    nbody_reference_init(CORES, pos_x, pos_y, vel_x, vel_y);
+    init_bodies();
 
     print_csv_header();
 
     for (int step = 1; step <= steps; step++) {
-        nbody_reference_step(CORES, pos_x, pos_y, vel_x, vel_y, next_x, next_y);
+        simulate_one_step();
         print_csv_row(step);
     }
 

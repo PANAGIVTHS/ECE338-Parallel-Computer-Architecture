@@ -54,19 +54,17 @@ def test_actual_user_config_sources_includes_and_base_preserve_other_defines(tmp
     module = sdk_module(monkeypatch, object())
     root = tmp_path / 'host'; root.mkdir()
     config = root / 'UserConfig.cmake'
-    config.write_text('set(USER_COMPILE_SOURCES "old.c")\nset(USER_INCLUDE_DIRECTORIES)\nset(USER_COMPILE_DEFINITIONS "KEEP=1" "GPGPU_BASEADDR=0x41200000")\nset(USER_COMPILE_OPTIMIZATION_LEVEL -O0)\nset(USER_COMPILE_OPTIMIZATION_OTHER_FLAGS )\n')
+    config.write_text('set(USER_COMPILE_SOURCES "old.c")\nset(USER_INCLUDE_DIRECTORIES)\nset(USER_COMPILE_DEFINITIONS "KEEP=1" "GPGPU_BASEADDR=0x41200000")\n')
     sources = [tmp_path / 'sources/gpgpu_driver.c', tmp_path / 'sources/main.c']
-    module['configure_host'](root, sources, '0x43C00000', '-O2')
+    module['configure_host'](root, sources, '0x43C00000')
     text = config.read_text()
     assert all(str(source.resolve()) in text for source in sources)
     assert str(sources[0].parent.resolve()) in text
     assert 'GPGPU_BASEADDR=0x43C00000' in text
     assert '0x41200000' not in text
     assert 'KEEP=1' in text
-    assert 'set(USER_COMPILE_OPTIMIZATION_LEVEL\n"-O2"\n)' in text
-    assert '-O0' not in text and 'set(USER_COMPILE_OPTIMIZATION_OTHER_FLAGS )' in text
     before = config.stat().st_mtime_ns
-    module['configure_host'](root, sources, '0x43C00000', '-O2')
+    module['configure_host'](root, sources, '0x43C00000')
     assert config.stat().st_mtime_ns == before
 
 def test_real_cmake_consumes_correct_sources_include_and_base(tmp_path, monkeypatch):
@@ -80,9 +78,9 @@ def test_real_cmake_consumes_correct_sources_include_and_base(tmp_path, monkeypa
     main.write_text('#include "gpgpu_driver.h"\nint main(void) { return base() != 0x43C10000; }\n')
     (sources_dir / 'gpgpu_driver.h').write_text('unsigned base(void);\n')
     host = tmp_path / 'app'; host.mkdir()
-    (host / 'UserConfig.cmake').write_text('set(USER_COMPILE_SOURCES)\nset(USER_INCLUDE_DIRECTORIES)\nset(USER_COMPILE_DEFINITIONS "KEEP=1")\nset(USER_COMPILE_OPTIMIZATION_LEVEL -O0)\n')
-    module['configure_host'](host, [driver, main], '0x43C10000', '-O2')
-    (host / 'CMakeLists.txt').write_text('cmake_minimum_required(VERSION 3.16)\nproject(host C)\ninclude(UserConfig.cmake)\nadd_executable(host ${USER_COMPILE_SOURCES})\ntarget_include_directories(host PRIVATE ${USER_INCLUDE_DIRECTORIES})\ntarget_compile_definitions(host PRIVATE ${USER_COMPILE_DEFINITIONS})\ntarget_compile_options(host PRIVATE ${USER_COMPILE_OPTIMIZATION_LEVEL})\n')
+    (host / 'UserConfig.cmake').write_text('set(USER_COMPILE_SOURCES)\nset(USER_INCLUDE_DIRECTORIES)\nset(USER_COMPILE_DEFINITIONS "KEEP=1")\n')
+    module['configure_host'](host, [driver, main], '0x43C10000')
+    (host / 'CMakeLists.txt').write_text('cmake_minimum_required(VERSION 3.16)\nproject(host C)\ninclude(UserConfig.cmake)\nadd_executable(host ${USER_COMPILE_SOURCES})\ntarget_include_directories(host PRIVATE ${USER_INCLUDE_DIRECTORIES})\ntarget_compile_definitions(host PRIVATE ${USER_COMPILE_DEFINITIONS})\n')
     subprocess.run(['cmake', '-S', str(host), '-B', str(host / 'build')], check=True, capture_output=True)
     subprocess.run(['cmake', '--build', str(host / 'build')], check=True, capture_output=True)
     subprocess.run([str(host / 'build/host')], check=True)
@@ -101,7 +99,7 @@ def test_host_entrypoint_creates_sdk_app_after_platform_and_imports_only_editabl
     with zipfile.ZipFile(archive, 'w') as output:
         output.writestr('platform/bsp/stale.c', 'stale SDK source')
         output.writestr('host/src/custom.c', '/* editable */')
-        output.writestr('host/src/UserConfig.cmake', 'set(USER_COMPILE_SOURCES "old.c")\nset(USER_INCLUDE_DIRECTORIES "${GPGPU_REPO_ROOT}/include")\nset(USER_COMPILE_DEFINITIONS "KEEP=1")\nset(USER_COMPILE_OPTIMIZATION_LEVEL -O0)\nset(USER_LINKER_SCRIPT "old-memory-map.ld")\n# OLD SDK GENERATED LOGIC\n')
+        output.writestr('host/src/UserConfig.cmake', 'set(USER_COMPILE_SOURCES "old.c")\nset(USER_INCLUDE_DIRECTORIES "${GPGPU_REPO_ROOT}/include")\nset(USER_COMPILE_DEFINITIONS "KEEP=1")\nset(USER_LINKER_SCRIPT "old-memory-map.ld")\n# OLD SDK GENERATED LOGIC\n')
         output.writestr('host/src/lscript.ld', 'stale hardware map')
     calls = []
     class Client:
@@ -112,13 +110,12 @@ def test_host_entrypoint_creates_sdk_app_after_platform_and_imports_only_editabl
             root = workspace / 'host'
             (root / 'src').mkdir(parents=True)
             (root / 'vitis-comp.json').write_text(json.dumps({'name': 'host'}))
-            (root / 'UserConfig.cmake').write_text('set(USER_COMPILE_SOURCES)\nset(USER_INCLUDE_DIRECTORIES)\nset(USER_COMPILE_DEFINITIONS)\nset(USER_COMPILE_OPTIMIZATION_LEVEL -O0)\nset(USER_LINKER_SCRIPT "${CMAKE_SOURCE_DIR}/src/lscript.ld")\n# FRESH SDK GENERATED LOGIC\n')
+            (root / 'UserConfig.cmake').write_text('set(USER_COMPILE_SOURCES)\nset(USER_INCLUDE_DIRECTORIES)\nset(USER_COMPILE_DEFINITIONS)\nset(USER_LINKER_SCRIPT "${CMAKE_SOURCE_DIR}/src/lscript.ld")\n# FRESH SDK GENERATED LOGIC\n')
             (root / 'src/lscript.ld').write_text('fresh SDK memory map')
             return self
         def build(self):
             config = (workspace / 'host/UserConfig.cmake').read_text()
             assert 'GPGPU_BASEADDR=0x43C00000' in config
-            assert 'set(USER_COMPILE_OPTIMIZATION_LEVEL\n"-O2"\n)' in config
             assert all(str(p) in config for p in sources)
             assert '${GPGPU_REPO_ROOT}' not in config
             assert (workspace / 'host/src/custom.c').read_text() == '/* editable */'
@@ -127,7 +124,7 @@ def test_host_entrypoint_creates_sdk_app_after_platform_and_imports_only_editabl
             calls.append(('build',))
             return True
     sdk_module(monkeypatch, Client())
-    argv = [str(FLOW)] + (['--'] if separator else []) + ['host', '--workspace', str(workspace), '--component', 'host', '--platform', 'platform', '--domain', 'domain', '--template', 'empty_application', '--base-address', '0x43C00000', '--optimization=-O2', '--archive', str(archive), '--repo-root', str(tmp_path)]
+    argv = [str(FLOW)] + (['--'] if separator else []) + ['host', '--workspace', str(workspace), '--component', 'host', '--platform', 'platform', '--domain', 'domain', '--template', 'empty_application', '--base-address', '0x43C00000', '--archive', str(archive), '--repo-root', str(tmp_path)]
     for path in sources: argv += ['--source', str(path)]
     monkeypatch.setattr(sys, 'argv', argv)
     runpy.run_path(str(FLOW), run_name='__main__')

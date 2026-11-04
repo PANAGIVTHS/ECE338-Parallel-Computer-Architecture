@@ -38,23 +38,6 @@ def _string_list(config, key: str) -> tuple[str, ...]:
     return tuple(value)
 
 
-_LOCAL_INCLUDE = re.compile(r'^\s*#\s*include\s*"([^"]+)"', re.MULTILINE)
-
-
-def _local_headers(sources: Sequence[Path]) -> list[Path]:
-    """Headers in each source's directory plus every quoted #include they reach."""
-    headers = {header for source in sources for header in source.parent.glob('*.h')}
-    pending = [*sources, *headers]
-    while pending:
-        path = pending.pop()
-        for name in _LOCAL_INCLUDE.findall(path.read_text(encoding='utf-8', errors='replace')):
-            header = (path.parent / name).resolve()
-            if header.is_file() and header not in headers:
-                headers.add(header)
-                pending.append(header)
-    return sorted(headers)
-
-
 def _validate_component_metadata(path: Path, expected_name: str) -> dict[str, Any]:
     if not path.is_file():
         raise FileNotFoundError(f'Missing Vitis component metadata: {path}')
@@ -218,10 +201,7 @@ def create_tasks(config) -> list[dict[str, Any]]:
     template = _string(config, 'hardware.vitis.template')
     archive = repo_root / _string(config, 'hardware.vitis.default_archive')
     sources = tuple(repo_root / relative for relative in _string_list(config, 'hardware.vitis.host_sources'))
-    headers = _local_headers(sources)
-    optimization = _string(config, 'hardware.vitis.optimization')
-    if not re.fullmatch(r'-O(?:[0-3gsz]?|fast)', optimization):
-        raise ValueError('hardware.vitis.optimization must be a GCC -O level such as -O2')
+    headers = sorted({header for source in sources for header in source.parent.glob('*.h')})
     xsa = xsa_path(config)
     base_address, address_range = axi_address(config)
     launcher = _string(config, 'tools.vitis.command')
@@ -232,8 +212,7 @@ def create_tasks(config) -> list[dict[str, Any]]:
     platform_command = prefix + ['build', '--workspace', str(workspace), '--component', platform_name]
     host_command = prefix + ['host', '--workspace', str(workspace), '--component', host_name,
                              '--platform', platform_name, '--domain', domain, '--template', template,
-                             '--base-address', base_address, f'--optimization={optimization}',
-                             '--archive', str(archive), '--repo-root', str(repo_root)]
+                             '--base-address', base_address, '--archive', str(archive), '--repo-root', str(repo_root)]
     for source in sources:
         host_command.extend(['--source', str(source)])
     platform_root, host_root = workspace / platform_name, workspace / host_name

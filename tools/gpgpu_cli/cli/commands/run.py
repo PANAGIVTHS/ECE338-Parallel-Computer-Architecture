@@ -97,8 +97,6 @@ The dependency chain is: Vivado XSA → editable Vitis project → platform buil
 
 • `fpga:programs:<program>:run` — After verified IMEM load, launch once and verify return to idle. DMEM is retained; no adapter initialization, CSV or visualization.
 
-• `fpga:programs:<program>:bench` — Programs listed in `hardware.fpga.benchmarks` only. After verified IMEM load, the host monitor times the kernel and the same algorithm on the ARM (`steps`, `repetitions`), checks their results match and writes `benchmark.json` to the program's build directory.
-
 • `fpga:programs:<program>:all` — RISC-V build → mem → upload → load-imem → run. Remote actions repeat on every invocation.
 
 • `fpga:upload` — Upload without building via SCP: existing Vivado bitstream, Vitis `ps7_init.tcl`, and host ELF to the board-connected VM. Configure `hardware.fpga.upload.destination` and `hardware.fpga.upload.directory`.

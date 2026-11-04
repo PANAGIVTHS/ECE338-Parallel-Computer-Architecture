@@ -3,8 +3,6 @@
 
 #include "xil_io.h"
 #include "xil_printf.h"
-#include "xiltimer.h"
-#include "xtimer_config.h" /* COUNTS_PER_SECOND */
 
 #if GPGPU_USE_IRQ
 #include "xparameters.h"
@@ -25,11 +23,6 @@ static inline u32 gpu_read(u32 byte_offset)
 static inline void gpu_write(u32 byte_offset, u32 value)
 {
     Xil_Out32((UINTPTR)GPGPU_BASEADDR + byte_offset, value);
-}
-
-u32 gpgpu_core_count(void)
-{
-    return gpu_read(GPGPU_REG_INFO) & 0xFFFFU;
 }
 
 u32 gpgpu_read_status(void)
@@ -187,19 +180,9 @@ int gpgpu_init(void)
     return 0;
 }
 
-static int completed(void)
-{
-#if GPGPU_USE_IRQ
-    return gpu_finished != 0U;
-#else
-    return (gpu_read(GPGPU_REG_IRQ_STATUS) & 1U) != 0U;
-#endif
-}
-
 int gpgpu_start_and_wait(void)
 {
-    const XTime timeout = (XTime)COUNTS_PER_SECOND / 1000U * GPGPU_WAIT_TIMEOUT_MS;
-    XTime start, now;
+    u32 remaining = GPGPU_WAIT_LIMIT;
     u32 status;
 
     if (require_idle("START") != 0)
@@ -220,18 +203,13 @@ int gpgpu_start_and_wait(void)
     gpu_write(GPGPU_REG_IRQ_ENABLE, 1U);
 #endif
 
+    xil_printf("Starting core...\r\n");
     gpu_write(GPGPU_REG_CONTROL, GPGPU_CONTROL_START);
 
-    /* Silent until completion: callers time this function. */
-    XTime_GetTime(&start);
-    do {
-        if (completed())
-            break;
-        XTime_GetTime(&now);
-    } while (now - start < timeout);
-
 #if GPGPU_USE_IRQ
-    /* The ISR clears the GPU IRQ and sets gpu_finished. */
+    while (remaining-- != 0U && gpu_finished == 0U) {
+        /* The ISR clears the GPU IRQ and sets gpu_finished. */
+    }
     if (gpu_finished == 0U) {
         xil_printf("ERROR: timeout waiting for GPU interrupt\r\n");
         gpgpu_print_status();
@@ -240,7 +218,11 @@ int gpgpu_start_and_wait(void)
     }
     gpu_write(GPGPU_REG_IRQ_ENABLE, 0U);
 #else
-    if (!completed()) {
+    while (remaining-- != 0U) {
+        if ((gpu_read(GPGPU_REG_IRQ_STATUS) & 1U) != 0U)
+            break;
+    }
+    if ((gpu_read(GPGPU_REG_IRQ_STATUS) & 1U) == 0U) {
         xil_printf("ERROR: timeout waiting for GPU completion\r\n");
         gpgpu_print_status();
         return -1;
@@ -254,6 +236,7 @@ int gpgpu_start_and_wait(void)
         return -1;
     }
 
+    xil_printf("Core entered idle state.\r\n");
     return 0;
 }
 

@@ -15,13 +15,6 @@ hardware:
     upload:
       destination: njason@192.168.1.13
       directory: /home/njason/upload
-    # fpga:programs:<program>:bench runs the host monitor's bench_<program>
-    # command: the kernel and the same algorithm on the ARM, `repetitions`
-    # timed runs of `steps` simulation steps each (one kernel launch per run).
-    benchmarks:
-      nbody:
-        steps: 1000
-        repetitions: 10
   serial:
     port: /dev/ttyACM0
     baud: 115200
@@ -82,13 +75,10 @@ hardware:
     domain: standalone_ps7_cortexa9_0
     os: standalone
     template: empty_application
-    # GCC optimization level of the host application (benchmarks time ARM code).
-    optimization: -O2
     default_archive: tools/hardware/vitis/default-project.zip
     host_sources:
       - software/host/xc7z020/gpgpu_driver.c
       - software/host/xc7z020/main.c
-      - software/host/xc7z020/benchmark.c
 
 software:
   riscv:

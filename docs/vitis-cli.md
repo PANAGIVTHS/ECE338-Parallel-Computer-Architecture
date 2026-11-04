@@ -44,12 +44,6 @@ avoid pre-existing reference projects:
   Update the SDK-generated **actual `UserConfig.cmake`** source list and include
   paths to the configured driver/main/headers. The configured AXI base is passed
   as `GPGPU_BASEADDR`, overriding the driver's fallback consistently with BD.
-  `hardware.vitis.optimization` (default `-O2`, any single GCC `-O` level)
-  replaces the SDK's `USER_COMPILE_OPTIMIZATION_LEVEL` (the template's `-O0`);
-  the ARM side of `fpga:programs:<program>:bench` is timed with this build.
-  Headers a host source includes with `#include "..."`, also from outside
-  its directory (the benchmark's `software/programs/nbody/*.h`), are build
-  inputs.
   No driver/UART/application protocol is redesigned and IRQ operation stays on.
 - **build:all:** the aggregate depends on the host, thus the full hardware and
   platform-before-host graph.

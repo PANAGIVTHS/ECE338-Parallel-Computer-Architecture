@@ -79,59 +79,6 @@ PROJECT mode with the compatible PL and host monitor running. These tasks do
 not reset the board, change mode, or depend on `fpga:program`/`fpga:deploy`.
 The legacy `software/programs/run.sh` is left untouched.
 
-## Benchmark a program: GPGPU vs. ARM
-
-```bash
-./gpgpu run fpga:programs:nbody:bench
-```
-
-Each program listed under `hardware.fpga.benchmarks` gets a `bench` task after
-`load-imem`:
-
-```yaml
-hardware:
-  fpga:
-    benchmarks:
-      nbody:
-        steps: 1000       # simulation steps per run (one kernel launch)
-        repetitions: 10   # timed runs on each side, at most 64
-```
-
-The task sends the host monitor's `bench_<program> <steps> <repetitions>`
-command; all timing happens on the board with the Cortex-A9 global timer, so
-UART and SSH latency are not measured. For `nbody`
-(`software/host/xc7z020/benchmark.c`) one untimed run warms up each side, then
-every repetition:
-
-- **GPGPU:** fills the state region (from DMEM word 1024, one word per body for
-  `pos_x`, `pos_y`, `vel_x`, `vel_y`) with a marker value, writes
-  `GPGPU_ARGS` = {`0x1000`, steps, reset = 1, 0} to DMEM words 16..19, then
-  times START → completion interrupt. The kernel initialises the bodies itself.
-- **ARM:** times initialisation plus `steps` steps of
-  `software/programs/nbody/nbody_reference.h`, the same sequential
-  algorithm the native `nbody` build uses.
-
-After the last repetition the GPGPU state is read back and compared word by
-word with the ARM state. The number of bodies is the core count in `INFO`.
-The task fails when any word differs or when that count is not
-`architecture.num_cores` (the kernel's thread count), after writing the result.
-
-The result is `<build-root>/software/programs/<program>/benchmark.json`: the
-raw timer ticks (min/median/max), and for the median on each side the time,
-µs per step and clock cycles per step, plus `speedup` (ARM time / GPGPU
-time; above 1 means the GPGPU is faster). Cycles use the ARM clock (twice the
-timer frequency) and the requested `hardware.vivado.fabric_clock_mhz`; the PS
-may run FCLK0 at a slightly different achievable frequency. Cycles per step
-compare the architectures independently of their clocks.
-
-The GPGPU time includes the AXI START write and the completion interrupt,
-a few microseconds per launch; raise `steps` to make it negligible. Positions
-grow roughly quadratically with the step count and stay within 32 bits up to
-about 10^5 steps. The host application is built with
-`hardware.vitis.optimization` (default `-O2`); the ARM time depends on it.
-The board must run a host ELF built with this command and its nbody IMEM is
-loaded by the task's `load-imem` dependency.
-
 ## Program only or upload and program
 
 ```bash

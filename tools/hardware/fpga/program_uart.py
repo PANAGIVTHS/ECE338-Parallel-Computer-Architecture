@@ -48,17 +48,14 @@ def exclusive_monitor(port, baud, verbose):
     return ExclusiveMonitor()
 
 
-OPERATIONS = ('load-imem', 'run', 'bench')
-
-
-def remote_main(operation, imem, port, baud, arguments=()):
-    if operation not in OPERATIONS:
+def remote_main(operation, imem, port, baud):
+    if operation not in ('load-imem', 'run'):
         raise ValueError('Unknown UART operation')
     words = validated_words(imem)
     with uart_ownership(port):
         uart = exclusive_monitor(port, baud, verbose=True)
         try:
-            execute_uart(uart, operation, words, arguments)
+            execute_uart(uart, operation, words)
         finally:
             uart.close()
 
@@ -89,20 +86,9 @@ def checked_state(uart):
     return 'idle'
 
 
-def run_benchmark(uart, program, steps, repetitions):
-    """The host monitor's bench_<program> command; returns its output."""
-    # Each GPGPU run is bounded by the host's own completion timeout.
-    output = uart._command_expect_prompt_or_error(
-        f'bench_{program} {steps} {repetitions}', timeout=30.0 + 20.0 * repetitions)
-    if 'BENCH_RESULT' not in output:
-        raise RuntimeError(f'bench_{program} printed no BENCH_RESULT (host ELF without it?):\n{output}')
-    return output
-
-
-def execute_uart(uart, operation, words, arguments=()):
-    """One guarded IMEM load/readback, launch or benchmark. Only a benchmark
-    writes DMEM (its program's arguments and state)."""
-    if operation not in OPERATIONS:
+def execute_uart(uart, operation, words):
+    """One guarded IMEM load/readback or single launch; never initialize DMEM."""
+    if operation not in ('load-imem', 'run'):
         raise ValueError('Unknown UART operation')
     checked_state(uart)
     if operation == 'load-imem':
@@ -117,9 +103,6 @@ def execute_uart(uart, operation, words, arguments=()):
         # Another CLI workflow can load a different program between dependency
         # stages. Recheck under this session's UART lock before launching.
         if uart.dump_imem_ascii(len(words), offset=0) != dict(enumerate(words)):
-            raise RuntimeError(f'IMEM readback mismatch before {operation}')
-        if operation == 'run':
-            print(uart.run(), flush=True)
-        else:
-            print(run_benchmark(uart, *arguments), flush=True)
+            raise RuntimeError('IMEM readback mismatch before run')
+        print(uart.run(), flush=True)
         checked_state(uart)

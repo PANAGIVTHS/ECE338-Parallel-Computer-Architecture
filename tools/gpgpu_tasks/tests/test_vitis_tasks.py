@@ -26,7 +26,6 @@ class Config:
             'hardware.vitis.template': 'empty_application',
             'hardware.vitis.default_archive': 'default.zip',
             'hardware.vitis.host_sources': ['src/gpgpu_driver.c', 'src/main.c'],
-            'hardware.vitis.optimization': '-O2',
             'hardware.vivado.xsa_name': 'managed_hardware',
             'hardware.vivado.peripheral.base_address': '0x43C00000',
             'hardware.vivado.peripheral.range': '0x00010000',
@@ -73,7 +72,6 @@ def test_project_and_host_use_sdk_launcher_and_real_configuration(tmp_path):
     assert project[4] == 'project' and '--xsa' in project
     assert host[4] == 'host'
     assert host[host.index('--base-address') + 1] == '0x43C00000'
-    assert '--optimization=-O2' in host
     assert host.count('--source') == 2
     assert tasks[0]['targets'] == [str(config.build_root / 'software/vitis/custom_platform/vitis-comp.json')]
     assert str(config.build_root / 'software/vitis/custom_host/vitis-comp.json') in tasks[2]['targets']
@@ -87,34 +85,10 @@ def test_shipped_config_sources_headers_and_hardware_name_exist():
     assert config.get('hardware.vitis.version') == '2025.2'
     for relative in config.get('hardware.vitis.host_sources'):
         assert (ROOT / relative).is_file(), relative
-    assert {Path(s).name for s in config.get('hardware.vitis.host_sources')} == {'gpgpu_driver.c', 'main.c', 'benchmark.c'}
-    assert config.get('hardware.vitis.optimization') == '-O2'
+    assert {Path(s).name for s in config.get('hardware.vitis.host_sources')} == {'gpgpu_driver.c', 'main.c'}
     assert tasks[0]['task_dep'] == ['vivado:system:build']
     assert str(config.build_root / 'hardware/platform/gpgpu_platform.xsa') in tasks[0]['file_dep']
     assert any(Path(s).name == 'gpgpu_driver.h' for s in tasks[2]['file_dep'])
-    # benchmark.c includes the shared nbody reference from software/programs.
-    nbody = ROOT / 'software/programs/nbody'
-    assert {str(nbody / 'nbody_reference.h'), str(nbody / 'nbody.h')} <= set(tasks[2]['file_dep'])
-
-
-def test_host_tracks_headers_included_from_other_directories(tmp_path):
-    config = make_repo(tmp_path)
-    shared = tmp_path / 'shared'; shared.mkdir()
-    (shared / 'outer.h').write_text('#include "inner.h"\n')
-    (shared / 'inner.h').write_text('/* reached through outer.h */')
-    (shared / 'unused.h').write_text('/* never included */')
-    (tmp_path / 'src/main.c').write_text('#include "../shared/outer.h"\n#include <stdio.h>\n#include "missing.h"\n')
-    file_dep = set(vitis.create_tasks(config)[2]['file_dep'])
-    assert {str(shared / 'outer.h'), str(shared / 'inner.h'), str(tmp_path / 'src/gpgpu_driver.h')} <= file_dep
-    assert str(shared / 'unused.h') not in file_dep
-
-
-@pytest.mark.parametrize('level', ['O2', '-O9', '-O2 -g', ''])
-def test_host_optimization_must_be_one_gcc_level(tmp_path, level):
-    config = make_repo(tmp_path)
-    config.values['hardware.vitis.optimization'] = level
-    with pytest.raises(ValueError, match='optimization'):
-        vitis.create_tasks(config)
 
 
 def test_export_is_portable_atomic_deterministic_and_retains_rsa_input(tmp_path):
@@ -206,7 +180,7 @@ class Client:
         root = workspace / name
         (root / 'src').mkdir(parents=True)
         (root / 'vitis-comp.json').write_text(json.dumps({'name': name, 'kind': 'app'}))
-        (root / 'UserConfig.cmake').write_text('set(USER_COMPILE_SOURCES)\\nset(USER_INCLUDE_DIRECTORIES)\\nset(USER_COMPILE_DEFINITIONS)\\nset(USER_COMPILE_OPTIMIZATION_LEVEL -O0)\\n')
+        (root / 'UserConfig.cmake').write_text('set(USER_COMPILE_SOURCES)\\nset(USER_INCLUDE_DIRECTORIES)\\nset(USER_COMPILE_DEFINITIONS)\\n')
         return Component(name, 'app')
 
 def create_client(): return Client()

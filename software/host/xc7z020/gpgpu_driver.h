@@ -36,17 +36,13 @@
 #ifndef GPGPU_IRQ_ID
 #define GPGPU_IRQ_ID          61U
 #endif
-/* Maximum kernel run time before gpgpu_start_and_wait() reports a timeout. */
-#ifndef GPGPU_WAIT_TIMEOUT_MS
-#define GPGPU_WAIT_TIMEOUT_MS 10000U
+#ifndef GPGPU_WAIT_LIMIT
+#define GPGPU_WAIT_LIMIT      100000000U
 #endif
 
 int gpgpu_init(void);
-/* Core (thread) count reported in INFO[15:0]. */
-u32 gpgpu_core_count(void);
 u32 gpgpu_read_status(void);
 void gpgpu_print_status(void);
-/* START, then wait for the completion event. Prints only on error. */
 int gpgpu_start_and_wait(void);
 
 /* Addresses are WORD INDICES, not AXI byte addresses. */
