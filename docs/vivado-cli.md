@@ -21,6 +21,13 @@ vivado:ip:create
 - **ip:build** packages and validates `user.org:user:gpgpu_axi:1.0` into a
   self-contained repository. It never builds a standalone bitstream. Publication
   occurs only after Tcl integrity checks and Python file/interface validation.
+  The same repository also publishes the other IP the block design uses:
+  every directory under `hardware.vivado.vendor_ip.root` (`hardware/rtl`)
+  except `hardware.vivado.vendor_ip.exclude` (`gpgpu`, the GPGPU's own RTL),
+  copied beside the package, e.g. `ip_repo/rgb2dvi/` and the `tmds` interface
+  definition in `ip_repo/tmds_v1_0/`. Vivado's IP catalog scans the repository
+  recursively. A vendor directory may not reuse a name the package produced
+  (`src`, `xgui`); editing, adding or removing one republishes the repository.
 - **system:create** registers that repository before catalog/BD creation,
   creates or reuses `gpgpu_system/design_1`, applies config-owned parameters,
   validates, generates products and registers `design_1_wrapper`.
@@ -28,6 +35,12 @@ vivado:ip:create
   bitstream and fixed, bitstream-inclusive XSA export. Internal staged tasks
   retain checkpoints, jobs and stage diagnostics; a failed bitstream retry does
   not delete routed state. Required OOC IP synthesis belongs here.
+  `hardware.vivado.post_route_phys_opt.{enabled,directive}` (passed as
+  `-post-route-phys-opt` / `-post-route-phys-opt-directive`) set `impl_1`'s
+  post-route `phys_opt_design` step and its `-directive` on every
+  implementation run. The run is launched without `-to_step` (which has no name
+  for that step), so it executes every enabled step before `write_bitstream`;
+  bitstream and XSA use its result.
 
 The former GPIO/module-reference tasks are not part of this pipeline.
 
@@ -54,6 +67,10 @@ hardware:
     xsa_name: gpgpu_platform
     version: "2025.2"
     jobs: 6
+    fabric_clock_mhz: 42
+    post_route_phys_opt:
+      enabled: true
+      directive: AggressiveExplore
     peripheral:
       base_address: "0x43C00000"
       range: "0x00010000"
@@ -67,21 +84,66 @@ were changed. The range is fixed to this ABI; the base must be a valid aligned
 `GPGPU_BASEADDR` (see [Vitis flow](vitis-cli.md)). Core count maps to
 `CONFIG.SP_PER_SM` and the IP user-to-HDL/XGUI parameter, never a second setting.
 
-The tracked `production_sources.tcl` lists only production root/control/memory/
-sp/interfaces files, with `constants.svh` and `MemoryInterface.sv` first.
-`tools/hardware/vivado/ip/empty.mem` provides explicit 2048-word zero
-initialization for IMEM/DMEM. Project and package copy it beside the flattened
+Production sources come from the config, not from a tracked list: the shared
+`hardware.sources` description (extensions, header extensions, compile order)
+under `paths.rtl.sources.gpgpu`, minus `hardware.vivado.exclude_sources` (bare
+directory/file names matched at any depth, or paths relative to the RTL root;
+excluded `ordered` entries are dropped). Headers are packaged first as include
+headers, then the `ordered` files, then the rest in path order, with the
+file declaring the IP top module (`gpgpu_axi`) moved last: with a manual compile
+order `ipx::package_project` takes the last file as the top-level file.
+`hardware.vivado.memory_init` is staged before all of them. Python writes the
+resolved list to `<ip project>/.gpgpu/sources.tsv` (`<kind>\t<path>` lines) and
+passes only that file as `-sources-manifest`: long or brace-quoted list
+arguments do not survive Vivado's `-tclargs` handling. `production_sources.tcl`
+reads and validates it (all files exist, unique file names, headers among the
+sources). The default `hardware.vivado.memory_init`,
+`tools/hardware/vivado/ip/empty.mem`, provides explicit 2048-word zero
+initialization for IMEM/DMEM; its file name must match the RTL's default
+`$readmemh` name. Project and package copy it beside the flattened
 production files; their stage cwd is owned, never a random repository cwd.
 Board XDC is excluded from the reusable IP.
 
 ## System contract
 
 The saved system BD, not its inconsistent neighboring Tcl export, supplied:
-FCLK0 **35 MHz**, DDR **16-bit MT41K256M16 RE-125**, UART0 **EMIO**.
-The system connects PS GP0 -> SmartConnect -> `gpgpu_axi_0/s00_axi`, with
+DDR **16-bit MT41K256M16 RE-125**, UART0 **EMIO**, SD0 **MIO 40..45** with
+card detect on **MIO 47** (the TF card, for SD boot; bank 501 at 3.3 V). The fabric clock FCLK0
+(GPGPU, its SmartConnects and reset) is configuration-owned:
+`hardware.vivado.fabric_clock_mhz` (default **42 MHz**) is passed as
+`-fclk0-mhz`, used when bootstrapping a new BD and re-applied to a saved BD on
+every `vivado:system:create`, like the core count and AXI aperture. It is the
+requested `PCW_FPGA0_PERIPHERAL_FREQMHZ`; the PS picks the nearest achievable
+frequency from its dividers.
+The system connects PS GP0 -> `gpgpu_ctrl` (SmartConnect) -> `gpgpu_axi_0/s00_axi`, with
 clock/reset distribution, DDR/FIXED_IO external ports and UART/LED ports.
 `irq` connects through width handling to `IRQ_F2P[0]` (GIC ID 61), matching
-the IRQ-enabled driver; polling is not silently enabled.
+the IRQ-enabled driver; polling is not silently enabled. The GPGPU's DDR master
+`m00_axi` reaches `S_AXI_HP0` through `gpgpu_ddr` and the scanout VDMA
+reaches `S_AXI_HP2` through `vdma_ddr` (1x1 SmartConnects, which also convert
+AXI4 to AXI3), so the two meet only in the DDR controller; both see PS DDR
+identity-mapped (0x0000_0000-0x1FFF_FFFF); the DDR controller keeps its
+default arbitration. PS GP1 reaches the VDMA registers
+at 0x8300_0000. Scanout:
+VDMA (32-bit pixels, two frame stores, 16-beat bursts, 4096-pixel line
+buffer) -> AXI4-Stream subset converter (4 to
+3 bytes, `0x00RRGGBB` to the video order) -> AXI4-Stream video out, timed by a
+VTC in its default mode -> `rgb2dvi` (serial clock generated, see below) -> the
+`TMDS_0` HDMI port. FCLK0 runs only the GPGPU, GP0 and HP0 (reset `gpu_sys_reset`), so it
+can follow the GPGPU's timing. The display has a fixed 100 MHz FCLK1 (GP1,
+the VDMA, HP2 and the stream into the video out, faster than the pixel clock;
+reset `rst_ps7_0_35M`) and the 74.25 MHz (720p60) pixel clock that `clk_wiz_0`
+makes from the board's 50 MHz PL oscillator `clk_50m` (M19, in the HDMI bank;
+reset `proc_sys_reset_0`) with a PLL. `rgb2dvi`
+makes the 5x 371.25 MHz serial clock itself with an MMCM in the TMDS pins'
+clock region (BUFIO for the serial clock, BUFR for the serializers' pixel
+clock), so the serializer clocks stay off the global clock network; see
+`docs/hdmi-blanking-investigation.md`. No PS clock feeds the HDMI
+output; the video out's asynchronous FIFO crosses from FCLK1 to the pixel
+clock. All three resets follow
+`FCLK_RESET0_N`. The bootstrap is `create_block_design.tcl`;
+`create_system.tcl` refuses a saved design that lacks the GPGPU's host,
+interrupt or DDR cells. `smart_zynq.xdc` places the TMDS pairs (TMDS_33).
 
 `smart_zynq.xdc` owns UART TX/RX L17/M17 and idle/running P20/P21, all
 LVCMOS33. DRC severity is not relaxed. The system consumes the packaged IP,
@@ -133,7 +195,13 @@ skip completed stages. IP package failure blocks system and Vitis execution.
 The XSA must include `.bit`, `.hwh`, `ps7_init.tcl` and `ps7_init.c` before the
 stage succeeds. Vivado logs/journals/streamed console logs stay in the managed
 project's `.gpgpu/logs/`; the existing JSON-backed CLI monitor also records each
-stage. Use `--plain` for plain live output. The FPGA artifact contract is unchanged:
+stage. Use `--plain` for plain live output. `launch_runs` executes each run in
+its own process, so the synthesis, implementation and bitstream stages also copy
+their runs' logs and reports (`runme.log`, `.vds`, `.vdi`, `.rpt`) to
+`.gpgpu/logs/<stage>/<run>/`: `synth_1` plus every out-of-context IP
+synthesis run (`*synth_1`), or `impl_1`. The copy is refreshed on every
+execution, also when Vivado fails; reused out-of-context runs keep the logs from
+when they ran. The FPGA artifact contract is unchanged:
 published bitstream, Vitis `ps7_init.tcl`, and host ELF. No reference artifact is
 accepted as evidence of a newly completed vendor build.
 

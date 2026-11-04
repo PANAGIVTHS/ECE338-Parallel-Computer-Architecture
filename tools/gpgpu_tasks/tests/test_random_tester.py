@@ -7,7 +7,18 @@ import sys
 
 import pytest
 
-from tools.tests import random_tester
+from tools.tests import random_tester, rtl
+
+REPO = Path(__file__).resolve().parents[3]
+RTL_PACKAGES = ("packages/gpu_pkg.sv", "memory/ddr/AXI4FullPkg.sv",
+                "memory/ddr/DDRBackendPkg.sv", "memory/MemorySubsystemPkg.sv")
+
+
+def write_rtl_constants(path: Path) -> Path:
+    """The tests:rtl:constants file, from the checkout's RTL packages."""
+    root = REPO / "hardware/rtl/gpgpu"
+    rtl.write_rtl_constants([root / package for package in RTL_PACKAGES], root, path)
+    return path
 
 
 def test_random_program_generation_is_reproducible_from_global_seed(
@@ -48,10 +59,12 @@ def configure_native_run(tmp_path, monkeypatch, *, output="[SUCCESS] native", st
     )
     simulator.chmod(0o755)
     log = tmp_path / "logs/random.log"
+    constants = write_rtl_constants(tmp_path / "rtl_constants.txt")
     monkeypatch.setattr(sys, "argv", [
         "random_tester.py", "--iterations", "2", "--seed", "4242",
         "--num-cores", "2", "--python", sys.executable,
         "--simulator", str(simulator), "--test-root", str(tmp_path), "--log", str(log),
+        "--rtl-constants", str(constants),
     ])
     return invocations, log
 

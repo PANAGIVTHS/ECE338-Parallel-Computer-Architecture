@@ -36,7 +36,7 @@ package pipeline_pkg;
     typedef struct packed {
         gpu_pkg::word_t alu_out;
         gpu_pkg::word_t reg_b;
-        gpu_pkg::word_t program_counter;
+        gpu_pkg::pc_t program_counter;
         riscv_pkg::opcode_t opcode;
         gpu_pkg::reg_addr_t rd;
         logic mul_valid;
@@ -51,12 +51,14 @@ package pipeline_pkg;
         gpu_pkg::word_t alu_out;
         logic wen;
         gpu_pkg::pc_t program_counter;
+        gpu_pkg::word_t rdata;
     } mem_wb_t;
 
     //! SP -> SM feedback signals
     typedef struct packed {
         logic branch_taken;
         gpu_pkg::imem_idx_t branch_target_idx;
+        gpu_pkg::pc_t mem_program_counter;
     } sp_feedback_t;
 
 endpackage

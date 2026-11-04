@@ -11,14 +11,13 @@ module MemorySinglePort #(
     logic [memory.DATA_WIDTH-1:0] data [0:DEPTH-1];
 
     localparam int EXPECTED_ADDR_WIDTH = (DEPTH > 1) ? $clog2(DEPTH) : 1;
-    initial begin
-        assert (DEPTH > 0)
-            else $fatal(1, "Memory DEPTH must be positive");
+    if (DEPTH <= 0) begin : g_depth_check
+        $fatal(1, "Memory DEPTH must be positive");
+    end
 
-        assert ($bits(memory.addr) == EXPECTED_ADDR_WIDTH)
-            else $fatal(1,
-                "Memory address width mismatch: expected %0d, got %0d",
-                EXPECTED_ADDR_WIDTH, $bits(memory.addr));
+    if (memory.ADDR_WIDTH != EXPECTED_ADDR_WIDTH) begin : g_addr_check
+        $fatal(1, "Memory address width mismatch: expected %0d, got %0d",
+            EXPECTED_ADDR_WIDTH, memory.ADDR_WIDTH);
     end
 
     initial begin

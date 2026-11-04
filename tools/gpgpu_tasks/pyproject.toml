@@ -9,6 +9,8 @@ description = "pydoit task definitions for the GPGPU project"
 requires-python = ">=3.11"
 dependencies = [
   "doit>=0.37,<1",
+  # SystemVerilog compiler: elaborates (* host *) exports for the driver header.
+  "pyslang>=12.1,<13",
   "rich>=13,<15",
 ]
 

@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import shutil
+import subprocess
 import sys
 
 from cli.cli import create_app
@@ -112,6 +113,11 @@ def checkout(tmp_path):
     fake.write_text(f'#!{sys.executable}\n' + FAKE_VENDOR)
     fake.chmod(0o755)
     (repo / 'config/local.yaml').write_text(f'tools:\n  vivado:\n    command: {fake}\n  vitis:\n    command: {fake}\n')
+    # A real history: the hardware:identity task reads the RTL's last commit.
+    git = ['git', '-C', str(repo), '-c', 'user.name=fixture', '-c', 'user.email=fixture@example.com']
+    subprocess.run([*git, 'init', '--quiet'], check=True)
+    subprocess.run([*git, 'add', '--all'], check=True)
+    subprocess.run([*git, 'commit', '--quiet', '--no-gpg-sign', '-m', 'fixture'], check=True)
     return repo
 
 

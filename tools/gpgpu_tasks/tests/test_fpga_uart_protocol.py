@@ -134,3 +134,61 @@ def test_vm_driver_consumes_bulk_load_prompt_before_readback(tmp_path, remote_en
         worker.join(2)
         os.close(master)
         os.close(slave)
+
+
+def load_module(name, relative):
+    spec = importlib.util.spec_from_file_location(name, ROOT / relative)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+MONITOR_STATUS = """INFO          = 0x00020020  interface v2 (driver v2), 32 SPs per SM
+INFO_MEM      = 0x08000800  IMEM 2048 words, DMEM 2048 words
+STATUS        = 0x{status:08x}  idle
+  idle = 1
+  running = 0
+  stopped = 0
+  faulted = {faulted}
+IRQ_ENABLE    = 0x00000000  completion interrupt disabled
+  irq_enabled = 0
+IRQ_STATUS    = 0x00000000  no completion pending
+  irq_pending = 0
+FAULT_INFO    = 0x00000031  cause 1 (memory): a kernel memory access failed
+  misaligned: the address is not word-aligned
+FAULT_LANES   = 0xaaaaaaaa  16 lane(s) faulted: 1,3,5,7,9,11,13,15,17,19,21,23,25,27,29,31
+FAULT_PC      = 0x00000004  byte address of the faulting instruction (see dumpimem)
+"""
+
+
+def test_memory_dump_parser_maps_byte_addresses_to_word_indices():
+    uart = load_module('uart_dump', 'tools/board/xc7z020/uart.py')
+    dump = "BEGIN_DMEM_DUMP\r\n0x00000040: 0x0000ABCD\r\n0x00000044: 0xffffffff\r\nEND_DMEM_DUMP\r\n"
+    assert uart.parse_memory_dump(dump) == {16: '0000abcd', 17: 'ffffffff'}
+    with pytest.raises(RuntimeError, match='not word-aligned'):
+        uart.parse_memory_dump("0x00000042: 0x00000000\r\n")
+
+
+def test_status_parser_reads_faulted_and_the_fault_report():
+    uart = load_module('uart_status', 'tools/board/xc7z020/uart.py')
+    status = uart.parse_status(MONITOR_STATUS.format(status=0x9, faulted=1))
+    assert status['faulted'] == 1
+    assert (status['fault_info'], status['fault_lanes'], status['fault_pc']) == (0x31, 0xAAAAAAAA, 4)
+
+
+@pytest.mark.parametrize('faulted', [0, 1])
+def test_checked_state_refuses_a_faulted_gpu_with_its_report(faulted):
+    uart = load_module('uart_status', 'tools/board/xc7z020/uart.py')
+    driver = load_module('vm_fault_guard', 'tools/hardware/fpga/program_uart.py')
+
+    class Monitor:
+        def status(self):
+            return uart.parse_status(MONITOR_STATUS.format(status=0x1 | faulted << 3, faulted=faulted))
+
+    if not faulted:
+        assert driver.checked_state(Monitor()) == 'idle'
+        return
+    with pytest.raises(RuntimeError, match=r'FAULTED: fault_info=0x00000031, fault_lanes=0xaaaaaaaa, '
+                                           r'fault_pc=0x00000004.*clear'):
+        driver.checked_state(Monitor())

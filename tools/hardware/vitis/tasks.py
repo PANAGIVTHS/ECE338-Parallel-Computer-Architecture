@@ -236,7 +236,7 @@ def create_tasks(config) -> list[dict[str, Any]]:
          'uptodate': [config_changed({'command': platform_command})], 'clean': True},
         {'name': 'vitis:build:host',
          'actions': [(run_vitis, [host_command, repo_root, (elf, host_metadata)])],
-         'task_dep': ['vitis:build:platform'],
+         'task_dep': ['vitis:build:platform', 'software:host:platform'],
          'file_dep': [str(script), str(archive), str(platform_xsa), str(ps_init), str(xpfm),
                       *(str(p) for p in sources), *(str(p) for p in headers)],
          'targets': [str(elf), str(host_metadata)],

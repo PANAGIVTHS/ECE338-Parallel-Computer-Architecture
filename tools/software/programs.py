@@ -73,13 +73,25 @@ def _positive_int(config: ResolvedConfig, key: str) -> int:
     return value
 
 
-def _objdump_for(compiler: str) -> str:
+def _binutil_for(compiler: str, tool: str) -> str:
     path = Path(compiler)
     if not path.name.endswith("-gcc"):
         raise ValueError(
-            "tools.riscv_gcc.command must end in '-gcc' so objdump can be derived"
+            f"tools.riscv_gcc.command must end in '-gcc' so {tool} can be derived"
         )
-    return str(path.with_name(f"{path.name[:-3]}objdump"))
+    return str(path.with_name(f"{path.name[:-3]}{tool}"))
+
+
+def _objdump_for(compiler: str) -> str:
+    return _binutil_for(compiler, "objdump")
+
+
+def _elf_path(artifact_directory: Path, program: str) -> Path:
+    return artifact_directory / f"{program}.elf"
+
+
+def _memory_path(artifact_directory: Path, program: str) -> Path:
+    return artifact_directory / f"{program}_instructions.mem"
 
 
 def _instruction_fields(line: str) -> tuple[str, str] | None:
@@ -162,11 +174,11 @@ def _program_tasks(config: ResolvedConfig, program: str) -> list[dict[str, Any]]
     )
 
     native_executable = artifact_directory / f"{program}_x86"
-    elf = artifact_directory / f"{program}.elf"
+    elf = _elf_path(artifact_directory, program)
     link_map = artifact_directory / f"{program}.map"
     dump = artifact_directory / f"{program}_dump_real.asm"
     assembly = artifact_directory / f"{program}_program.asm"
-    memory = artifact_directory / f"{program}_instructions.mem"
+    memory = _memory_path(artifact_directory, program)
 
     native_cc = config.get("tools.native_cc.command")
     riscv_cc = config.get("tools.riscv_gcc.command")
@@ -287,11 +299,154 @@ def _program_tasks(config: ResolvedConfig, program: str) -> list[dict[str, Any]]
     ]
 
 
+# Linker symbols bounding GPGPU_ARGS (gpgpu.ld): the host writes the arguments there.
+_ARGS_BASE_SYMBOL = "__gpu_args_base"
+_ARGS_END_SYMBOL = "__gpu_args_end"
+_IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+
+def autorun_settings(config: ResolvedConfig, program_names: list[str]) -> dict[str, Any]:
+    """Validated software.host.autorun values (and the define prefix they use)."""
+
+    header = config.get("software.host.autorun.header")
+    if not isinstance(header, str) or not header.endswith(".h"):
+        raise ValueError("software.host.autorun.header must be a repository-relative .h path")
+    enabled = config.get("software.host.autorun.enabled")
+    if not isinstance(enabled, bool):
+        raise ValueError("software.host.autorun.enabled must be true or false")
+    program = config.get("software.host.autorun.program")
+    if not isinstance(program, str) or (enabled and program not in program_names):
+        raise ValueError(
+            f"software.host.autorun.program must be one of: {', '.join(program_names)}"
+        )
+    args = config.get("software.host.autorun.args")
+    if not isinstance(args, (list, tuple)) or not all(
+        (isinstance(arg, int) and not isinstance(arg, bool) and 0 <= arg <= 0xFFFFFFFF)
+        or (isinstance(arg, str) and _IDENTIFIER.fullmatch(arg))
+        for arg in args
+    ):
+        raise ValueError(
+            "software.host.autorun.args must list 32-bit unsigned integers or C names "
+            "such as GPGPU_FB0_BASE"
+        )
+    display = config.get("software.host.autorun.display")
+    if isinstance(display, bool) or not isinstance(display, int) or display < 0:
+        raise ValueError("software.host.autorun.display must be a framebuffer index")
+    prefix = config.get("software.host.define_prefix")
+    if not isinstance(prefix, str) or not _IDENTIFIER.fullmatch(prefix):
+        raise ValueError("software.host.define_prefix must be an identifier")
+    return {"header": header, "enabled": enabled, "program": program, "args": list(args),
+            "display": display, "define_prefix": prefix}
+
+
+def read_args_window(nm_command: list[str]) -> tuple[int, int]:
+    """(first DMEM word, word count) of GPGPU_ARGS from the program's ELF symbols."""
+
+    symbols = {}
+    listing = subprocess.run(nm_command, check=True, capture_output=True, text=True).stdout
+    for line in listing.splitlines():
+        fields = line.split()
+        if len(fields) == 3 and fields[2] in (_ARGS_BASE_SYMBOL, _ARGS_END_SYMBOL):
+            symbols[fields[2]] = int(fields[0], 16)
+    missing = [name for name in (_ARGS_BASE_SYMBOL, _ARGS_END_SYMBOL) if name not in symbols]
+    if missing:
+        raise ValueError(f"{' '.join(nm_command)}: no symbol {', '.join(missing)}")
+    base, end = symbols[_ARGS_BASE_SYMBOL], symbols[_ARGS_END_SYMBOL]
+    if base % 4 or end % 4 or end <= base:
+        raise ValueError(f"GPGPU_ARGS window 0x{base:x}..0x{end:x} is not whole words")
+    return base // 4, (end - base) // 4
+
+
+def render_autorun_header(settings: dict[str, Any], image: list[int] | None,
+                          args_window: tuple[int, int] | None, guard: str) -> str:
+    """The C header for the autorun settings; *image* is None when it is disabled."""
+
+    lines = [
+        "/* Generated by tools/software/programs.py (task software:host:autorun)",
+        " * from software.host.autorun and the program's RISC-V build.",
+        " * Do not edit: change the configuration and regenerate.",
+        " */",
+        f"#ifndef {guard}",
+        f"#define {guard}",
+        "",
+    ]
+
+    def define(name: str, value: str) -> None:
+        lines.append(f"#define {settings['define_prefix']}{name:<28} {value}")
+
+    lines.append("/* Program run from boot until a UART key press (software.host.autorun). */")
+    if image is None or args_window is None:
+        define("AUTORUN", "0")
+    else:
+        args_word, args_words = args_window
+        args = settings["args"]
+        if len(args) > args_words:
+            raise ValueError(
+                f"software.host.autorun.args has {len(args)} values; "
+                f"GPGPU_ARGS holds {args_words} words"
+            )
+        values = [f"0x{arg:08X}U" if isinstance(arg, int) else arg for arg in args]
+        values += ["0x00000000U"] * (args_words - len(values))
+        define("AUTORUN", "1")
+        define("AUTORUN_PROGRAM", f"\"{settings['program']}\"")
+        lines.append("/* First DMEM word of GPGPU_ARGS (__gpu_args_base in gpgpu.ld). */")
+        define("AUTORUN_ARGS_WORD", f"{args_word}U")
+        lines.append("/* Framebuffer shown while it runs (software.host.autorun.display). */")
+        define("AUTORUN_DISPLAY", f"{settings['display']}U")
+        lines += ["", "/* IMEM image, from word 0. */", "static const u32 gpgpu_autorun_image[] = {"]
+        lines += [f"    {', '.join(f'0x{word:08X}U' for word in image[i:i + 6])},"
+                  for i in range(0, len(image), 6)]
+        lines += ["};", "",
+                  "/* GPGPU_ARGS words (software.host.autorun.args; the rest are 0). */",
+                  f"static const u32 gpgpu_autorun_args[] = {{ {', '.join(values)} }};"]
+    lines += ["", f"#endif /* {guard} */", ""]
+    return "\n".join(lines)
+
+
+def write_autorun_header(settings: dict[str, Any], nm_command: list[str] | None,
+                         memory: Path | None, output: Path) -> None:
+    image = args_window = None
+    if settings["enabled"] and nm_command is not None and memory is not None:
+        image = [int(line, 16) for line in memory.read_text(encoding="utf-8").split()]
+        args_window = read_args_window(nm_command)
+    guard = re.sub(r"\W", "_", output.name).upper()
+    output.write_text(render_autorun_header(settings, image, args_window, guard), encoding="utf-8")
+
+
+def _autorun_task(config: ResolvedConfig, program_names: list[str]) -> dict[str, Any]:
+    settings = autorun_settings(config, program_names)
+    output = config.repo_root / settings["header"]
+    program = settings["program"]
+    task: dict[str, Any] = {
+        "name": "software:host:autorun",
+        "targets": [str(output)],
+        "uptodate": [config_changed(settings)],
+    }
+    if not settings["enabled"]:
+        task["actions"] = [(write_autorun_header, [settings, None, None, output])]
+        task["file_dep"] = [str(Path(__file__).resolve())]
+        return task
+
+    artifact_directory = ProjectPaths.from_config(config).program_builds / program
+    elf = _elf_path(artifact_directory, program)
+    memory = _memory_path(artifact_directory, program)
+    riscv_cc = config.get("tools.riscv_gcc.command")
+    if not isinstance(riscv_cc, str):
+        raise TypeError("tools.riscv_gcc.command must be a string")
+    nm_command = [_binutil_for(riscv_cc, "nm"), str(elf)]
+    task["actions"] = [(write_autorun_header, [settings, nm_command, memory, output])]
+    task["file_dep"] = [str(elf), str(memory), str(Path(__file__).resolve())]
+    task["task_dep"] = [f"software:programs:{program}:mem"]
+    return task
+
+
 def create_tasks(config: ResolvedConfig) -> list[dict[str, Any]]:
     """Create pydoit task dictionaries for every valid program directory."""
 
     programs_root = _programs_root(config)
+    program_names = _program_names(programs_root)
     tasks: list[dict[str, Any]] = []
-    for program in _program_names(programs_root):
+    for program in program_names:
         tasks.extend(_program_tasks(config, program))
+    tasks.append(_autorun_task(config, program_names))
     return tasks

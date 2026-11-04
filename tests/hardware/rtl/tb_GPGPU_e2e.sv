@@ -1,372 +1,170 @@
 `timescale 1ns/1ps
 `include "constants.svh"
 
-`define CLOCK_PERIOD 10
-`define TEST_TIMEOUT_CYCLES 10000
-`define HOST_TIMEOUT_CYCLES 10000
+// End-to-end bench: drives the GPGPU exclusively through the AXI4-Lite top
+// (gpgpu_axi), exactly as the PS does on the FPGA. It checks the CSR map,
+// error responses and fault reports, then runs the directed cases
+// (run_cases, tb_e2e_host.svh): programs are loaded, launched and checked
+// using only CSR/IMEM/DMEM accesses, the IRQ pin and the DDR model's backdoor.
+// +TEST_END is optional: without it the suite runs until the next case
+// directory has no program file.
+module tb_GPGPU_e2e
+    import ControlPkg::*;
+    import gpu_pkg::*;
+#(
+    parameter int unsigned NUM_CORES,
+    parameter int unsigned INTERFACE_VERSION,
+    parameter int unsigned CLOCK_KHZ,
+    parameter int unsigned BUILD_HASH,
+    parameter int unsigned BUILD_DIRTY,
+    parameter int unsigned DDR_ENABLE,
+    parameter int unsigned AXI_SLAVE_LATENCY_MIN,
+    parameter int unsigned AXI_SLAVE_LATENCY_MAX,
+    parameter int unsigned AXI_SLAVE_READY_PCT,
+    parameter int unsigned AXI_SLAVE_VALID_PCT,
+    parameter int unsigned AXI_SLAVE_SEED
+) ();
 
-module tb_GPGPU_e2e ();
-
-    parameter NUM_CORES = 32;
-
-    // Host command encodings
-    localparam CMD_IMEM_WRITE = 3'd0;
-    localparam CMD_DMEM_WRITE = 3'd1;
-    localparam CMD_DMEM_READ = 3'd2;
-    localparam CMD_IMEM_READ = 3'd3;
-    localparam CMD_REG_READ = 3'd4;
-    localparam CMD_RUN = 3'd5;
-    localparam RET_INSTR = 32'h00008067;
-
-    reg clk_in;
-    reg rst;
-
-    wire o_idle;
-    wire o_running;
-
-    reg req_valid, req_write, rsp_ready;
-    reg [31:0] req_address, req_wdata;
-    wire req_ready, rsp_valid;
-    wire [2:0] rsp_status;
-    wire [31:0] host_rdata;
-    wire irq;
-
-    reg [31:0] expected_imem [0:`IMEM_ENTRIES-1];
-    reg [31:0] expected_dmem [0:`DMEM_ENTRIES-1];
+    `include "tb_e2e_host.svh"
 
     integer i;
-    integer test_idx;
-    integer test_end;
-    integer has_test_end;
-    integer fd;
-    integer imem_errors;
-    integer dmem_errors;
-    integer cycle_count;
-    integer timeout_count;
-    integer program_words;
-    integer found_ret;
-
     reg [31:0] captured_word;
+    string dump_file;
 
-    reg [8*255:0] test_root;
-    reg [8*255:0] prog_file;
-    reg [8*255:0] data_file;
-
-    // ============================================================
-    // DUT
-    // ============================================================
-
-    GPGPU #(
-        .SP_PER_SM(NUM_CORES), 
-        .MEMORY_INIT("")
-    ) UUT (
-        .clk(clk_in), .rst_n(rst),
-        .i_req_valid(req_valid), .o_req_ready(req_ready),
-        .i_req_write(req_write), .i_req_addr(req_address),
-        .i_req_wdata(req_wdata), .i_req_wstrb(4'b1111),
-        .o_rsp_valid(rsp_valid), .i_rsp_ready(rsp_ready),
-        .o_rsp_rdata(host_rdata), .o_rsp_status(rsp_status), .o_irq(irq)
-    );
-    assign o_idle = rst && UUT.core_state == `CORE_IDLE;
-    assign o_running = rst && UUT.core_state == `CORE_RUNNING;
-
-    always #(`CLOCK_PERIOD / 2) clk_in = ~clk_in;
+    // Run settings (plusargs)
+    reg [31:0] unmapped_addr;
 
     // ============================================================
-    // Host command helpers
-    // ============================================================
-
-    task begin_command(input [2:0] cmd, input [31:0] addr, input [31:0] wdata);
-        begin
-            @(negedge clk_in);
-            req_write = cmd == CMD_IMEM_WRITE || cmd == CMD_DMEM_WRITE || cmd == CMD_RUN;
-            case (cmd)
-                CMD_IMEM_WRITE, CMD_IMEM_READ: req_address = 32'h2000 + addr * 4;
-                CMD_DMEM_WRITE, CMD_DMEM_READ: req_address = 32'h4000 + addr * 4;
-                CMD_RUN: req_address = 4;
-                default: $fatal(1, "Unsupported test operation %d", cmd);
-            endcase
-            req_wdata = cmd == CMD_RUN ? 32'd1 : wdata;
-            req_valid = 1;
-            timeout_count = 0;
-            while (!req_ready && timeout_count < `HOST_TIMEOUT_CYCLES) begin
-                @(negedge clk_in); timeout_count = timeout_count + 1;
-            end
-            if (!req_ready) $fatal(1, "Request timeout");
-            @(posedge clk_in); @(negedge clk_in); req_valid = 0;
-            timeout_count = 0;
-            while (!rsp_valid && timeout_count < `HOST_TIMEOUT_CYCLES) begin
-                @(negedge clk_in); timeout_count = timeout_count + 1;
-            end
-            if (!rsp_valid || rsp_status != 0)
-                $fatal(1, "Access failed cmd=%d addr=%h status=%d", cmd, addr, rsp_status);
-        end
-    endtask
-
-    task end_command(input [2:0] cmd);
-        begin
-            @(negedge clk_in); rsp_ready = 1;
-            @(negedge clk_in); rsp_ready = 0;
-        end
-    endtask
-
-    task send_command(input [2:0] cmd, input [31:0] addr, input [31:0] wdata);
-        begin begin_command(cmd, addr, wdata); end_command(cmd); end
-    endtask
-
-    task write_imem(
-        input [31:0] addr,
-        input [31:0] data
-    );
-        begin
-            send_command(CMD_IMEM_WRITE, addr, data);
-        end
-    endtask
-
-    task write_dmem(
-        input [31:0] addr,
-        input [31:0] data
-    );
-        begin
-            send_command(CMD_DMEM_WRITE, addr, data);
-        end
-    endtask
-
-    task read_imem(
-        input [31:0] addr,
-        output [31:0] data
-    );
-        begin
-            begin_command(CMD_IMEM_READ, addr, 32'b0);
-            data = host_rdata;
-            end_command(CMD_IMEM_READ);
-        end
-    endtask
-
-    task read_dmem(
-        input [31:0] addr,
-        output [31:0] data
-    );
-        begin
-            begin_command(CMD_DMEM_READ, addr, 32'b0);
-            data = host_rdata;
-            end_command(CMD_DMEM_READ);
-        end
-    endtask
-
-    task start_core;
-        begin
-            send_command(CMD_RUN, 32'b0, 32'b0);
-        end
-    endtask
-
-    // ============================================================
-    // Main test loop
+    // Host interface checks, then the directed cases
     // ============================================================
 
     initial begin
-        clk_in = 1'b0;
-        rst = 1'b0;
+        host_init();
 
-        req_valid = 0; req_write = 0; rsp_ready = 0;
-        req_address = 0; req_wdata = 0;
-
-        if (!$value$plusargs("TEST_ROOT=%s", test_root)) begin
-            test_root = "cases";
-        end
-
-        $display("[INFO] TEST_ROOT = %0s", test_root);
-
-        if (!$value$plusargs("TEST_IDX=%d", test_idx)) begin
-            test_idx = 1;
-        end
-
-        has_test_end = $value$plusargs("TEST_END=%d", test_end);
+        `REQUIRE_PLUSARG("UNMAPPED_ADDR=%h", unmapped_addr)
 
         $display("[INFO] =================================================");
-        $display("[INFO]  Starting GPGPU Public-Interface E2E Test Suite");
+        $display("[INFO]  Starting GPGPU AXI4-Lite E2E Test Suite");
         $display("[INFO]  NUM_CORES = %0d", NUM_CORES);
         $display("[INFO] =================================================");
 
-        forever begin
-            if (has_test_end && test_idx > test_end) begin
-                $display("\n[INFO] Reached requested TEST_END=%0d. Simulation finished successfully!", test_end);
-                #(`CLOCK_PERIOD * 20);
-                $finish;
-            end
+        // --------------------------------------------------------
+        // Host interface sanity checks (once per run)
+        // --------------------------------------------------------
+        reset_device();
+        ddr_mem.clear();
+        csr_errors = 0;
 
-            // ----------------------------------------------------
-            // Find test files
-            // ----------------------------------------------------
-            $sformat(prog_file, "%0s/test%0d/program.mem", test_root, test_idx);
-            $sformat(data_file, "%0s/test%0d/data.mem", test_root, test_idx);
+        $display("\n[INFO] ---> Checking host interface...");
+        expect_csr(REG_INFO, {(XLEN/2)'(INTERFACE_VERSION), (XLEN/2)'(NUM_CORES)}, "INFO");
+        expect_csr(REG_INFO_MEM, {(XLEN/2)'(IMEM_ENTRIES), (XLEN/2)'(DMEM_ENTRIES)}, "INFO_MEM");
+        expect_csr(REG_INFO_FEATURES, 32'(DDR_ENABLE) << FEATURE_DDR_BIT, "INFO_FEATURES");
+        expect_csr(REG_INFO_CLOCK, 32'(CLOCK_KHZ), "INFO_CLOCK");
+        expect_csr(REG_BUILD_ID, 32'(BUILD_HASH) | (32'(BUILD_DIRTY) << BUILD_DIRTY_BIT), "BUILD_ID");
+        expect_write_resp(REG_INFO_MEM, 32'd0, AXI_SLVERR);       // identity is read-only
+        expect_write_resp(REG_INFO_FEATURES, 32'd0, AXI_SLVERR);
+        expect_write_resp(REG_INFO_CLOCK, 32'd0, AXI_SLVERR);
+        expect_write_resp(REG_BUILD_ID, 32'd0, AXI_SLVERR);
+        expect_csr(REG_STATUS, STATUS_IDLE_MASK, "STATUS");
+        expect_csr(REG_IRQ_ENABLE, 32'd0, "IRQ_ENABLE");
+        expect_csr(REG_IRQ_STATUS, 32'd0, "IRQ_STATUS");
+        expect_write_resp(REG_INFO, 32'hFFFF_FFFF, AXI_SLVERR);   // read-only
+        expect_read_resp(REG_CONTROL, AXI_SLVERR);                 // write-only
+        expect_write_resp(REG_CONTROL, CONTROL_START_MASK | CONTROL_STOP_MASK, AXI_SLVERR);
+        expect_read_resp(unmapped_addr, AXI_DECERR);
+        expect_read_resp(IMEM_BASE + 2, AXI_DECERR);               // misaligned
 
-            fd = $fopen(prog_file, "r");
-            if (fd == 0) begin
-                if (test_idx == 1) begin
-                    $fatal(1, "[ERROR] No tests were found");
-                end else begin
-                    $display("\n[INFO] Simulation finished successfully!");
-                end
-
-                #(`CLOCK_PERIOD * 20);
-                $finish;
-            end
-            $fclose(fd);
-
-            $display("\n[INFO] ---> Starting test %0d...", test_idx);
-
-            // ----------------------------------------------------
-            // Initialize expected arrays
-            // ----------------------------------------------------
-            for (i = 0; i < `IMEM_ENTRIES; i = i + 1)
-                expected_imem[i] = `NOP_INSTR;
-
-            for (i = 0; i < `DMEM_ENTRIES; i = i + 1)
-                expected_dmem[i] = 32'b0;
-
-            $readmemh(prog_file, expected_imem);
-            $readmemh(data_file, expected_dmem);
-            program_words = `IMEM_ENTRIES;
-            found_ret = 0;
-
-            for (i = 0; i < `IMEM_ENTRIES; i = i + 1) begin
-                if (!found_ret && expected_imem[i] == RET_INSTR) begin
-                    program_words = i + 1;
-                    found_ret = 1;
-                end
-            end
-
-            if (!found_ret) begin
-                $display("[WARNING] No RET instruction 0x%08h found in %0s. Loading full IMEM.",
-                        RET_INSTR, prog_file);
-            end else begin
-                $display("[INFO]  Program length detected: %0d words. RET at IMEM[%0d].",
-                        program_words, program_words - 1);
-            end
-
-            // ----------------------------------------------------
-            // Reset
-            // ----------------------------------------------------
-            rst = 1'b0;
-            repeat (20) @(posedge clk_in);
-
-            rst = 1'b1;
-            repeat (20) @(posedge clk_in);
-
-            if (o_idle !== 1'b1) begin
-                $fatal(1, "GPGPUDevice did not enter idle after reset");
-            end
-
-            // ----------------------------------------------------
-            // Clear DMEM through host interface
-            // ----------------------------------------------------
-            $display("[INFO]  Clearing DMEM through host command interface...");
-
-            for (i = 0; i < `DMEM_ENTRIES; i = i + 1) begin
-                write_dmem(i, 32'b0);
-
-                if (i > 0 && i % 256 == 0)
-                    $display("    ...cleared %0d DMEM words", i);
-            end
-
-            // ----------------------------------------------------
-            // Load IMEM through host interface
-            // ----------------------------------------------------
-            $display("[INFO]  Loading IMEM through host command interface...");
-
-            for (i = 0; i < program_words; i = i + 1) begin
-                write_imem(i, expected_imem[i]);
-
-                if (i > 0 && i % 256 == 0)
-                    $display("[INFO]    ...loaded %0d IMEM words", i);
-            end
-
-            $display("[INFO]  Loaded %0d IMEM words.", program_words);
-
-            // ----------------------------------------------------
-            // Read back IMEM and verify
-            // ----------------------------------------------------
-            $display("[INFO]  Verifying IMEM through host command interface...");
-
-            imem_errors = 0;
-
-            for (i = 0; i < program_words; i = i + 1) begin
-                read_imem(i, captured_word);
-
-                if (captured_word !== expected_imem[i]) begin
-                    $display("  [ERROR] IMEM[%0d]: Expected %h, Found %h",
-                            i, expected_imem[i], captured_word);
-                    imem_errors = imem_errors + 1;
-                end
-            end
-
-            if (imem_errors == 0) begin
-                $display("[INFO]  IMEM verification passed.");
-            end
-
-            // ----------------------------------------------------
-            // Start core
-            // ----------------------------------------------------
-            $display("[INFO]  Starting core...");
-            start_core();
-
-            // ----------------------------------------------------
-            // Wait for idle state
-            // ----------------------------------------------------
-            cycle_count = 0;
-
-            while (o_idle !== 1'b1 && cycle_count < `TEST_TIMEOUT_CYCLES) begin
-                @(posedge clk_in);
-                cycle_count = cycle_count + 1;
-            end
-
-            if (cycle_count >= `TEST_TIMEOUT_CYCLES) begin
-                $fatal(1, "Test %0d reached timeout of %0d cycles!",
-                         test_idx, `TEST_TIMEOUT_CYCLES);
-            end else begin
-                $display("[INFO]  Core reached idle state in %0d cycles.", cycle_count);
-            end
-
-            repeat (10) @(posedge clk_in);
-
-            // ----------------------------------------------------
-            // Read back and verify DMEM
-            // ----------------------------------------------------
-            $display("[INFO]  Verifying DMEM through host command interface...");
-
-            dmem_errors = 0;
-
-            for (i = 0; i < `DMEM_ENTRIES; i = i + 1) begin
-                read_dmem(i, captured_word);
-
-                if (captured_word !== expected_dmem[i]) begin
-                    $display("  [ERROR] DMEM[%0d]: Expected %h, Found %h",
-                             i, expected_dmem[i], captured_word);
-                    dmem_errors = dmem_errors + 1;
-                end
-            end
-
-            // ----------------------------------------------------
-            // Verdict
-            // ----------------------------------------------------
-            if (imem_errors == 0 && dmem_errors == 0) begin
-                $display("  [SUCCESS] Test %0d passed. IMEM and DMEM matched. Finished in %0d cycles.",
-                         test_idx, cycle_count);
-            end else begin
-                $display("  [INFO] Test %0d failed. IMEM errors: %0d, DMEM errors: %0d",
-                         test_idx, imem_errors, dmem_errors);
-
-                $fatal(1, "[ERROR] Halting simulation due to public-interface GPGPU test failure.");
-            end
-
-            test_idx = test_idx + 1;
+        if (irq !== 1'b0) begin
+            $display("  [ERROR] IRQ asserted after reset");
+            csr_errors = csr_errors + 1;
         end
+
+        // Host DMEM path (through the memory subsystem) independent of kernels.
+        for (i = 0; i < DMEM_ENTRIES; i = i + DMEM_ENTRIES / 8 - 1)
+            write_dmem(i, 32'hA5A5_0000 | 32'(i));
+        for (i = 0; i < DMEM_ENTRIES; i = i + DMEM_ENTRIES / 8 - 1) begin
+            read_dmem(i, captured_word);
+            if (captured_word !== (32'hA5A5_0000 | 32'(i))) begin
+                $display("  [ERROR] Host DMEM[%0d] readback: Expected %h, Found %h",
+                         i, 32'hA5A5_0000 | 32'(i), captured_word);
+                csr_errors = csr_errors + 1;
+            end
+        end
+
+        // Fault reporting
+        expect_csr(REG_FAULT_INFO, 32'd0, "FAULT_INFO after reset");
+        expect_csr(REG_FAULT_LANES, 32'd0, "FAULT_LANES after reset");
+        expect_write_resp(REG_FAULT_INFO, 32'd0, AXI_SLVERR);      // fault report is read-only
+        expect_write_resp(REG_FAULT_LANES, 32'd0, AXI_SLVERR);
+        expect_write_resp(REG_FAULT_PC, 32'd0, AXI_SLVERR);
+
+        // All lanes misaligned; the store after the faulting load never issues.
+        write_dmem(0, 32'hDEAD_BEEF);
+        expect_fault("misaligned load", '{
+                rv_addi(6, 0, 'h5A),
+                rv_lw(5, 0, 1),
+                rv_sw(6, 0, 0),
+                ret_instr
+            }, 32'(FAULT_MEMORY) | fault_kind(MemorySubsystemPkg::ST_MISALIGNED), all_lanes(), 32'd4);
+        read_dmem(0, captured_word);
+        if (captured_word !== 32'hDEAD_BEEF) begin
+            $display("  [ERROR] Instruction after a fault executed: DMEM[0] = %h", captured_word);
+            csr_errors = csr_errors + 1;
+        end
+
+        // Address 2 * lane: only the odd lanes are misaligned.
+        expect_fault("odd lanes misaligned", '{
+                rv_add(5, 31, 31),
+                rv_lw(6, 5, 0),
+                ret_instr
+            }, 32'(FAULT_MEMORY) | fault_kind(MemorySubsystemPkg::ST_MISALIGNED),
+            all_lanes() & 32'hAAAA_AAAA, 32'd4);
+
+        // One store, two kinds: from the first 4 KiB boundary after DMEM
+        // (unmapped up to FB0), even lanes are unmapped and odd misaligned.
+        if (gpu_pkg::DMEM_BASE + gpu_pkg::DMEM_SIZE + 'h1000 > FB0_BASE)
+            $fatal(1, "[ERROR] The fault check needs unmapped space between DMEM and FB0");
+        expect_fault("unmapped and misaligned store", '{
+                rv_add(5, 31, 31),
+                rv_lui(6, (gpu_pkg::DMEM_BASE + gpu_pkg::DMEM_SIZE + 'hFFF) & ~32'hFFF),
+                rv_add(5, 5, 6),
+                rv_sw(0, 5, 0),
+                ret_instr
+            }, 32'(FAULT_MEMORY) | fault_kind(MemorySubsystemPkg::ST_UNMAPPED)
+                            | fault_kind(MemorySubsystemPkg::ST_MISALIGNED), all_lanes(), 32'd12);
+
+        expect_fault("store to the read-only texture region", '{
+                rv_lui(5, TEX_BASE),
+                rv_sw(0, 5, 0),
+                ret_instr
+            }, 32'(FAULT_MEMORY) | fault_kind(MemorySubsystemPkg::ST_PERMISSION), all_lanes(), 32'd4);
+
+        // Without the DDR backend a framebuffer store is unmapped, not a hang,
+        // and nothing reaches the AXI4 master.
+        if (DDR_ENABLE == 0) begin
+            expect_fault("framebuffer store without DDR", '{
+                    rv_lui(5, FB0_BASE),
+                    rv_sw(0, 5, 0),
+                    ret_instr
+                }, 32'(FAULT_MEMORY) | fault_kind(MemorySubsystemPkg::ST_UNMAPPED), all_lanes(), 32'd4);
+            if (ddr_mem.aw_count != 0 || ddr_mem.ar_count != 0) begin
+                $display("  [ERROR] DDR disabled, but %0d AW and %0d AR bursts were issued",
+                         ddr_mem.aw_count, ddr_mem.ar_count);
+                csr_errors = csr_errors + 1;
+            end
+        end
+
+        if (csr_errors != 0)
+            $fatal(1, "[ERROR] Host interface checks failed with %0d errors", csr_errors);
+        $display("[INFO]  Host interface checks passed.");
+
+        run_cases();
     end
 
     initial begin
-        if ($test$plusargs("DUMP")) begin
-            $dumpfile("dumpfile.vcd");
+        // Waveforms are dumped only when the runner passes +DUMP_FILE.
+        if ($value$plusargs("DUMP_FILE=%s", dump_file)) begin
+            $dumpfile(dump_file);
             $dumpvars(0, tb_GPGPU_e2e);
         end
     end

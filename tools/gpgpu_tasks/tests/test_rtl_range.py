@@ -34,15 +34,13 @@ def configured_tasks(tmp_path, selection):
     return {task['name']: task for task in rtl.create_tasks(config)}
 
 
-def test_range_reaches_smx_and_deferred_e2e_without_recompile(tmp_path):
+def test_range_reaches_smx_and_e2e_without_recompile(tmp_path):
     graph = configured_tasks(tmp_path, "8-12")
-    command = graph['tests:rtl:smx:run']['actions'][0][1][0]
-    assert command[-2:] == ['+TEST_IDX=8', '+TEST_END=12']
-    assert graph['tests:rtl:smx:build']['actions'] == configured_tasks(tmp_path, "all")['tests:rtl:smx:build']['actions']
-    for stage in ('build', 'run', 'all'):
-        action, args = graph[f'tests:rtl:e2e:{stage}']['actions'][0]
-        with pytest.raises(RuntimeError, match=r'E2E.*deferred.*\+TEST_IDX=8.*\+TEST_END=12'):
-            action(*args)
+    everything = configured_tasks(tmp_path, "all")
+    for suite in ('smx', 'e2e'):
+        command = graph[f'tests:rtl:{suite}:run']['actions'][0][1][0]
+        assert command[-2:] == ['+TEST_IDX=8', '+TEST_END=12']
+        assert graph[f'tests:rtl:{suite}:build']['actions'] == everything[f'tests:rtl:{suite}:build']['actions']
     # Random testing has its own selection and must remain unchanged.
     assert graph['tests:rtl:random']['actions'] == configured_tasks(tmp_path, "all")['tests:rtl:random']['actions']
 
