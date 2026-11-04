@@ -52,7 +52,6 @@
     integer reset_cycles;
     integer test_timeout_cycles;
     integer axi_timeout_cycles;
-    reg [31:0] ret_instr;
     bit settings_ready = 1'b0;
 
     // ============================================================
@@ -130,7 +129,6 @@
         `REQUIRE_PLUSARG("RESET_CYCLES=%d", reset_cycles)
         `REQUIRE_PLUSARG("TEST_TIMEOUT_CYCLES=%d", test_timeout_cycles)
         `REQUIRE_PLUSARG("AXI_TIMEOUT_CYCLES=%d", axi_timeout_cycles)
-        `REQUIRE_PLUSARG("RET_INSTR=%h", ret_instr)
         settings_ready = 1'b1;
     endtask
 
@@ -417,7 +415,6 @@
         int unsigned ddr_errors;
         integer cycle_count;
         integer program_words;
-        bit found_ret;
         bit has_ddr;
         reg [31:0] captured_word;
         string test_root, case_prefix, program_name, data_name, ddr_seed_name, ddr_name;
@@ -484,22 +481,8 @@
             $readmemh(prog_file, expected_imem);
             $readmemh(data_file, expected_dmem);
 
-            // Only load up to (and including) the kernel's RET.
+            // Load the full linked image: functions may follow RET or ECALL.
             program_words = IMEM_ENTRIES;
-            found_ret = 0;
-            for (i = 0; i < IMEM_ENTRIES; i = i + 1) begin
-                if (!found_ret && expected_imem[i] == ret_instr) begin
-                    program_words = i + 1;
-                    found_ret = 1;
-                end
-            end
-
-            if (!found_ret)
-                $display("[WARNING] No RET instruction 0x%08h found in %0s. Loading full IMEM.",
-                         ret_instr, prog_file);
-            else
-                $display("[INFO]  Program length detected: %0d words. RET at IMEM[%0d].",
-                         program_words, program_words - 1);
 
             // ----------------------------------------------------
             // Reset (BRAM contents survive reset)
