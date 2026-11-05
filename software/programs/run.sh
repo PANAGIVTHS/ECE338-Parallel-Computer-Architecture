@@ -67,7 +67,6 @@ Adapter-specific FPGA options:
 
 Examples:
   $0 -p nbody riscv --fpga --port /dev/ttyUSB1 --kernel-calls 1000 --visualize -- --steps 1
-  $0 -p mandelbrot riscv --fpga --port /dev/ttyUSB1 --kernel-calls 10240 --visualize -- --frames 160
 EOF
 }
 
