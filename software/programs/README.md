@@ -4,22 +4,6 @@
 
 Each program lives in `software/programs/<program>/` and keeps only source inputs there. A program normally provides `<program>.c` with separate native and RISC-V paths selected by `__riscv`.
 
-```c
-#ifdef __riscv
-int _start(void) {
-    int threadIdx_x;
-    __asm__ volatile("mv %0, x31" : "=r"(threadIdx_x));
-
-    // RISC-V kernel code
-}
-#else
-#include <stdio.h>
-int main(void) {
-    // Native reference implementation
-}
-#endif
-```
-
 ## Build
 
 Use the task runner so compiler settings, `architecture.num_cores`, and `paths.build.root` come from the resolved configuration:
@@ -67,6 +51,6 @@ The compiler is incremental; remote actions repeat. The board must already be
 programmed with the compatible host monitor. These tasks retain DMEM and do not
 initialize program-specific arguments, export CSVs or visualize results.
 See [FPGA CLI flow](../../docs/fpga-cli.md) for VM serial configuration,
-permissions, UART ownership and failure handling. `run.sh` remains untouched.
+permissions, UART ownership and failure handling.
 
 The legacy `Makefile` uses the same output layout and accepts `BUILD_ROOT` as an override, but the `gpgpu` task runner is the authoritative config-driven entry point.

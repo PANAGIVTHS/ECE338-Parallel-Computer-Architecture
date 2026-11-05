@@ -56,8 +56,7 @@ avoid pre-existing reference projects:
   Update the SDK-generated **actual `UserConfig.cmake`** source list and include
   paths to the configured driver/main/headers. The configured AXI base is passed
   as `GPGPU_BASEADDR`, overriding the driver's fallback consistently with BD.
-  No driver/UART/application protocol is redesigned and IRQ operation stays on.
-- **build:all:** the aggregate depends on the host, thus the full hardware and
+- **build:all:** the aggregate depends on the host, thus the
   platform-before-host graph.
 
 Existing app-owned files/settings are preserved across hardware regeneration;
@@ -73,7 +72,6 @@ Missing/ambiguous SDK inputs fail explicitly.
 ## Outputs, logs and export
 
 ```text
-<build-root>/software/vitis/gpgpu_platform/export/gpgpu_platform/hw/<xsa_name>.xsa
 <build-root>/software/vitis/gpgpu_platform/export/gpgpu_platform/hw/sdt/ps7_init.tcl
 <build-root>/software/vitis/gpgpu_platform/export/gpgpu_platform/gpgpu_platform.xpfm
 <build-root>/software/vitis/gpgpu_host/build/gpgpu_host.elf
@@ -100,6 +98,4 @@ Review that intentional source change before committing. Builds consume only
 portable application settings from the archive; stale platform/BSP/SDT is never
 used as a substitute for regeneration from the new XSA.
 
-SDK API recorders/fake-vendor tests demonstrate orchestration and freshness,
-**not a real 2025.2 platform or ELF build**. Real SDK validation is required.
 See [Vivado flow](vivado-cli.md) for packaging/system safety and reference state.

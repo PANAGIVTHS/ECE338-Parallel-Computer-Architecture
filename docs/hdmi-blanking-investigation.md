@@ -197,10 +197,10 @@ probably reaches the HDMI signal by one or more of these paths:
 
 | Change | Result |
 |---|---|
-| VDMA burst 64, line buffer 8192 | no effect on the blanking (kept: more DDR headroom) |
-| DDR controller: HP2/HP3 reads in the HPR queue, HPR critical level 1, LPR/write 15 | no effect on the blanking (kept) |
+| VDMA burst 64, line buffer 8192 | no effect on the blanking |
+| DDR controller: HP2/HP3 reads in the HPR queue, HPR critical level 1, LPR/write 15 | no effect on the blanking |
 | Wall charger | no effect |
-| Serial clock from `clk_wiz_0`, `Min_O_Jitter`, `kGenerateSerialClk false` | no effect (kept: one PLL fewer) |
+| Serial clock from `clk_wiz_0`, `Min_O_Jitter`, `kGenerateSerialClk false` | no effect |
 | FCLK0 at 20 MHz | fixes it, but not acceptable as the solution |
 | `clk_wiz_0` `JITTER_SEL Max_I_Jitter` (low bandwidth), FCLK0 at 40 MHz in the same build | still blanks under the standard trigger (kept for now) |
 | `clk_wiz_0` from the 50 MHz PL oscillator (`clk_50m`, M19) instead of FCLK1 (`clk_out1` 13.474 ns, `clk_out2` exactly 1/5) | still blanks: the PS clock is not the path (kept) |
@@ -680,13 +680,6 @@ to confirm the resonance.
   measure the switching current (mode 1 with seed 0 against the random seed).
   Also `report_power` of the implemented design.
 
-## Temporary state in the tree (uncommitted)
-
-- The block design and `tools/hardware/vivado/create_block_design.tcl`:
-  `v_axi4s_vid_out_0/locked` drives `o_core_running_0` (P21) instead of
-  `gpgpu_axi_0/o_core_running`. Revert it once the test is no longer needed.
-- `software/programs/stress/`: a new stress kernel with modes 0–10.
-
 ## Side findings
 
 - **`auipc` hang:** the GPU has no `auipc`. `Decoder.sv` runs unknown opcodes
@@ -703,6 +696,3 @@ to confirm the resonance.
   manually (DMEM words 0x4C0–0x4DF).
 - **Timing:** at 42 MHz, WNS −0.076 ns / TNS −0.356 ns, all in the DDRBackend.
   This is independent of the blanking, but has to be fixed for higher clocks.
-- **Python tests:** 13 tests (FPGA programs, UART protocol, fake-Vivado
-  `system:create`) fail here with and without these changes; they were not
-  investigated.
