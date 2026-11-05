@@ -13,6 +13,7 @@ import subprocess
 import sys
 import zipfile
 
+from doit.exceptions import TaskFailed
 from doit.tools import config_changed
 from src.project_paths import ProjectPaths
 from src.hardware_contract import axi_address, xsa_path
@@ -189,6 +190,38 @@ class EditableHostChanged:
         return values.get('editable_host_digest') == self.digest()
 
 
+class PublishedXSAChanged:
+    """The published Vivado XSA as a content input, with no edge to its producer.
+
+    A file_dep on the XSA would make pydoit infer a dependency on the task that
+    lists it as a target (vivado:system:build), so Vitis tasks would run the
+    whole Vivado chain again. The digest is saved after a successful run and a
+    newly exported XSA still invalidates the Vitis stages.
+    """
+    def __init__(self, xsa: Path):
+        self.xsa = xsa
+
+    def digest(self) -> str | None:
+        if not self.xsa.is_file():
+            return None
+        return hashlib.sha256(self.xsa.read_bytes()).hexdigest()
+
+    def configure_task(self, task) -> None:
+        task.value_savers.append(lambda: {'xsa_digest': self.digest()})
+
+    def __call__(self, task, values) -> bool:
+        digest = self.digest()
+        return digest is not None and values.get('xsa_digest') == digest
+
+
+def require_xsa(xsa: Path) -> TaskFailed | None:
+    """Vitis never builds hardware: a missing XSA is an explicit error."""
+    if not xsa.is_file():
+        return TaskFailed(f'Vivado XSA not found: {xsa}\n'
+                          'Vitis tasks do not build hardware; run `./gpgpu run vivado:system:build` first.')
+    return None
+
+
 def create_tasks(config) -> list[dict[str, Any]]:
     paths = ProjectPaths.from_config(config)
     repo_root = paths.repo_root
@@ -223,20 +256,21 @@ def create_tasks(config) -> list[dict[str, Any]]:
     xpfm = platform_root / f'export/{platform_name}/{platform_name}.xpfm'
     elf = host_root / f'build/{host_name}.elf'
     return [
+        # The XSA is consumed as published by vivado:system:build, never built here.
         {'name': 'vitis:project',
-         'actions': [(run_vitis, [project_command, repo_root, (platform_metadata,)])],
-         'task_dep': ['vivado:system:build'],
-         'file_dep': [str(xsa), str(script)], 'targets': [str(platform_metadata)],
-         'uptodate': [config_changed({'version': _string(config, 'hardware.vitis.version'), 'command': project_command})]},
+         'actions': [(require_xsa, [xsa]), (run_vitis, [project_command, repo_root, (platform_metadata,)])],
+         'file_dep': [str(script)], 'targets': [str(platform_metadata)],
+         'uptodate': [config_changed({'version': _string(config, 'hardware.vitis.version'), 'command': project_command}),
+                      PublishedXSAChanged(xsa)]},
         {'name': 'vitis:build:platform',
-         'actions': [(run_vitis, [platform_command, repo_root, (platform_xsa, ps_init, xpfm)])],
+         'actions': [(require_xsa, [xsa]), (run_vitis, [platform_command, repo_root, (platform_xsa, ps_init, xpfm)])],
          'task_dep': ['vitis:project'],
-         'file_dep': [str(script), str(platform_metadata), str(xsa)],
+         'file_dep': [str(script), str(platform_metadata)],
          'targets': [str(platform_xsa), str(ps_init), str(xpfm)],
-         'uptodate': [config_changed({'command': platform_command})], 'clean': True},
+         'uptodate': [config_changed({'command': platform_command}), PublishedXSAChanged(xsa)], 'clean': True},
         {'name': 'vitis:build:host',
          'actions': [(run_vitis, [host_command, repo_root, (elf, host_metadata)])],
-         'task_dep': ['vitis:build:platform'],
+         'task_dep': ['vitis:build:platform', 'software:host:platform'],
          'file_dep': [str(script), str(archive), str(platform_xsa), str(ps_init), str(xpfm),
                       *(str(p) for p in sources), *(str(p) for p in headers)],
          'targets': [str(elf), str(host_metadata)],

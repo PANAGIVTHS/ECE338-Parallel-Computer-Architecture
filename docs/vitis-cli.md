@@ -8,11 +8,23 @@ GUI export/application-settings input, not a hardware bootstrap prerequisite.
 ## Dependency graph and configuration
 
 ```text
-vivado:ip:create -> vivado:ip:build -> vivado:system:create -> vivado:system:build
-  -> vitis:project -> vitis:build:platform -> vitis:build:host -> vitis:build:all
+vitis:project -> vitis:build:platform -> vitis:build:host -> vitis:build:all
 ```
 
-The hardware dependency is unconditional, even when an XSA already exists.
+The Vitis tasks never run Vivado. They consume the XSA that
+`vivado:system:build` has already published, so the complete flow is two
+invocations:
+
+```bash
+./gpgpu run vivado:system:build
+./gpgpu run vitis:build:all
+```
+
+Without a published XSA, `vitis:project` and `vitis:build:platform` stop with
+an error before any Vitis call. The XSA is tracked by content (SHA-256), not as
+a `file_dep`: a `file_dep` on a Vivado target would make pydoit infer the
+Vivado dependency again. A newly published XSA rebuilds every Vitis stage; RTL
+changes that have not been built into a new XSA do not.
 `hardware.vivado.xsa_name` derives the same validated XSA filename for both
 producers and consumers; changing it does not silently select a cached default.
 Defaults: SDK 2025.2, `ps7_cortexa9_0`, standalone domain

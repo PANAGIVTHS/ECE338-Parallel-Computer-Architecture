@@ -9,6 +9,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from tools.board.xc7z020.uart import (  # noqa: E402
     DEPTH,
+    WORD_BYTES,
     GpgpuUartMonitor,
     normalize_word,
     read_mem_file,
@@ -18,8 +19,8 @@ from tools.board.xc7z020.uart import (  # noqa: E402
 
 
 def print_words(words: dict[int, str]) -> None:
-    for addr in sorted(words):
-        print(f"{addr:04d}: {words[addr]}")
+    for index in sorted(words):
+        print(f"0x{index * WORD_BYTES:08x}: 0x{words[index]}")
 
 
 def dump_or_save(words: dict[int, str], output: Path | None) -> None:

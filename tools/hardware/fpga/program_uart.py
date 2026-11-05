@@ -78,11 +78,20 @@ def checked_state(uart):
             'matching idle/running PL and host ELF before loading programs. '
             f'Status: {status}'
         )
-    keys = ('idle', 'running', 'stopped')
+    keys = ('idle', 'running', 'stopped', 'faulted')
     if (any(type(status.get(key)) is not int or status[key] not in (0, 1) for key in keys)
             or 'ERROR' in str(status.get('text', ''))
             or status['running'] or status['idle'] != 1):
         raise RuntimeError(f'Unsafe or malformed UART status: {status}')
+    if status['faulted']:
+        # The host monitor leaves FAULTED set until `clear`, so a faulting run
+        # is reported here even though the run command itself returned.
+        raise RuntimeError(
+            'GPU FAULTED: '
+            + ', '.join(f'{name}=0x{status[name]:08x}' for name in ('fault_info', 'fault_lanes', 'fault_pc')
+                        if name in status)
+            + ". Acknowledge it with the monitor's `clear` command."
+        )
     return 'idle'
 
 
@@ -93,9 +102,6 @@ def execute_uart(uart, operation, words):
     checked_state(uart)
     if operation == 'load-imem':
         print(uart.load_imem_bin(words, offset=0), flush=True)
-        # The shared binary loader stops at its completion marker, not the
-        # following prompt. Consume it before issuing the readback command.
-        uart.wait_prompt()
         if uart.dump_imem_ascii(len(words), offset=0) != dict(enumerate(words)):
             raise RuntimeError('IMEM readback mismatch')
         print(f'Verified {len(words)} IMEM words', flush=True)

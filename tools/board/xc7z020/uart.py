@@ -22,6 +22,7 @@ except ImportError:
 RET_INSTR = "00008067"
 DEPTH = 2048
 PROMPT = "gpgpu>"
+WORD_BYTES = struct.calcsize("<I")
 
 
 def normalize_word(word: int | str) -> str:
@@ -35,9 +36,13 @@ def words_to_le_bytes(words: Iterable[int | str]) -> bytes:
 
 
 def parse_memory_dump(text: str) -> dict[int, str]:
+    """Word index -> word from the monitor's `0xBYTE_ADDRESS: 0xWORD` dump lines."""
     result: dict[int, str] = {}
-    for addr, word in re.findall(r"(?m)^\s*(\d+):\s*([0-9a-fA-F]{8})\s*$", text):
-        result[int(addr, 10)] = word.lower()
+    for addr, word in re.findall(r"(?m)^\s*0x([0-9a-fA-F]+):\s*0x([0-9a-fA-F]{8})\s*$", text):
+        byte_address = int(addr, 16)
+        if byte_address % WORD_BYTES:
+            raise RuntimeError(f"Memory dump address 0x{byte_address:08x} is not word-aligned")
+        result[byte_address // WORD_BYTES] = word.lower()
     return result
 
 
@@ -50,7 +55,7 @@ def parse_single_word(text: str, mem_name: str, addr: int) -> str:
 
 
 def parse_status(text: str) -> dict[str, int | str]:
-    """New MMIO status fields: IDLE/RUNNING/STOPPED and IRQ enable/pending."""
+    """MMIO status fields: IDLE/RUNNING/STOPPED/FAULTED, IRQ enable/pending and the fault report."""
     status: dict[str, int | str] = {"text": text}
     raw = re.search(r"(?m)^STATUS\s*=\s*0x([0-9a-fA-F]+)", text)
     info = re.search(r"(?m)^INFO\s*=\s*0x([0-9a-fA-F]+)", text)
@@ -61,10 +66,14 @@ def parse_status(text: str) -> dict[str, int | str]:
         status["info"] = value
         status["version"] = (value >> 16) & 0xFFFF
         status["cores"] = value & 0xFFFF
-    for field in ("idle", "running", "stopped", "irq_enabled", "irq_pending"):
+    for field in ("idle", "running", "stopped", "faulted", "irq_enabled", "irq_pending"):
         match = re.search(rf"\b{field}\s*=\s*([01])", text)
         if match:
             status[field] = int(match.group(1))
+    for field in ("FAULT_INFO", "FAULT_LANES", "FAULT_PC"):
+        match = re.search(rf"(?m)^{field}\s*=\s*0x([0-9a-fA-F]+)", text)
+        if match:
+            status[field.lower()] = int(match.group(1), 16)
     return status
 
 

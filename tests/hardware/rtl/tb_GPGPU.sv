@@ -5,11 +5,21 @@
 `define TEST_TIMEOUT_CYCLES 1500
 
 module tb_GPGPU_smx_only 
-    import control_pkg::*;
+    import ControlPkg::*;
     import gpu_pkg::*;
-();
-
-    parameter NUM_CORES = 32;
+#(
+    parameter NUM_CORES = 32,
+    parameter int unsigned INTERFACE_VERSION,
+    parameter int unsigned CLOCK_KHZ,
+    parameter int unsigned BUILD_HASH,
+    parameter int unsigned BUILD_DIRTY,
+    parameter int unsigned DDR_ENABLE,
+    parameter int unsigned AXI_SLAVE_LATENCY_MIN,
+    parameter int unsigned AXI_SLAVE_LATENCY_MAX,
+    parameter int unsigned AXI_SLAVE_READY_PCT,
+    parameter int unsigned AXI_SLAVE_VALID_PCT,
+    parameter int unsigned AXI_SLAVE_SEED
+) ();
 
     reg clk_in, rst;
 
@@ -33,14 +43,31 @@ module tb_GPGPU_smx_only
     reg [8*255:0] data_file;
     reg [8*255:0] reg_file;
     reg [8*255:0] trace_file;
+    string dump_file;
+    string ddr_file, ddr_seed_file;
+    bit has_ddr;
+    int unsigned ddr_errors;
 
-    GPGPU #(.SP_PER_SM(NUM_CORES), .MEMORY_INIT("")) UUT (
+    AXI4FullInterface ddr_axi ();
+
+    GPGPU #(.SP_PER_SM(NUM_CORES), .MEMORY_INIT(""), .INTERFACE_VERSION(INTERFACE_VERSION),
+           .CLOCK_KHZ(CLOCK_KHZ), .BUILD_HASH(BUILD_HASH), .BUILD_DIRTY(BUILD_DIRTY != 0),
+           .DDR_ENABLE(DDR_ENABLE != 0)) UUT (
         .clk(clk_in), .rst_n(rst),
         .o_core_idle(), .o_core_running(),
         .i_req_valid(1'b0), .o_req_ready(), .i_req_write(1'b0),
         .i_req_addr(32'b0), .i_req_wdata(32'b0), .i_req_wstrb(4'b0),
         .o_rsp_valid(), .i_rsp_ready(1'b1), .o_rsp_rdata(),
-        .o_rsp_status(), .o_irq()
+        .o_rsp_status(), .o_irq(),
+        `AXI4_SLAVE_CONNECT(m_axi, ddr_axi)
+    );
+
+    // DDR model on the AXI4 master; these programs use DMEM only.
+    AXI4SlaveMemory #(
+        .LATENCY_MIN(AXI_SLAVE_LATENCY_MIN), .LATENCY_MAX(AXI_SLAVE_LATENCY_MAX),
+        .READY_PCT(AXI_SLAVE_READY_PCT), .VALID_PCT(AXI_SLAVE_VALID_PCT), .SEED(AXI_SLAVE_SEED)
+    ) ddr_mem (
+        .clk(clk_in), .rst_n(rst), .axi(ddr_axi)
     );
     assign o_idle = rst && UUT.core_state == CORE_IDLE;
     assign o_running = rst && UUT.core_state == CORE_RUNNING;
@@ -49,7 +76,8 @@ module tb_GPGPU_smx_only
 
     always #(`CLOCK_PERIOD / 2) clk_in = ~clk_in;
 
-    // Register probes through new hierarchy
+    // Register probes: the regfile storage is LUTRAM without reset, so a
+    // register not written since reset holds its reset value instead
     wire [31:0] core_reg_probes [0:NUM_CORES-1][0:31];
 
     genvar cg, rg;
@@ -57,7 +85,8 @@ module tb_GPGPU_smx_only
         for (cg = 0; cg < NUM_CORES; cg = cg + 1) begin : probe_cores
             for (rg = 0; rg < 32; rg = rg + 1) begin : probe_regs
                 assign core_reg_probes[cg][rg] =
-                    UUT.smx.cores[cg].core.regfile.data[rg];
+                    UUT.smx.cores[cg].core.regfile.written[rg] ? UUT.smx.cores[cg].core.regfile.ram[rg] :
+                    reg_reset_value(rg, cg);
             end
         end
     endgenerate
@@ -105,6 +134,18 @@ module tb_GPGPU_smx_only
 
             $display("\n[INFO] ---> Starting test %0d...", test_idx);
 
+            // A case that uses DDR has an expected DDR file; it needs the backend.
+            ddr_file = $sformatf("cases/test%0d/ddr.mem", test_idx);
+            ddr_seed_file = $sformatf("cases/test%0d/ddr_seed.mem", test_idx);
+            fd = $fopen(ddr_file, "r");
+            has_ddr = fd != 0;
+            if (has_ddr) $fclose(fd);
+            if (has_ddr && DDR_ENABLE == 0) begin
+                $display("  [INFO] Uses DDR: skipped without the DDR backend.");
+                test_idx = test_idx + 1;
+                continue;
+            end
+
             // Clear expected arrays
             for (i = 0; i < DMEM_ENTRIES; i = i + 1)
                 expected_data[i] = 32'b0;
@@ -118,7 +159,7 @@ module tb_GPGPU_smx_only
                 UUT.instructionMemory.data[i] = 32'b0;
 
             for (i = 0; i < DMEM_ENTRIES; i = i + 1)
-                UUT.dataMemory.data[i] = 32'b0;
+                UUT.memory_subsystem.bramBackend.dataMemory.data[i] = 32'b0;
 
             // Load IMEM directly, like old SMX test
             $readmemh(prog_file, UUT.instructionMemory.data);
@@ -141,6 +182,12 @@ module tb_GPGPU_smx_only
             // Reset
             rst = 1'b0;
             repeat (10) @(posedge uut_clk);
+            ddr_mem.clear();
+            fd = $fopen(ddr_seed_file, "r");
+            if (fd != 0) begin
+                $fclose(fd);
+                ddr_mem.load_words(ddr_seed_file);
+            end
             rst = 1'b1;
             repeat (10) @(posedge uut_clk);
 
@@ -151,7 +198,7 @@ module tb_GPGPU_smx_only
              * to the SMX and makes o_running reflect running state.
              */
             @(negedge UUT.clk);
-            force UUT.core_state = control_pkg::CORE_RUNNING;
+            force UUT.core_state = ControlPkg::CORE_RUNNING;
 
             cycle_count = 0;
 
@@ -174,7 +221,7 @@ module tb_GPGPU_smx_only
             $fclose(fd_trace);
             // Do not change the forced run state in the active writeback edge.
             @(negedge uut_clk);
-            force UUT.core_state = control_pkg::CORE_IDLE;
+            force UUT.core_state = ControlPkg::CORE_IDLE;
 
             if (cycle_count >= `TEST_TIMEOUT_CYCLES) begin
                 $fatal(1, "Test %0d reached timeout of %0d cycles!",
@@ -211,11 +258,20 @@ module tb_GPGPU_smx_only
             data_errors = 0;
 
             for (i = 0; i < DMEM_ENTRIES; i = i + 1) begin
-                if (UUT.dataMemory.data[i] !== expected_data[i]) begin
+                if (UUT.memory_subsystem.bramBackend.dataMemory.data[i] !== expected_data[i]) begin
                     $display("  [ERROR] Data memory Address %0d: Expected %h, Found %h",
-                             i, expected_data[i], UUT.dataMemory.data[i]);
+                             i, expected_data[i], UUT.memory_subsystem.bramBackend.dataMemory.data[i]);
                     data_errors = data_errors + 1;
                 end
+            end
+
+            if (!ddr_mem.idle()) begin
+                $display("  [ERROR] A DDR transaction is still open after completion");
+                data_errors = data_errors + 1;
+            end
+            if (has_ddr) begin
+                ddr_errors = ddr_mem.check_words(ddr_file);
+                data_errors = data_errors + ddr_errors;
             end
 
             if (reg_errors == 0 && data_errors == 0) begin
@@ -233,8 +289,9 @@ module tb_GPGPU_smx_only
     end
 
     initial begin
-        if ($test$plusargs("DUMP")) begin
-            $dumpfile("dumpfile.vcd");
+        // Waveforms are dumped only when the runner passes +DUMP_FILE.
+        if ($value$plusargs("DUMP_FILE=%s", dump_file)) begin
+            $dumpfile(dump_file);
             $dumpvars(0, tb_GPGPU_smx_only);
         end
     end

@@ -1,4 +1,5 @@
 package alu_pkg;
+    localparam int unsigned MUL_LATENCY = 3;
 
     typedef enum logic [3:0] {
         ALU_OP_ADD = 4'b0000,

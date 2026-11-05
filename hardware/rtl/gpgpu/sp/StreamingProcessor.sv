@@ -4,11 +4,12 @@ module StreamingProcessor
     import gpu_pkg::*;
     import riscv_pkg::*;
     import pipeline_pkg::*;
+    import alu_pkg::*;
 #(
     parameter int unsigned CORE_ID = 0
 )(
     input logic clk,
-    input logic rst,
+    input logic rst_n,
 
     //! Regfile Read Addresses
     input reg_addr_t i_id_mux_rs1,
@@ -19,16 +20,21 @@ module StreamingProcessor
 
     //! Hazard and Branch feedback
     output sp_feedback_t o_feedback,
+    output mul_hazard_t o_mul_hazards [0:MUL_LATENCY-1],
 
-    //! External Memory Interface
-    MemoryInterface.requester memory,
+    //! Memory
+    MemorySubsystemInterface.requester memory_if,
+    output logic mem_response_received,
+    output logic mem_is_mem,
 
-    input logic i_global_stall,
+    //! Control
+    input i_stall,
     output logic o_core_complete
 );
 
     ex_mem_t exmem;
-    mul_stage_t mul3;
+    mul_stage_t mul_in, mul_out;
+    word_t mul_res;
 
     //! =========================================================================
     //! STAGE 3: EXECUTE
@@ -57,9 +63,9 @@ module StreamingProcessor
     Regfile #(
         .CORE_ID(CORE_ID)
     ) regfile (
-        .clk(clk), .rst(rst), .i_wen(memwb.wen), .i_wdata(wb_wdata), 
+        .clk(clk), .rst_n(rst_n), .i_wen(memwb.wen), .i_wdata(wb_wdata), 
         .i_addr_a(i_id_mux_rs1), .i_addr_b(i_id_mux_rs2), .i_waddr(memwb.rd), 
-        .o_reg_a(ex_reg_a), .o_reg_b(ex_reg_b), .i_global_stall(i_global_stall)
+        .o_reg_a(ex_reg_a), .o_reg_b(ex_reg_b), .i_stall(i_stall)
     );
 
     //? --- Forwarding Multiplexer B ---
@@ -90,48 +96,39 @@ module StreamingProcessor
     
     (* dont_touch = `DEBUG *)
     ALU alu (
-        .clk(clk),
-        .rst(rst),
         .i_operand_a(ex_actual_alu_in_a), 
         .i_operand_b(ex_actual_alu_in_b),
-        .i_global_stall(i_global_stall),
         .i_alu_op(i_idex.alu_op), 
-        .i_mul_valid(mul3.hazard.valid),
+        .i_mul_valid(mul_out.hazard.valid),
+        .i_mul_res(mul_res),
         .o_alu_out(ex_alu_out),
         .o_alu_zero(ex_zero)
     );
 
-    //? =========================
-    //? MUL PIPELINE TRACKING
-    //? =========================
-    mul_stage_t mul1, mul2;
-    
+    assign mul_in = '{
+        program_counter: i_idex.program_counter,
+        hazard: '{
+            valid: ex_is_mul && (i_idex.rd != '0),
+            rd: ex_is_mul ? i_idex.rd : '0
+        }
+    };
 
-    always_ff @(posedge clk) begin
-        if (!rst) begin
-            mul1 <= '0;
-            mul2 <= '0;
-            mul3 <= '0;
-        end else if (i_global_stall) begin
-            // Retain state during memory stall
-        end else begin
-            mul1 <= '{
-                program_counter: i_idex.program_counter,
-                hazard: '{
-                    valid: ex_is_mul && (i_idex.rd != '0),
-                    rd: ex_is_mul ? i_idex.rd : '0
-                }
-            };
-            mul2 <= mul1;
-            mul3 <= mul2;
-        end
-    end
+    (* dont_touch = `DEBUG *)
+    Multiplier #(.LATENCY(MUL_LATENCY)) multiplier (
+        .clk(clk), .rst(rst_n),
+        .i_operand_a(ex_actual_alu_in_a), .i_operand_b(ex_actual_alu_in_b),
+        .i_global_stall(i_stall), .i_stage(mul_in),
+        .o_result(mul_res), .o_stage(mul_out), .o_hazards(o_mul_hazards)
+    );
 
     //! Output MUL for Hazard Unit
-    assign o_feedback.mul1 = mul1.hazard;
-    assign o_feedback.mul2 = mul2.hazard;
-    assign o_feedback.mul3 = mul3.hazard;
-    assign mul_not_ready = (ex_is_mul || mul1.hazard.valid || mul2.hazard.valid) && !mul3.hazard.valid;
+    always_comb begin
+        mul_not_ready = ex_is_mul;
+        for (int stage = 1; stage < MUL_LATENCY; stage++) begin
+            mul_not_ready |= o_mul_hazards[stage-1].valid;
+        end
+        mul_not_ready &= !mul_out.hazard.valid;
+    end
 
     assign ex_is_branch = (i_idex.opcode == OP_BEQ);
     assign ex_is_jal = (i_idex.opcode == OP_JAL);
@@ -156,18 +153,19 @@ module StreamingProcessor
     assign o_feedback.branch_target_idx = ex_is_jalr
         ? ex_jalr_target_addr[$clog2(IMEM_ENTRIES)+1:2]
         : ex_branch_target_addr;
+    assign o_feedback.mem_program_counter = exmem.program_counter;
 
     //* =========================================================================
     //* PIPELINE REGISTER 3: EXECUTE -> MEMORY
     //* =========================================================================
     always_ff @(posedge clk) begin
-        if (!rst) begin
-            exmem <= '{
+        if (!rst_n) begin
+            exmem <= pipeline_pkg::ex_mem_t'{
                 program_counter: INITIAL_PC,
                 opcode: OP_INVALID,
                 default: '0
             };
-        end else if (i_global_stall) begin
+        end else if (i_stall) begin
             // Retain state during memory stall
         end else if (mul_not_ready) begin
             exmem <= '{
@@ -179,15 +177,15 @@ module StreamingProcessor
             exmem <= '{
                 alu_out: (ex_is_jalr) ? ex_branch_target_addr : ex_alu_out,
                 reg_b: forwarded_rs2,
-                mul3_valid: mul3.hazard.valid,
-                rd: mul3.hazard.valid ? mul3.hazard.rd : i_idex.rd,
-                opcode: mul3.hazard.valid ? OP_R_TYPE : i_idex.opcode,
-                wen: mul3.hazard.valid ? (mul3.hazard.rd != '0) : (i_idex.wen && i_idex.rd != '0),
+                mul_valid: mul_out.hazard.valid,
+                rd: mul_out.hazard.valid ? mul_out.hazard.rd : i_idex.rd,
+                opcode: mul_out.hazard.valid ? OP_R_TYPE : i_idex.opcode,
+                wen: mul_out.hazard.valid ? (mul_out.hazard.rd != '0) : (i_idex.wen && i_idex.rd != '0),
                 core_complete: ex_is_jalr &&
                                (i_idex.rd == '0) &&
                                (i_idex.rs1 == 5'd1) &&
                                (ex_imm_i_type == '0),
-                program_counter: mul3.hazard.valid ? mul3.program_counter : i_idex.program_counter
+                program_counter: mul_out.hazard.valid ? mul_out.program_counter : i_idex.program_counter
             };
         end
     end
@@ -196,34 +194,53 @@ module StreamingProcessor
     //! STAGE 4: MEMORY
     //! =========================================================================
     logic mem_is_load, mem_is_store;
+    word_t temp_memory;
     assign mem_is_load = (exmem.opcode == OP_LW);
     assign mem_is_store = (exmem.opcode == OP_SW);
+    assign mem_is_mem = mem_is_load | mem_is_store;
 
-    assign memory.addr = exmem.alu_out[$clog2(DMEM_ENTRIES)+1 : 2];
-    assign memory.ren = mem_is_load | mem_is_store;
-    assign memory.wen = mem_is_store;
-    assign memory.wdata = exmem.reg_b;
+    assign memory_if.req_valid = !mem_response_received && (mem_is_load | mem_is_store);
+    assign memory_if.req.addr = exmem.alu_out;
+    assign memory_if.req.write = mem_is_store;
+    assign memory_if.req.wdata = exmem.reg_b;
+    assign memory_if.req.wstrb = '1; // Full word write currently
+
+    assign memory_if.rsp_ready = 'b1;
+
     assign o_core_complete = exmem.core_complete;
+
+    always_ff @(posedge clk) begin
+        if (!rst_n) begin
+            temp_memory <= 'b0;
+            mem_response_received <= 'b0;
+        end else if (memory_if.rsp_ready && memory_if.rsp_valid) begin
+            temp_memory <= memory_if.rsp.rdata;
+            mem_response_received <= 'b1;
+        end else if (!i_stall) begin
+            mem_response_received <= 'b0;
+        end
+    end
 
     //! =========================================================================
     //! PIPELINE REGISTER 4: MEMORY -> WRITE BACK
     //! =========================================================================
     always_ff @(posedge clk) begin
-        if (!rst) begin
+        if (!rst_n) begin
             memwb <= '{
                 program_counter: INITIAL_PC,
                 default: '0
             };
-        end else if (i_global_stall) begin
+        end else if (i_stall) begin
             // Retain state during memory stall
         end else begin
             memwb <= '{
                 rd: exmem.rd,
-                is_mul: exmem.mul3_valid,
+                is_mul: exmem.mul_valid,
                 is_load: mem_is_load,
                 alu_out: exmem.alu_out,
                 wen: exmem.wen,
-                program_counter: exmem.program_counter
+                program_counter: exmem.program_counter,
+                rdata: temp_memory
             };
         end
     end
@@ -231,25 +248,8 @@ module StreamingProcessor
     //! =========================================================================
     //! STAGE 5: WRITE BACK
     //! =========================================================================
-    word_t safe_wb_rdata;
-    logic safe_wb_valid;
 
-    always_ff @(posedge clk) begin
-        if (!rst) begin
-            safe_wb_rdata <= '0;
-            safe_wb_valid <= 1'b0;
-        end else if (!i_global_stall) begin
-            //! Pipeline is moving normally. Clear the vault for the next instruction.
-            safe_wb_valid <= 1'b0;
-        end else if (memwb.is_load && !safe_wb_valid) begin
-            //! FIX: We are stalled, and we are a load. Latch the memory data immediately 
-            //! before a subsequent load wins the crossbar and overwrites the shared bus.
-            safe_wb_rdata <= memory.rdata;
-            safe_wb_valid <= 1'b1;
-        end
-    end
-
-    assign wb_wdata = memwb.is_load ? (safe_wb_valid ? safe_wb_rdata : memory.rdata) : memwb.alu_out;
+    assign wb_wdata = memwb.is_load ? memwb.rdata : memwb.alu_out;
 
     //& ===============
     //& FORWARDING

@@ -17,7 +17,7 @@ def test_shipped_config_and_public_graph(tmp_path):
     assert {'vivado:ip:create', 'vivado:ip:build', 'vivado:system:create', 'vivado:system:build'} <= graph.keys()
     assert 'vivado:project' not in graph
     assert 'vivado:xsa' not in graph
-    assert graph['vivado:ip:build']['task_dep'] == ['vivado:ip:create']
+    assert graph['vivado:ip:build']['task_dep'] == ['vivado:ip:create', 'hardware:identity']
     assert graph['vivado:system:create']['task_dep'] == ['vivado:ip:build']
     assert cfg.get('hardware.vivado.project_name') == 'gpgpu_system'
     assert cfg.get('hardware.vivado.version') == '2025.2'
@@ -27,7 +27,7 @@ def test_production_discovery_includes_headers_control_interfaces(tmp_path):
     cfg = config(tmp_path)
     graph = {t['name']: t for t in tasks.create_tasks(cfg)}
     deps = graph['vivado:ip:create']['file_dep']
-    for file in ('constants.svh', 'control/MMIOController.sv', 'interfaces/AXI4LiteTop.v', 'memory/MemoryInterface.sv'):
+    for file in ('constants.svh', 'control/MMIOController.sv', 'interfaces/AXI4Top.v', 'memory/MemoryInterface.sv'):
         assert str(ROOT / 'hardware/rtl/gpgpu' / file) in deps
     assert not any('experimental' in f for f in deps)
     assert not any(f.endswith('.xdc') for f in deps)
@@ -87,10 +87,12 @@ def test_portable_export_rejects_legacy_and_normalizes_config(tmp_path):
     text = '''# user.org:user:gpgpu_axi:1.0
 set design_name design_1
 set_property CONFIG.SP_PER_SM {32} [get_bd_cells gpgpu_axi_0]
+set_property -dict [list CONFIG.PCW_FPGA0_PERIPHERAL_FREQMHZ {35} CONFIG.PCW_USE_M_AXI_GP0 {1}] $processing_system7_0
 assign_bd_address -offset 0x43C00000 -range 0x00010000 -target_address_space [get_bd_addr_spaces processing_system7_0/Data] [get_bd_addr_segs gpgpu_axi_0/s00_axi/reg0] -force
 '''
     result = tasks.normalize_exported_tcl(text, ROOT, 'design_1')
     assert '$::NUM_CORES' in result and '$::AXI_BASE' in result and '$::AXI_RANGE' in result
+    assert 'CONFIG.PCW_FPGA0_PERIPHERAL_FREQMHZ $::FCLK0_MHZ' in result and '{35}' not in result
     assert result == tasks.normalize_exported_tcl(result, ROOT, 'design_1')
     for invalid in ('set design_name design_1\n# axi_gpio', text + '\n# /home/user/path', text + '\n# C:\\Users\\foo'):
         with pytest.raises(RuntimeError):
@@ -98,11 +100,13 @@ assign_bd_address -offset 0x43C00000 -range 0x00010000 -target_address_space [ge
 
 
 def test_package_publication_manifest_detects_partial_or_tampered_cache(tmp_path):
-    assert tasks.package_current(tmp_path) is False
+    from config import resolve_config
+    inputs = tasks.production_inputs(resolve_config(ROOT))
+    assert tasks.package_current(tmp_path, ROOT, inputs) is False
     data = tmp_path / 'src.sv'; data.write_text('one')
     (tmp_path / '.gpgpu-package.json').write_text(__import__('json').dumps({
         'revision': 1, 'files': tasks._tree_hash(tmp_path)}))
-    assert tasks.package_current(tmp_path) is False  # Hash alone isn't IP-XACT proof.
+    assert tasks.package_current(tmp_path, ROOT, inputs) is False  # Hash alone isn't IP-XACT proof.
 
 
 def test_generated_ip_callback_tracks_content_after_first_creation(tmp_path):
@@ -115,3 +119,44 @@ def test_generated_ip_callback_tracks_content_after_first_creation(tmp_path):
     assert callback(None, saved) is True
     source.write_text('two')
     assert callback(None, saved) is False
+
+
+def test_vendor_ip_beside_the_gpgpu_package_follows_configuration(tmp_path):
+    cfg = config(tmp_path)
+    rtl = ROOT / 'hardware/rtl'
+    expected = sorted(p for p in rtl.iterdir() if p.is_dir() and p.name != 'gpgpu')
+    assert tasks.vendor_ip_dirs(cfg) == expected and expected
+    build = {t['name']: t for t in tasks.create_tasks(cfg)}['vivado:ip:build']
+    assert build['actions'][0][1][-1] == expected
+    # Every vendor file is a dependency, so editing one republishes the repository.
+    for directory in expected:
+        assert all(str(p) in build['file_dep'] for p in directory.rglob('*') if p.is_file())
+    assert not any('/hardware/rtl/gpgpu/experimental/' in f for f in build['file_dep'])
+    narrowed = config(tmp_path, 'hardware.vivado.vendor_ip.exclude=[gpgpu, smart_zynq_sl]')
+    assert [p.name for p in tasks.vendor_ip_dirs(narrowed)] == [p.name for p in expected if p.name != 'smart_zynq_sl']
+
+
+@pytest.mark.parametrize('override', [
+    'hardware.vivado.vendor_ip.root=""', 'hardware.vivado.vendor_ip.root=missing/dir',
+    'hardware.vivado.vendor_ip.exclude=gpgpu',
+])
+def test_vendor_ip_configuration_has_no_fallback(tmp_path, override):
+    with pytest.raises((TypeError, FileNotFoundError)):
+        tasks.vendor_ip_dirs(config(tmp_path, override))
+
+
+def test_vendor_ip_is_copied_into_staging_without_shadowing_the_package(tmp_path):
+    vendor = tmp_path / 'rtl/rgb2dvi'
+    (vendor / 'src').mkdir(parents=True)
+    (vendor / 'component.xml').write_text('<vendor/>')
+    (vendor / 'src/rgb2dvi.vhd').write_text('-- vhdl')
+    staging = tmp_path / 'staging'
+    (staging / 'src').mkdir(parents=True)
+    (staging / 'component.xml').write_text('<gpgpu/>')
+    tasks.copy_vendor_ip(staging, [vendor])
+    assert (staging / 'rgb2dvi/src/rgb2dvi.vhd').read_text() == '-- vhdl'
+    assert (staging / 'component.xml').read_text() == '<gpgpu/>'
+    clash = tmp_path / 'rtl/src'
+    clash.mkdir()
+    with pytest.raises(RuntimeError, match='collides'):
+        tasks.copy_vendor_ip(staging, [clash])

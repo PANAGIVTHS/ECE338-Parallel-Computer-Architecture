@@ -2,22 +2,22 @@
 from pathlib import Path
 import re
 
+from config import resolve_config
+from tools.hardware.vivado.tasks import production_inputs
+
 ROOT = Path(__file__).resolve().parents[3]
-FLOW = ROOT / 'tools/hardware/vivado'
 
 
-def test_every_production_macro_consumer_includes_constants_explicitly():
-    rtl = ROOT / 'hardware/rtl/gpgpu'
-    match = re.search(r'set PRODUCTION_RTL_SOURCES\s*\{([^}]+)\}',
-                      (FLOW / 'production_sources.tcl').read_text())
-    assert match is not None
-    manifest = match.group(1).split()
-    macros = set(re.findall(r'^`define\s+(\w+)', (rtl / 'constants.svh').read_text(), re.M))
+def test_every_production_macro_consumer_includes_its_header_explicitly():
+    _, sources, headers = production_inputs(resolve_config(ROOT))
+    macros = {macro: header.name for header in headers
+              for macro in re.findall(r'^`define\s+(\w+)', header.read_text(), re.M)}
     missing = []
-    for relative in manifest:
-        if relative.endswith('.sv'):
-            source = (rtl / relative).read_text()
-            uses = set(re.findall(r'`(\w+)', source)) & macros
-            if uses and not re.search(r'^\s*`include\s+"constants\.svh"', source, re.M):
-                missing.append((relative, sorted(uses)))
+    for source_path in sources:
+        if source_path in headers:
+            continue
+        source = source_path.read_text()
+        for header in sorted({macros[m] for m in re.findall(r'`(\w+)', source) if m in macros}):
+            if not re.search(r'^\s*`include\s+"' + re.escape(header) + '"', source, re.M):
+                missing.append((source_path.name, header))
     assert not missing, f'Production files rely on global include/compile order: {missing}'

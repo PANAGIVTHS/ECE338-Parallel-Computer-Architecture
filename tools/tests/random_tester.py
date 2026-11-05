@@ -200,6 +200,8 @@ def main():
                         help="RTL test directory containing cases/")
     parser.add_argument("--log", type=Path, default=Path("random.log"),
                         help="Random simulation log path")
+    parser.add_argument("--rtl-constants", type=Path, required=True,
+                        help="RTL package constants for the expected generator (tests:rtl:constants)")
     args = parser.parse_args()
 
     if args.iterations < 1:
@@ -244,6 +246,8 @@ def main():
                 str(tools_dir / "expected_generator.py"),
                 "--num-cores",
                 str(args.num_cores),
+                "--rtl-constants",
+                str(args.rtl_constants.resolve()),
                 str(random_test_dir),
             ], args.test_root, log):
                 print_and_log(f"Simulation stopped. The failing test has been preserved in '{random_test_dir}/'", log)

@@ -2,35 +2,17 @@ module ALU
     import gpu_pkg::*;
     import alu_pkg::*;
 (
-    input logic clk,
-    input logic rst,
     input word_t i_operand_a,
     input word_t i_operand_b,
     input alu_op_t i_alu_op,
     input logic i_mul_valid,
-    input logic i_global_stall,
+    input word_t i_mul_res,
     output word_t o_alu_out,
     output logic o_alu_zero
 );
-    (* use_dsp = "yes" *) word_t mul_stage1;
-    (* use_dsp = "yes" *) word_t mul_stage2;
-    (* use_dsp = "yes" *) word_t mul_stage3;
-
-    always_ff @(posedge clk) begin
-        if (!rst) begin
-            mul_stage1 <= '0;
-            mul_stage2 <= '0;
-            mul_stage3 <= '0;
-        end else if (!i_global_stall) begin
-            mul_stage1 <= i_operand_a * i_operand_b;
-            mul_stage2 <= mul_stage1;
-            mul_stage3 <= mul_stage2;
-        end
-    end
-    
     always_comb begin
         if (i_mul_valid) begin
-            o_alu_out = mul_stage3;
+            o_alu_out = i_mul_res;
         end else begin 
             case (i_alu_op)
                 ALU_OP_ADD: o_alu_out = i_operand_a + i_operand_b;

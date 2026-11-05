@@ -205,7 +205,9 @@ class RunLogReporter(ConsoleReporter):
         self._capture: _FdTee | None = None
         self._active_task: str | None = None
         self._selected_task: Task | None = None
-        self._task_order: dict[str, int] = {}
+        # Records pydoit has reached (executed, skipped or failed) lead the
+        # plan in the order it reached them; the rest keep dependency order.
+        self._reached = 0
         self._monitor_requested = monitor
         self._dashboard: BuildDashboard | None = None
         self._write_metadata()
@@ -248,7 +250,6 @@ class RunLogReporter(ConsoleReporter):
             # requested action; include them in the same ordered stage plan.
             for dependency in (*task.task_dep, *task.setup_tasks):
                 visit(dependency)
-            self._task_order[task.name] = len(self._task_order)
             if task.actions:
                 planned.append(task)
 
@@ -257,17 +258,33 @@ class RunLogReporter(ConsoleReporter):
 
         namespace = self.requested_task.rpartition(":")[0]
         prefix = f"{namespace}:" if namespace else ""
-        for index, task in enumerate(planned):
+        for task in planned:
             label = task.name.removeprefix(prefix) if task.name.startswith(prefix) else task.name
-            log_name = f"{index:02d}_{_slug(label)}.log"
             record: dict[str, Any] = {"task": task.name, "status": "not_run"}
             self.metadata["tasks"].append(record)
-            self._task_records[task.name] = {"record": record, "log_name": log_name}
+            # The log name is numbered when pydoit reaches the task (_reach).
+            self._task_records[task.name] = {"record": record, "label": label, "log_name": None}
         self._write_metadata()
 
         if self._monitor_requested:
             self._dashboard = BuildDashboard(self.run_dir, self._dashboard_failed)
             self._dashboard.start()
+
+    def _reach(self, task_info: dict[str, Any]) -> str:
+        """Place a record at pydoit's actual execution position; name its log.
+
+        The dependency-order plan cannot predict pydoit's scheduling: a
+        prerequisite without dependencies of its own runs before a deep chain
+        declared ahead of it. Positions and log numbers follow execution.
+        """
+        if task_info["log_name"] is None:
+            tasks = self.metadata["tasks"]
+            record = task_info["record"]
+            index = next(i for i, item in enumerate(tasks) if item is record)
+            tasks.insert(self._reached, tasks.pop(index))
+            task_info["log_name"] = f"{self._reached:02d}_{_slug(task_info['label'])}.log"
+            self._reached += 1
+        return task_info["log_name"]
 
     def get_status(self, task: Task) -> None:
         # pydoit calls this BEFORE dependency/uptodate callbacks, not just
@@ -284,12 +301,13 @@ class RunLogReporter(ConsoleReporter):
             super().execute_task(task)
             return
         record = task_info["record"]
+        log_name = self._reach(task_info)
         record["status"] = "running"
-        record["log"] = task_info["log_name"]
+        record["log"] = log_name
         record["started_at"] = datetime.now().astimezone().isoformat(timespec="microseconds")
         self._started_at[task.name] = time.perf_counter()
         self._active_task = task.name
-        self._capture = _FdTee(self.run_dir / task_info["log_name"], mirror=not self._dashboard_active())
+        self._capture = _FdTee(self.run_dir / log_name, mirror=not self._dashboard_active())
         self._capture.start()
         # Refresh may fail between evaluating mirror and assigning the capture.
         # Once assigned, the failure callback can safely restore mirroring too.
@@ -336,15 +354,16 @@ class RunLogReporter(ConsoleReporter):
             # Successful dependency-only aggregates remain absent from the
             # stage plan; a failed aggregate must still be attributable.
             record = {"task": task.name, "status": "not_run"}
-            order = self._task_order.get(task.name, len(self._task_order))
-            index = next((i for i, item in enumerate(self.metadata["tasks"])
-                          if self._task_order.get(item["task"], order) > order),
-                         len(self.metadata["tasks"]))
-            self.metadata["tasks"].insert(index, record)
+            # Reached now: it goes right after everything pydoit already reached.
+            self.metadata["tasks"].insert(self._reached, record)
+            self._reached += 1
             self._task_records[task.name] = {
-                "record": record, "log_name": f"diagnostic-{_slug(task.name)}.log"
+                "record": record, "label": task.name,
+                "log_name": f"diagnostic-{_slug(task.name)}.log",
             }
-        return self._task_records[task.name]
+        task_info = self._task_records[task.name]
+        self._reach(task_info)
+        return task_info
 
     def _record_runtime_error(self, message: str, *, exit_code: int) -> None:
         task = self._selected_task
@@ -390,6 +409,7 @@ class RunLogReporter(ConsoleReporter):
         self._selected_task = None
         task_info = self._task_records.get(task.name)
         if task_info is not None:
+            self._reach(task_info)
             task_info["record"]["status"] = "up_to_date"
             self._write_metadata()
         super().skip_uptodate(task)

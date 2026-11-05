@@ -1,42 +1,48 @@
-# Explicit dependency-ordered production manifest. No recursive source discovery.
-# constants is an include; MemoryInterface must precede modules using modports.
-set PRODUCTION_RTL_SOURCES {
-    constants.svh
-    memory/MemoryInterface.sv
-    sp/ALU.sv
-    sp/Decoder.sv
-    sp/ForwardingUnit.sv
-    sp/GUCounter.sv
-    sp/HazardUnit.sv
-    sp/Regfile.sv
-    sp/StreamingProcessor.sv
-    memory/MemoryCrossbarNx2.sv
-    memory/MemoryDualPort.sv
-    memory/MemorySinglePort.sv
-    control/CSRBank.sv
-    control/ExecutionController.sv
-    control/MMIOController.sv
-    packages/alu_pkg.sv
-    packages/control_pkg.sv
-    packages/gpu_pkg.sv
-    packages/pipeline_pkg.sv
-    packages/riscv_pkg.sv
-    StreamingMultiprocessor.sv
-    GPGPU.sv
-    interfaces/AXI4LiteSlave.sv
-    interfaces/AXI4LiteTop.v
+# Production inputs are resolved from configuration (hardware.sources minus
+# hardware.vivado.exclude_sources) by the Python flow and written to the
+# -sources-manifest file as `<kind>\t<path>` lines, kind being memory (one),
+# source (compile order) or header. This file only reads and validates them;
+# it names no sources.
+proc read_source_manifest {manifest} {
+    if {![file isfile $manifest]} {error "Production source manifest missing: $manifest"}
+    set channel [open $manifest r]
+    set lines [split [read $channel] "\n"]
+    close $channel
+    set memory {}
+    set sources {}
+    set headers {}
+    foreach line $lines {
+        if {$line eq ""} {continue}
+        set tab [string first "\t" $line]
+        if {$tab < 1} {error "Invalid production source manifest line: $line"}
+        set kind [string range $line 0 [expr {$tab - 1}]]
+        set path [file normalize [string range $line [expr {$tab + 1}] end]]
+        switch -- $kind {
+            memory {lappend memory $path}
+            source {lappend sources $path}
+            header {lappend headers $path}
+            default {error "Unknown production source kind: $kind"}
+        }
+    }
+    if {[llength $memory] != 1} {error "Production source manifest needs exactly one memory entry"}
+    return [list [lindex $memory 0] $sources $headers]
 }
-proc production_source_paths {rtl_dir script_dir} {
-    global PRODUCTION_RTL_SOURCES
+
+proc production_source_paths {memory_init rtl_sources header_sources} {
     # Put initialization data before HDL, so filesets end in an HDL source.
-    set memory [file join $script_dir ip empty.mem]
-    if {![file isfile $memory]} {error "Required memory initialization missing: $memory"}
-    set result [list [file normalize $memory]]
-    foreach relative $PRODUCTION_RTL_SOURCES {
-        set path [file normalize [file join $rtl_dir $relative]]
+    set result {}
+    foreach path [list $memory_init {*}$rtl_sources] {
+        set path [file normalize $path]
         if {![file isfile $path]} {error "Required production source missing: $path"}
         lappend result $path
     }
-    # Keep the basename empty.mem: RTL's default $readmemh names this file.
+    # Everything is staged flat into one src/ directory.
+    set names [lmap path $result {file tail $path}]
+    if {[llength [lsort -unique $names]] != [llength $names]} {
+        error "Production sources must have unique file names: $names"
+    }
+    foreach header $header_sources {
+        if {[file normalize $header] ni $result} {error "Header is not a production source: $header"}
+    }
     return $result
 }
