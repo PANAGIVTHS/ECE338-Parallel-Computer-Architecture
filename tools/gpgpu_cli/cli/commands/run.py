@@ -95,7 +95,7 @@ The public dependency chain is: IP project → IP package → Zynq system/BD/wra
 
 [bold cyan]Vitis[/bold cyan]
 
-The dependency chain is: Vivado XSA → editable Vitis project → platform build → host build.
+The dependency chain is: editable Vitis project → platform build → host build. Vitis consumes the XSA already published by `vivado:system:build` and never runs Vivado; a newly published XSA rebuilds the Vitis stages.
 
 • `vitis:project` — Materialize the committed portable default project under `build/software/vitis/` and bind it to the current checkout's XSA and host sources. The generated project can be opened and edited in Vitis.
 

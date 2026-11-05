@@ -40,6 +40,11 @@ def make_task_repo(tmp_path: Path) -> StubResolvedConfig:
         "        {'name': 'demo:all', 'actions': None, 'task_dep': ['demo:third']},\n"
         "        {'name': 'success:stage', 'actions': [success], 'uptodate': [False]},\n"
         "        {'name': 'success:all', 'actions': None, 'task_dep': ['success:stage']},\n"
+        "        # vitis:build:host shape: a deep chain declared before an independent leaf.\n"
+        "        {'name': 'shape:deep0', 'actions': [lambda: None], 'uptodate': [False]},\n"
+        "        {'name': 'shape:deep1', 'actions': [lambda: None], 'task_dep': ['shape:deep0'], 'uptodate': [False]},\n"
+        "        {'name': 'shape:leaf', 'actions': [lambda: None], 'uptodate': [False]},\n"
+        "        {'name': 'shape:top', 'actions': [lambda: None], 'task_dep': ['shape:deep1', 'shape:leaf'], 'uptodate': [False]},\n"
         "    ]\n",
         encoding="utf-8",
     )
@@ -419,3 +424,19 @@ def test_dashboard_failure_during_capture_setup_cannot_leave_mirroring_disabled(
         assert reporter._capture.mirror is True
     finally:
         reporter.finalize(130)
+
+
+def test_stage_order_and_log_numbers_follow_execution_order(tmp_path: Path) -> None:
+    config = make_task_repo(tmp_path)
+
+    status = run_logged_task(config, "shape:top", monitor=False)  # type: ignore[arg-type]
+
+    assert status == 0
+    run_dir = next((tmp_path / "logs/runs").iterdir())
+    tasks = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))["tasks"]
+    started = sorted(tasks, key=lambda task: task["started_at"])
+    assert [task["task"] for task in tasks] == [task["task"] for task in started]
+    assert [task["log"] for task in tasks] == [
+        f"{index:02d}_{task['task'].removeprefix('shape:')}.log" for index, task in enumerate(tasks)
+    ]
+    assert all((run_dir / task["log"]).is_file() for task in tasks)

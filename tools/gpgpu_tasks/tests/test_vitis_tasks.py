@@ -44,14 +44,15 @@ def make_repo(tmp_path):
     return config
 
 
-def test_public_graph_always_rebuilds_hardware_dependency_even_if_xsa_exists(tmp_path):
+def test_public_graph_has_no_hardware_dependency(tmp_path):
     config = make_repo(tmp_path)
     xsa = config.build_root / 'hardware/platform/managed_hardware.xsa'
     xsa.parent.mkdir(parents=True); xsa.write_text('old')
     tasks = vitis.create_tasks(config)
     assert [t['name'] for t in tasks] == ['vitis:project', 'vitis:build:platform', 'vitis:build:host', 'vitis:build:all', 'vitis:export']
-    assert tasks[0]['task_dep'] == ['vivado:system:build']
-    assert str(xsa) in tasks[0]['file_dep']
+    assert not tasks[0].get('task_dep')
+    # A file_dep on the XSA would let pydoit infer the Vivado edge again.
+    assert all(str(xsa) not in t.get('file_dep', []) for t in tasks)
     assert tasks[1]['task_dep'] == ['vitis:project']
     assert tasks[2]['task_dep'] == ['vitis:build:platform', 'software:host:platform']
     assert tasks[3]['task_dep'] == ['vitis:build:host']
@@ -62,14 +63,14 @@ def test_public_graph_always_rebuilds_hardware_dependency_even_if_xsa_exists(tmp
                              dict_to_task({'name': 'software:host:platform', 'actions': []}),
                              *(dict_to_task(t) for t in tasks)])
     effective.process(['vitis:build:all'])  # actual pydoit graph, including inferred file edges
-    assert effective.tasks['vitis:project'].task_dep == ['vivado:system:build']
+    assert effective.tasks['vitis:project'].task_dep == []
     assert 'vitis:build:host' not in effective.tasks['vitis:project'].task_dep
 
 
 def test_project_and_host_use_sdk_launcher_and_real_configuration(tmp_path):
     config = make_repo(tmp_path)
     tasks = vitis.create_tasks(config)
-    project = tasks[0]['actions'][0][1][0]
+    project = tasks[0]['actions'][-1][1][0]
     host = tasks[2]['actions'][0][1][0]
     assert project[4] == 'project' and '--xsa' in project
     assert host[4] == 'host'
@@ -77,7 +78,7 @@ def test_project_and_host_use_sdk_launcher_and_real_configuration(tmp_path):
     assert host.count('--source') == 2
     assert tasks[0]['targets'] == [str(config.build_root / 'software/vitis/custom_platform/vitis-comp.json')]
     assert str(config.build_root / 'software/vitis/custom_host/vitis-comp.json') in tasks[2]['targets']
-    assert vitis.run_vitis is tasks[0]['actions'][0][0]
+    assert vitis.run_vitis is tasks[0]['actions'][-1][0]
 
 
 def test_shipped_config_sources_headers_and_hardware_name_exist():
@@ -88,8 +89,8 @@ def test_shipped_config_sources_headers_and_hardware_name_exist():
     for relative in config.get('hardware.vitis.host_sources'):
         assert (ROOT / relative).is_file(), relative
     assert {Path(s).name for s in config.get('hardware.vitis.host_sources')} == {'gpgpu_driver.c', 'main.c'}
-    assert tasks[0]['task_dep'] == ['vivado:system:build']
-    assert str(config.build_root / 'hardware/platform/gpgpu_platform.xsa') in tasks[0]['file_dep']
+    assert not tasks[0].get('task_dep')
+    assert tasks[0]['actions'][0] == (vitis.require_xsa, [config.build_root / 'hardware/platform/gpgpu_platform.xsa'])
     assert any(Path(s).name == 'gpgpu_driver.h' for s in tasks[2]['file_dep'])
 
 
@@ -208,8 +209,15 @@ def create_client(): return Client()
                     *(dict_to_task(task) for task in vitis.create_tasks(config))]
     def run():
         assert DoitMain(Loader()).run(['run', 'vitis:build:all']) == 0
-    run()
+    def build_hardware():
+        assert DoitMain(Loader()).run(['run', 'vivado:system:build']) == 0
     order_log = config.build_root / 'software/sdk-order.log'
+    # Vitis never builds hardware: without a published XSA it fails up front.
+    assert DoitMain(Loader()).run(['run', 'vitis:build:all']) != 0
+    assert not (config.build_root / 'hardware-order.log').exists()
+    assert not order_log.exists()
+    build_hardware()
+    run()
     first = order_log.read_text().splitlines()
     assert first == ['create:custom_platform', 'build:custom_platform', 'create:custom_host', 'build:custom_host']
     run()
@@ -219,7 +227,12 @@ def create_client(): return Client()
     run()
     assert order_log.read_text().splitlines()[len(first):] == ['create:custom_host', 'build:custom_host']
     hardware_input.write_text('updated AXI hardware')
-    run()
+    previous = order_log.read_text().splitlines()
+    run()  # Stale hardware inputs are Vivado's concern; the XSA is unchanged.
+    assert order_log.read_text().splitlines() == previous
+    assert (config.build_root / 'hardware-order.log').read_text().splitlines() == ['hardware']
+    build_hardware()
+    run()  # A newly published XSA invalidates every Vitis stage.
     assert order_log.read_text().splitlines()[-4:] == first
     exported = config.build_root / 'software/vitis/custom_platform/export/custom_platform/hw/custom_platform.xsa'
     assert exported.read_text() == 'updated AXI hardware'
