@@ -384,7 +384,7 @@ frames/s (21.5 ms per frame), about 170 MB/s: twice the GPU's rate.
 ### Placement and the bitstream
 
 Development loop without the SD card: build on the laptop (njason@xps,
-Vivado 2025.2, `./gpgpu run vivado:system:build`, about 20 minutes), load
+Vivado 2025.2, `./gpgpu vivado system:build`, about 20 minutes), load
 the PL over JTAG from the Pi (`openFPGALoader -c digilent_hs2 file.bit`),
 then the host's `reset` reinitializes the PL side. The UART runs through
 the PL (EMIO), so it delivers junk while the PL configures; resync after.
@@ -409,7 +409,7 @@ blanks at any clock from 16.67 MHz up in the laptop builds, but only above
 25 MHz in the user's build.** The keep-out made no difference, so the GPU's
 proximity to the TMDS outputs is not the mechanism. Candidates: the build's
 target clock (42 against 40 MHz), a difference between the user's GUI block
-design and `create_block_design.tcl`, or JTAG against FSBL configuration.
+design and `hardware/bd/design_1.tcl`, or JTAG against FSBL configuration.
 
 Rebuilt on the laptop with `fabric_clock_mhz: 40` (WNS +0.012 ns) and loaded
 over JTAG:
@@ -682,7 +682,7 @@ to confirm the resonance.
 
 ## Temporary state in the tree (uncommitted)
 
-- The block design and `tools/hardware/vivado/create_block_design.tcl`:
+- The block design and `hardware/bd/design_1.tcl`:
   `v_axi4s_vid_out_0/locked` drives `o_core_running_0` (P21) instead of
   `gpgpu_axi_0/o_core_running`. Revert it once the test is no longer needed.
 - `software/programs/stress/`: a new stress kernel with modes 0–10.

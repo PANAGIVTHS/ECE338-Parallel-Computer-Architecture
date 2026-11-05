@@ -138,10 +138,10 @@ fi
 
 if [[ "$BUILD" -eq 1 ]]; then
     if [[ "$FAKE" -eq 1 ]]; then
-        "$GPGPU" run "software:programs:$PROGRAM:x86:build"
+        "$GPGPU" software "programs:$PROGRAM:x86:build"
     else
-        "$GPGPU" run "software:programs:$PROGRAM:riscv:build"
-        "$GPGPU" run "software:programs:$PROGRAM:mem"
+        "$GPGPU" software "programs:$PROGRAM:riscv:build"
+        "$GPGPU" software "programs:$PROGRAM:mem"
     fi
 fi
 

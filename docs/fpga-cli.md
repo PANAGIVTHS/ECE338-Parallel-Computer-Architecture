@@ -6,10 +6,10 @@ and Vitis build stages.
 ## Upload, load and execute a RISC-V program
 
 ```bash
-./gpgpu run fpga:programs:simple:upload
-./gpgpu run fpga:programs:simple:load-imem
-./gpgpu run fpga:programs:simple:run
-./gpgpu run fpga:programs:simple:all
+./gpgpu fpga programs:simple:upload
+./gpgpu fpga programs:simple:load-imem
+./gpgpu fpga programs:simple:run
+./gpgpu fpga programs:simple:all
 ```
 
 For every discovered `<program>/<program>.c`, the dependency chain is:
@@ -50,7 +50,7 @@ Override these in `config/local.yaml` or with global `--set` options. For exampl
 if the SSH user already has serial access:
 
 ```bash
-./gpgpu --set hardware.fpga.uart.sudo=false run fpga:programs:simple:all
+./gpgpu --set hardware.fpga.uart.sudo=false fpga programs:simple:all
 ```
 
 The VM interpreter must have `pyserial` installed. With `sudo: true`, commands
@@ -82,8 +82,8 @@ The legacy `software/programs/run.sh` is left untouched.
 ## Program only or upload and program
 
 ```bash
-./gpgpu run fpga:program  # use the files already uploaded to the board
-./gpgpu run fpga:deploy   # upload existing local artifacts, then program
+./gpgpu fpga program  # use the files already uploaded to the board
+./gpgpu fpga deploy   # upload existing local artifacts, then program
 ```
 
 `fpga:program` preserves its program-only behavior: no local build or upload.
@@ -104,14 +104,15 @@ Upload and each programming stage retain their own logs and monitor status.
 From the repository root:
 
 ```bash
-./gpgpu run vitis:build:all
-./gpgpu run fpga:upload
+./gpgpu vivado system:build
+./gpgpu vitis build:all
+./gpgpu fpga upload
 ```
 
 `fpga:upload` transfers the existing programming artifacts via SCP to the
 board-connected machine. It does **not** program the FPGA, initialize the PS,
-execute the host ELF, or trigger a build. Build first; the upload checks all
-three local files before starting any transfer. Every explicit invocation
+execute the host ELF, or trigger a build. Build first; the upload stops before
+any transfer if a file is missing, and warns if a build is out of date. Every explicit invocation
 uploads again, even when the files are unchanged.
 
 With the default configuration, the mapping is:
@@ -131,10 +132,10 @@ output; do not use the obsolete Vitis platform export path
 ## Remote reset, mode, and programming
 
 ```bash
-./gpgpu run fpga:reset
-./gpgpu run fpga:mode:project
-./gpgpu run fpga:mode:demo
-./gpgpu run fpga:program
+./gpgpu fpga reset
+./gpgpu fpga mode:project
+./gpgpu fpga mode:demo
+./gpgpu fpga program
 ```
 
 Every invocation runs again. SSH to `hardware.fpga.upload.destination`
@@ -225,11 +226,11 @@ wrong types, shell characters, and traversal are errors. `tools.ssh.command` and
 embedded arguments. Invalid board settings are checked when actions run, so
 unrelated task discovery remains available.
 
-For a one-off override, global options go before `run`:
+For a one-off override, global options go before the category:
 
 ```bash
 ./gpgpu --set hardware.fpga.upload.destination=njason@192.168.1.13 \
-  --set hardware.fpga.upload.directory=/home/njason/upload run fpga:upload
+  --set hardware.fpga.upload.directory=/home/njason/upload fpga upload
 ```
 
 Local paths follow `paths.build.root`, `hardware.vivado.top`,
@@ -252,7 +253,7 @@ fails. Neither flow attempts programming after an upload failure. Fix the
 issue and rerun `fpga:upload` or `fpga:deploy` to resend all three files.
 
 Upload output and failures use the same per-task logs and `run.json` metadata
-as other `./gpgpu run` tasks.
+as other `./gpgpu` tasks.
 
 Remote board actions additionally require the configured SSH executable and
 Bash on the Debian VM, with `fuse`, `fr`, `fm`, `fpl`, and `fps` defined or sourced

@@ -282,21 +282,21 @@ echo ""
 
 case "$TARGET" in
     clean)
-        "$GPGPU" run "software:programs:$SELECTED:clean"
+        "$GPGPU" software "programs:$SELECTED:clean"
         ;;
     x86)
-        "$GPGPU" run "software:programs:$SELECTED:x86:build"
+        "$GPGPU" software "programs:$SELECTED:x86:build"
         ;;
     riscv)
-        "$GPGPU" run "software:programs:$SELECTED:riscv:build"
+        "$GPGPU" software "programs:$SELECTED:riscv:build"
         ;;
     all)
-        "$GPGPU" run "software:programs:$SELECTED:all"
+        "$GPGPU" software "programs:$SELECTED:all"
         ;;
 esac
 
 if [[ "$RUN_FPGA" -eq 1 ]]; then
-    "$GPGPU" run "software:programs:$SELECTED:mem"
+    "$GPGPU" software "programs:$SELECTED:mem"
 fi
 
 if [[ "$RUN_X86" -eq 1 ]]; then

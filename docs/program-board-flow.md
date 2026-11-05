@@ -3,16 +3,13 @@
 For the CLI flow, use:
 
 ```bash
-./gpgpu run vivado:block-design:build
-./gpgpu run vivado:block-design:run
+./gpgpu vivado system:create
 ```
 
-`:build` reuses and exports the saved BD from the managed build project, or
-creates the default from `tools/hardware/vivado/create_block_design.tcl`.
-`:run` depends on `:build` and generates the output products / HDL wrapper.
-The saved BD takes priority over template edits; close Vivado before running
-these commands and review any template changes before committing. See
-[Vivado CLI flow](vivado-cli.md) for preservation, configuration, and dependencies.
+This creates the system project from the committed `hardware/bd/design_1.tcl`, or
+reuses the saved block design, and generates the output products and HDL wrapper.
+Close Vivado before running it. To change the design in the GUI and keep the script
+in sync, see [the block design](../hardware/bd/README.md).
 
 The equivalent GUI setup is described below.
 
@@ -79,20 +76,21 @@ The CLI recreates the repository's portable Vitis 2026.1 default project from th
 Vivado XSA and enforces platform-before-host build ordering:
 
 ```bash
-./gpgpu run vitis:project
-./gpgpu run vitis:build:all
+./gpgpu vivado system:build
+./gpgpu vitis project
+./gpgpu vitis build:all
 ```
 
 The editable workspace is `build/software/vitis`. Interactive CLI builds show a
 [JSON-backed build monitor](run-monitor.md) with stage progress, durations, and
-live logs; use `./gpgpu run vitis:build:all --plain` for streaming plain output.
+live logs; use `./gpgpu vitis build:all --plain` for streaming plain output.
 Open the workspace directory in Vitis
 to change the `gpgpu_platform` or `gpgpu_host` components. After saving and
 closing Vitis, explicitly synchronize those changes back to the committed
 portable default:
 
 ```bash
-./gpgpu run vitis:export
+./gpgpu vitis export
 ```
 
 The expected programming artifacts are:
@@ -111,7 +109,7 @@ Vitis platform export's `hw/sdt` directory.
 After building, transfer the three artifacts with:
 
 ```bash
-./gpgpu run fpga:upload
+./gpgpu fpga upload
 ```
 
 The upload preserves the remote filenames `gpgpu_platform.bit`, `ps7_init.tcl`,
@@ -124,14 +122,14 @@ prerequisites, and the local-to-remote artifact mapping.
 After uploading the artifacts, program the board with:
 
 ```bash
-./gpgpu run fpga:program
+./gpgpu fpga program
 ```
 
 To upload the existing local artifacts and then run the same programming flow
 with one command instead:
 
 ```bash
-./gpgpu run fpga:deploy
+./gpgpu fpga deploy
 ```
 
 Deploy orders upload before the entire preflight/reset/mode/program sequence.
