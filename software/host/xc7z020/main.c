@@ -57,6 +57,25 @@ static inline void vdma_write(u32 offset, u32 value) {
     Xil_Out32((UINTPTR)XPAR_XAXIVDMA_0_BASEADDR + offset, value);
 }
 
+/* Stop the MM2S channel and wait until it halts, so it has no read in flight.
+ * A PL reset with a VDMA read outstanding leaves that read's data in the PS
+ * HP2 port, which only a system reset clears: every later read then returns
+ * the data of an earlier one and the picture stays rotated by whole bursts. */
+static int display_stop(void) {
+    u32 timeout = 1000U;
+
+    vdma_write(VDMA_MM2S_VDMACR, vdma_read(VDMA_MM2S_VDMACR) & ~VDMA_CR_RS);
+    while ((vdma_read(VDMA_MM2S_VDMASR) & VDMA_SR_HALTED) == 0U) {
+        if (--timeout == 0U) {
+            xil_printf("ERROR: VDMA did not halt (MM2S_VDMASR=0x%08x)\r\n",
+                       vdma_read(VDMA_MM2S_VDMASR));
+            return -1;
+        }
+        usleep(1);
+    }
+    return 0;
+}
+
 /* Reset the MM2S channel and start it parked on framebuffer `fb`: it scans
  * that one buffer every frame until display_show() parks it on another. */
 static int display_start(u32 fb) {
@@ -651,10 +670,11 @@ int main(void) {
             gpgpu_print_status();
 
         } else if (strcmp(cmd, "reset") == 0) {
+            /* The PL reset also resets the VDMA: stop it first. */
+            display_stop();
             if (gpgpu_reset() != GPGPU_OK)
                 xil_printf("ERROR: GPGPU initialization after reset failed\r\n");
             gpgpu_print_status();
-            /* The PL reset also resets the VDMA. */
             display_start(shown_fb);
 
         } else if (strcmp(cmd, "display") == 0) {

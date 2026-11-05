@@ -116,7 +116,7 @@ proc create_block_design {} {
         CONFIG.C_HYSTERESIS_LEVEL {16} \
         CONFIG.C_S_AXIS_VIDEO_DATA_WIDTH {8} \
         CONFIG.C_S_AXIS_VIDEO_FORMAT {2} \
-        CONFIG.C_VTG_MASTER_SLAVE {1}] $vid_out
+        CONFIG.C_VTG_MASTER_SLAVE {0}] $vid_out
     # Video timing generator only (its default mode), no register interface.
     set vtc [create_bd_cell -type ip -vlnv xilinx.com:ip:v_tc:6.2 v_tc_0]
     set_property -dict [list \
@@ -135,6 +135,7 @@ proc create_block_design {} {
     set_property -dict [list \
         CONFIG.CLKOUT1_REQUESTED_OUT_FREQ {74.25} \
         CONFIG.CLKOUT2_USED {false} \
+        CONFIG.JITTER_SEL {Max_I_Jitter} \
         CONFIG.PRIMITIVE {PLL} \
         CONFIG.USE_RESET {false}] $pixel_clk
     create_bd_cell -type ip -vlnv xilinx.com:ip:proc_sys_reset:5.0 proc_sys_reset_0
@@ -198,7 +199,8 @@ proc create_block_design {} {
         [get_bd_pins v_axi4s_vid_out_0/vid_io_out_reset] [get_bd_pins rgb2dvi_0/aRst]
     connect_bd_net [get_bd_pins clk_en/dout] \
         [get_bd_pins v_axi4s_vid_out_0/aclken] [get_bd_pins v_axi4s_vid_out_0/vid_io_out_ce] \
-        [get_bd_pins v_tc_0/clken] [get_bd_pins v_tc_0/gen_clken]
+        [get_bd_pins v_tc_0/clken]
+    connect_bd_net [get_bd_pins v_axi4s_vid_out_0/vtg_ce] [get_bd_pins v_tc_0/gen_clken]
     connect_bd_net [get_bd_pins clk_en1/dout] [get_bd_pins v_axi4s_vid_out_0/fid]
     foreach {pin rgb} {vid_active_video vid_pVDE vid_data vid_pData vid_hsync vid_pHSync vid_vsync vid_pVSync} {
         connect_bd_net [get_bd_pins v_axi4s_vid_out_0/$pin] [get_bd_pins rgb2dvi_0/$rgb]
