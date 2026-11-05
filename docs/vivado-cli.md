@@ -11,13 +11,10 @@ vivado:ip:create
   -> vivado:ip:build
   -> vivado:system:create
   -> vivado:system:build
-  -> vitis:project -> vitis:build:platform -> vitis:build:host -> vitis:build:all
 ```
 
 - **ip:create** recreates the managed `gpgpu_ip_dev` project with top
-  `gpgpu_axi`. It does not package or synthesize a system. Portable registration
-  was reconstructed from the exported IP-development project: production-only
-  manifest, SystemVerilog headers, interface ordering and explicit initialization.
+  `gpgpu_axi`. It does not package or synthesize a system.
 - **ip:build** packages and validates `user.org:user:gpgpu_axi:1.0` into a
   self-contained repository. It never builds a standalone bitstream. Publication
   occurs only after Tcl integrity checks and Python file/interface validation.
@@ -42,8 +39,6 @@ vivado:ip:create
   for that step), so it executes every enabled step before `write_bitstream`;
   bitstream and XSA use its result.
 
-The former GPIO/module-reference tasks are not part of this pipeline.
-
 ## Prerequisites and configuration
 
 Install licensed Vivado/Vitis **2025.2**, then source their environment or set
@@ -54,8 +49,6 @@ The generic `./gpgpu doctor` checks configured executable prerequisites.
 Defaults in `config/profiles/default.yaml`:
 
 ```yaml
-architecture:
-  num_cores: 24
 hardware:
   fpga:
     part: xc7z020clg484-1
@@ -67,7 +60,6 @@ hardware:
     xsa_name: gpgpu_platform
     version: "2025.2"
     jobs: 6
-    fabric_clock_mhz: 42
     post_route_phys_opt:
       enabled: true
       directive: AggressiveExplore
@@ -77,9 +69,8 @@ hardware:
 ```
 
 The current RTL decodes a 64-KiB window while retaining 32-bit AXI address
-signals. Packaging therefore declares `s00_axi/reg0` range **65536**, not the
-reference package's dependent 4-GiB range. No RTL widths/register semantics
-were changed. The range is fixed to this ABI; the base must be a valid aligned
+signals. Packaging therefore declares `s00_axi/reg0` range **65536**.
+The range is fixed to this ABI; the base must be a valid aligned
 32-bit hexadecimal string. The same base is passed to the host build as
 `GPGPU_BASEADDR` (see [Vitis flow](vitis-cli.md)). Core count maps to
 `CONFIG.SP_PER_SM` and the IP user-to-HDL/XGUI parameter, never a second setting.
@@ -106,11 +97,11 @@ Board XDC is excluded from the reusable IP.
 
 ## System contract
 
-The saved system BD, not its inconsistent neighboring Tcl export, supplied:
+The saved system BD supplied:
 DDR **16-bit MT41K256M16 RE-125**, UART0 **EMIO**, SD0 **MIO 40..45** with
 card detect on **MIO 47** (the TF card, for SD boot; bank 501 at 3.3 V). The fabric clock FCLK0
 (GPGPU, its SmartConnects and reset) is configuration-owned:
-`hardware.vivado.fabric_clock_mhz` (default **42 MHz**) is passed as
+`hardware.vivado.fabric_clock_mhz` is passed as
 `-fclk0-mhz`, used when bootstrapping a new BD and re-applied to a saved BD on
 every `vivado:system:create`, like the core count and AXI aperture. It is the
 requested `PCW_FPGA0_PERIPHERAL_FREQMHZ`; the PS picks the nearest achievable
@@ -151,9 +142,7 @@ not an additional raw copy of GPGPU RTL.
 
 ## Protected references and GUI state
 
-The pre-existing `GPU`, `gpgpu_axi_v1_0_project`, `gpgpu_ip_dev`,
-`gpgpu_system` and `ip_repo` reference directories are **not automatically
-adopted**. A nonempty output directory without the matching managed marker is
+A nonempty output directory without the matching managed marker is
 rejected before mutation. Use a new, disposable build root:
 
 ```bash
@@ -164,7 +153,7 @@ rejected before mutation. Use a new, disposable build root:
 ./gpgpu --set paths.build.root=build-axi-2025-2 run vitis:build:all
 ```
 
-Each later command resolves its prerequisites. No board upload/programming is
+No board upload/programming is
 performed. Close the GUI before running automation.
 
 Managed IP recreation retains the previous complete project in a sibling
@@ -179,7 +168,7 @@ Freshness includes production sources/headers/init files, Tcl/metadata, tools
 and version checks, part/core/address command fingerprints, package contents,
 saved BD, XDC and downstream targets. Repackaging refreshes the instantiated IP
 catalog/revision even though its VLNV remains unchanged. Unchanged invocations
-skip completed stages. IP package failure blocks system and Vitis execution.
+skip completed stages. IP package failure blocks system execution.
 
 ## Outputs and logging
 
@@ -201,10 +190,4 @@ their runs' logs and reports (`runme.log`, `.vds`, `.vdi`, `.rpt`) to
 `.gpgpu/logs/<stage>/<run>/`: `synth_1` plus every out-of-context IP
 synthesis run (`*synth_1`), or `impl_1`. The copy is refreshed on every
 execution, also when Vivado fails; reused out-of-context runs keep the logs from
-when they ran. The FPGA artifact contract is unchanged:
-published bitstream, Vitis `ps7_init.tcl`, and host ELF. No reference artifact is
-accepted as evidence of a newly completed vendor build.
-
-Tests using Tcl recorders/fake vendor processes validate contracts and
-orchestration, **not synthesis, implementation, SDK compatibility or hardware
-operation**. A real 2025.2 run remains necessary before claiming those results.
+when they ran.

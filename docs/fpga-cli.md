@@ -77,7 +77,6 @@ CSV generation or visualization. Programs such as nbody may require prepared
 DMEM/arguments to produce meaningful results. The board must already be in
 PROJECT mode with the compatible PL and host monitor running. These tasks do
 not reset the board, change mode, or depend on `fpga:program`/`fpga:deploy`.
-The legacy `software/programs/run.sh` is left untouched.
 
 ## Program only or upload and program
 
@@ -104,7 +103,6 @@ Upload and each programming stage retain their own logs and monitor status.
 From the repository root:
 
 ```bash
-./gpgpu run vitis:build:all
 ./gpgpu run fpga:upload
 ```
 
@@ -118,15 +116,13 @@ With the default configuration, the mapping is:
 
 | Local path, relative to the repository | Remote filename |
 | --- | --- |
-| `build/hardware/bitstream/gpgpu_block_design_wrapper.bit` | `gpgpu_platform.bit` |
 | `build/software/vitis/gpgpu_platform/export/gpgpu_platform/hw/sdt/ps7_init.tcl` | `ps7_init.tcl` |
 | `build/software/vitis/gpgpu_host/build/gpgpu_host.elf` | `gpgpu_host.elf` |
 
 The default destination is `njason@192.168.1.13:/home/njason/upload/`. Renaming
 the bitstream on upload keeps the existing manual programming workflow's
 `gpgpu_platform.bit` filename. The bitstream comes from Vivado's published
-output; do not use the obsolete Vitis platform export path
-`export/gpgpu_platform/hw/sdt/gpgpu_platform.bit`.
+output.
 
 ## Remote reset, mode, and programming
 
