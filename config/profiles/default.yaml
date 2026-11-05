@@ -187,7 +187,6 @@ tests:
           RESET_CYCLES: 20
           TEST_TIMEOUT_CYCLES: 10000  # launch to completion IRQ
           AXI_TIMEOUT_CYCLES: 1000    # per AXI channel handshake
-          RET_INSTR: "00008067"       # hex; kernel end, IMEM is loaded up to it
           TEST_ROOT: cases            # relative to the suite's run directory
           CASE_PREFIX: test           # case directories are <prefix><index>
           TEST_IDX: 1                 # first case index

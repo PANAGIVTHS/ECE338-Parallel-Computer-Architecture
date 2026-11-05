@@ -111,7 +111,7 @@ module tb_GPGPU_ddr
             rv_add(5, 5, 6),
             rv_addi(7, 31, 1),
             rv_sw(7, 5, 0),
-            ret_instr
+            rv_addi(17, 0, 0), riscv_pkg::ECALL_INSTR
         });
         expect_clean("consecutive");
         for (int lane = 0; lane < NUM_CORES; lane++)
@@ -130,7 +130,7 @@ module tb_GPGPU_ddr
             rv_add(5, 5, 6),
             rv_addi(7, 31, 'h100),
             rv_sw(7, 5, 0),
-            ret_instr
+            rv_addi(17, 0, 0), riscv_pkg::ECALL_INSTR
         });
         expect_clean("group per lane");
         for (int lane = 0; lane < NUM_CORES; lane++)
@@ -151,7 +151,7 @@ module tb_GPGPU_ddr
             rv_add(5, 5, 6),
             rv_addi(7, 31, 'h200),
             rv_sw(7, 5, 0),
-            ret_instr
+            rv_addi(17, 0, 0), riscv_pkg::ECALL_INSTR
         });
         expect_clean("every other word");
         for (int lane = 0; lane < NUM_CORES; lane++) begin
@@ -170,7 +170,7 @@ module tb_GPGPU_ddr
             rv_lui(5, base),
             rv_addi(7, 31, 1),
             rv_sw(7, 5, 0),
-            ret_instr
+            rv_addi(17, 0, 0), riscv_pkg::ECALL_INSTR
         });
         expect_clean("same word");
         begin
@@ -201,7 +201,7 @@ module tb_GPGPU_ddr
             rv_add(5, 5, 9),
             rv_addi(8, 8, -1),
             rv_bne(8, 0, -20),
-            ret_instr
+            rv_addi(17, 0, 0), riscv_pkg::ECALL_INSTR
         });
         expect_clean("store loop");
         for (int row = 0; row < LOOP_ITERATIONS; row++)
@@ -224,7 +224,7 @@ module tb_GPGPU_ddr
                 rv_slli(6, 31, 2),
                 rv_add(5, 5, 6),
                 rv_sw(31, 5, 0),
-                ret_instr
+                rv_addi(17, 0, 0), riscv_pkg::ECALL_INSTR
             }, 32'(FAULT_MEMORY) | fault_kind(MemorySubsystemPkg::ST_SLVERR), lanes, 32'd12);
         expect_mem("SLVERR on a burst", base, 32'd0);
         ddr_mem.set_error(base, AXI4FullPkg::AXI_RESP_OKAY);
@@ -241,7 +241,7 @@ module tb_GPGPU_ddr
                 rv_slli(6, 31, $clog2(GROUP_BYTES)),
                 rv_add(5, 5, 6),
                 rv_sw(31, 5, 0),
-                ret_instr
+                rv_addi(17, 0, 0), riscv_pkg::ECALL_INSTR
             }, 32'(FAULT_MEMORY) | fault_kind(MemorySubsystemPkg::ST_DECERR), 32'd1 << error_lane, 32'd12);
         for (int lane = 0; lane < NUM_CORES - 1; lane++)
             expect_mem("DECERR on one burst", base + GROUP_BYTES * lane, 32'(lane));

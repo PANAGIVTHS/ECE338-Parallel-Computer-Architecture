@@ -24,6 +24,7 @@ BUILD_ROOT ?= ../../build
 OUT_DIR ?= $(BUILD_ROOT)/software/programs/$(PROG)
 
 SRC = $(DIR)/$(PROG).c
+HEADERS = $(wildcard *.h $(DIR)/*.h)
 NATIVE_SRC = $(SRC)
 
 # ==========================================
@@ -61,7 +62,7 @@ x86: $(NATIVE_EXE)
 $(OUT_DIR):
 	@mkdir -p $@
 
-$(NATIVE_EXE): $(NATIVE_SRC) | $(OUT_DIR)
+$(NATIVE_EXE): $(NATIVE_SRC) $(HEADERS) | $(OUT_DIR)
 	@echo "Compiling $(PROG) for x86 Native Linux..."
 	@$(NATIVE_CC) $(NATIVE_CFLAGS) -o $@ $<
 	@echo "Success! Run it with: ./$@"
@@ -108,7 +109,7 @@ $(MEM): $(DUMP_ASM) | $(OUT_DIR)
 	@awk '/^[[:space:]]*[0-9a-fA-F]+:/ { \
 		hex_code = $$2; \
 		if (length(hex_code) == 8) { \
-			n = split($$0, tokens, /[ \t,()]+/); \
+			n = split($$0, tokens, /[ 	,()]+/); \
 			print hex_code; \
 		} \
 	}' $< > $@
@@ -118,7 +119,7 @@ $(MEM): $(DUMP_ASM) | $(OUT_DIR)
 # ==========================================
 # Compile C -> ELF
 # ==========================================
-$(ELF): $(SRC) $(LINKER_SCRIPT) | $(OUT_DIR)
+$(ELF): $(SRC) $(HEADERS) $(LINKER_SCRIPT) | $(OUT_DIR)
 	@echo "Compiling $(PROG) for RISC-V..."
 	@$(CC) $(CFLAGS) -o $@ $< $(LDFLAGS)
 

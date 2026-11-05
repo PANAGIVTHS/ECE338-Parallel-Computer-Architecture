@@ -5,4 +5,5 @@ slli x6, x31, 3         # lane * 8
 add  x5, x5, x6
 addi x7, x31, 100
 sw   x7, 0(x5)
-jalr x0, 0(x1)
+addi x17, x0, 0  # Kernel complete: ECALL service 0
+ecall
