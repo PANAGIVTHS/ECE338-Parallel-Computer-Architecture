@@ -38,6 +38,18 @@ def vendor_ip_dirs(config):
                   if path.is_dir() and not path.name.startswith('.') and path.name not in exclude)
 
 
+def board_constraints(config, paths):
+    """hardware.board.constraints: the board's existing .xdc file, which must
+    be in the repository's constraints directory."""
+    value = config.get('hardware.board.constraints')
+    if not isinstance(value, str) or not value.endswith('.xdc'):
+        raise ValueError('hardware.board.constraints must be a repository-relative .xdc path')
+    path = (config.repo_root / value).resolve()
+    if path.parent != paths.hardware_constraints.resolve() or not path.is_file():
+        raise ValueError(f'hardware.board.constraints must name an existing file in {paths.hardware_constraints}')
+    return path
+
+
 def production_inputs(config):
     """(memory_init, sources, headers) for the IP: hardware.sources minus
     hardware.vivado.exclude_sources, headers first so they precede every consumer.
@@ -417,7 +429,9 @@ def create_tasks(config):
     xsa = xsa_path(config)
     stamp = ip_repo / '.gpgpu-package.json'
     component = ip_repo / 'component.xml'
-    xdc = paths.hardware_constraints / 'smart_zynq.xdc'
+    # The block design rejects a board it does not support.
+    board = identifier(config, 'hardware.board.name')
+    xdc = board_constraints(config, paths)
 
     def command(script, ip=False):
         values = {'project-dir': ip_dir if ip else system, 'project-name': ip_name if ip else name,
@@ -428,7 +442,8 @@ def create_tasks(config):
                   'num-cores': cores, 'hdl-parameters': parameters, 'build-identity': identity, 'jobs': jobs, 'repo-root': repo, 'ip-repo-dir': ip_repo,
                   'axi-base': base, 'axi-range': size, 'fclk0-mhz': fclk0,
                   'post-route-phys-opt': int(post_route_phys_opt),
-                  'post-route-phys-opt-directive': phys_opt_directive, 'flow-version': version}
+                  'post-route-phys-opt-directive': phys_opt_directive, 'flow-version': version,
+                  'board': board}
         return [vendor, '-mode', 'batch', '-source', str(scripts / script), '-tclargs',
                 *(item for key, value in values.items() for item in ('-' + key, str(value)))]
 

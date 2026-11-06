@@ -89,6 +89,12 @@ def test_shipped_config_sources_headers_and_hardware_name_exist():
     for relative in config.get('hardware.vitis.host_sources'):
         assert (ROOT / relative).is_file(), relative
     assert {Path(s).name for s in config.get('hardware.vitis.host_sources')} == {'gpgpu_driver.c', 'main.c'}
+    # The ZedBoard adds the setup of its ADV7511 HDMI transmitter.
+    zedboard = resolve_config(ROOT, profile='zedboard')
+    for relative in zedboard.get('hardware.vitis.host_sources'):
+        assert (ROOT / relative).is_file(), relative
+    assert {Path(s).name for s in zedboard.get('hardware.vitis.host_sources')} == {
+        'gpgpu_driver.c', 'main.c', 'adv7511.c'}
     assert not tasks[0].get('task_dep')
     assert tasks[0]['actions'][0] == (vitis.require_xsa, [config.build_root / 'hardware/platform/gpgpu_platform.xsa'])
     assert any(Path(s).name == 'gpgpu_driver.h' for s in tasks[2]['file_dep'])

@@ -7,6 +7,13 @@ architecture:
   ddr_enable: true
 
 hardware:
+  # The board the system is built for. `name` selects the board-specific parts
+  # of the block design (PS configuration, PL oscillator, HDMI output stage;
+  # tools/hardware/vivado/create_block_design.tcl): smart_zynq_sl or zedboard
+  # (config/profiles/zedboard.yaml). `constraints` is its pin constraints file.
+  board:
+    name: smart_zynq_sl
+    constraints: hardware/constraints/smart_zynq.xdc
   fpga:
     part: xc7z020clg484-1
     agent:

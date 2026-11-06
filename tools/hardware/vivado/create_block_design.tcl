@@ -7,37 +7,71 @@
 # in the DDR controller (HP0/HP1 and HP2/HP3 share its ports): the GPGPU's
 # m00_axi (DDR backend) on HP0 and the VDMA on HP2. The VDMA reads the
 # framebuffer for HDMI scanout (VDMA -> 4-to-3-byte subset converter ->
-# AXI4-Stream video out -> rgb2dvi). Each master has a 1x1 SmartConnect, which
-# also converts AXI4 to the HP port's AXI3.
+# AXI4-Stream video out -> the board's HDMI output stage). Each master has a
+# 1x1 SmartConnect, which also converts AXI4 to the HP port's AXI3.
 #
 # Clocks: FCLK_CLK0 (configuration-owned, follows the GPGPU's timing) runs only
 # the GPGPU, GP0 and HP0. The display runs on a fixed 100 MHz FCLK_CLK1 (GP1,
 # the VDMA, HP2 and the stream into the video out, faster than the pixel clock
 # so the stream keeps up) and its 74.25 MHz (720p60) pixel clock, made from the
-# board's 50 MHz PL oscillator, not from a PS clock: the PS PLLs jitter, and
-# the oscillator sits in the HDMI bank. The video out's asynchronous FIFO
-# crosses from FCLK_CLK1 to the pixel clock.
+# board's PL oscillator, not from a PS clock: the PS PLLs jitter. The video
+# out's asynchronous FIFO crosses from FCLK_CLK1 to the pixel clock.
+#
+# Board-specific parts (BOARD, from hardware.board.name), everything else is
+# shared:
+# - smart_zynq_sl: PS settings transcribed from the saved design (16-bit DDR3,
+#   UART0 over EMIO, SD0); a 50 MHz oscillator in the HDMI bank (clk_50m);
+#   TMDS straight from the FPGA through rgb2dvi.
+# - zedboard: Vivado's ZedBoard PS preset (32-bit DDR3, UART1 on MIO, SD0)
+#   plus PS I2C0 over EMIO (IIC_0) to set up the board's ADV7511 HDMI
+#   transmitter; the 100 MHz oscillator (clk_100m); 16-bit YCbCr 4:2:2 video
+#   to the ADV7511 from adv7511_video.
+
+# The HDMI output stage's IP for each supported board (create_system.tcl
+# checks the catalog for it).
+proc board_display_ip {board} {
+    switch -- $board {
+        smart_zynq_sl { return digilentinc.com:ip:rgb2dvi:1.4 }
+        zedboard { return user.org:user:adv7511_video:1.0 }
+        default { error "Unsupported board: $board (hardware.board.name)" }
+    }
+}
+
 proc create_block_design {} {
-    global BD_NAME FCLK0_MHZ
+    global BD_NAME FCLK0_MHZ BOARD
     if {[version -short] ne "2025.2"} { error "This system requires Vivado 2025.2" }
+    board_display_ip $BOARD
     create_bd_design $BD_NAME
     current_bd_design $BD_NAME
 
     create_bd_intf_port -mode Master -vlnv xilinx.com:interface:ddrx_rtl:1.0 DDR
     create_bd_intf_port -mode Master -vlnv xilinx.com:display_processing_system7:fixedio_rtl:1.0 FIXED_IO
-    create_bd_intf_port -mode Master -vlnv xilinx.com:interface:uart_rtl:1.0 UART_0_0
-    create_bd_intf_port -mode Master -vlnv digilentinc.com:interface:tmds_rtl:1.0 TMDS_0
     create_bd_port -dir O o_core_idle_0
     create_bd_port -dir O o_core_running_0
-    create_bd_port -dir I -type clk -freq_hz 50000000 clk_50m
+    if {$BOARD eq "smart_zynq_sl"} {
+        create_bd_intf_port -mode Master -vlnv xilinx.com:interface:uart_rtl:1.0 UART_0_0
+        create_bd_intf_port -mode Master -vlnv digilentinc.com:interface:tmds_rtl:1.0 TMDS_0
+        create_bd_port -dir I -type clk -freq_hz 50000000 clk_50m
+        set pl_clock clk_50m
+    } else {
+        create_bd_intf_port -mode Master -vlnv xilinx.com:interface:iic_rtl:1.0 IIC_0
+        create_bd_port -dir I -type clk -freq_hz 100000000 clk_100m
+        set pl_clock clk_100m
+        foreach name {hdmi_clk hdmi_de hdmi_hsync hdmi_vsync} {
+            create_bd_port -dir O $name
+        }
+        create_bd_port -dir O -from 15 -to 0 hdmi_d
+    }
 
     # GP0: GPGPU CSRs. GP1: VDMA registers. HP0: GPGPU to DDR. HP2: VDMA to DDR.
-    # SD0: the TF card on MIO 40..45 (the only SD boot pins the BootROM
-    # supports), card detect on MIO 47, no write protect. The FSBL needs it to
-    # read the bitstream and the host from BOOT.BIN; bank 501 is 3.3 V.
     # FCLK_CLK1: 100 MHz, which the PS makes exactly (I/O PLL / 10).
     # PCW_EN_CLK1_PORT creates its pin; the enable alone does not.
     set ps [create_bd_cell -type ip -vlnv xilinx.com:ip:processing_system7:5.5 processing_system7_0]
+    if {$BOARD eq "zedboard"} {
+        # The board preset first (DDR3 part, width and trace delays, MIO
+        # peripherals and bank voltages); the settings below come after it.
+        set_property CONFIG.preset {ZedBoard} $ps
+    }
     set_property -dict [list \
         CONFIG.PCW_FPGA0_PERIPHERAL_FREQMHZ $FCLK0_MHZ \
         CONFIG.PCW_FPGA_FCLK0_ENABLE {1} \
@@ -49,22 +83,33 @@ proc create_block_design {} {
         CONFIG.PCW_USE_M_AXI_GP1 {1} \
         CONFIG.PCW_USE_S_AXI_HP0 {1} \
         CONFIG.PCW_USE_S_AXI_HP2 {1} \
-        CONFIG.PCW_UART0_PERIPHERAL_ENABLE {1} \
-        CONFIG.PCW_UART0_UART0_IO {EMIO} \
-        CONFIG.PCW_UART0_GRP_FULL_ENABLE {0} \
-        CONFIG.PCW_UART_PERIPHERAL_FREQMHZ {100} \
-        CONFIG.PCW_SD0_PERIPHERAL_ENABLE {1} \
-        CONFIG.PCW_SD0_SD0_IO {MIO 40 .. 45} \
-        CONFIG.PCW_SD0_GRP_CD_ENABLE {1} \
-        CONFIG.PCW_SD0_GRP_CD_IO {MIO 47} \
-        CONFIG.PCW_SD0_GRP_WP_ENABLE {0} \
-        CONFIG.PCW_SD0_GRP_POW_ENABLE {0} \
-        CONFIG.PCW_SDIO_PERIPHERAL_FREQMHZ {100} \
-        CONFIG.PCW_UIPARAM_DDR_PARTNO {MT41K256M16 RE-125} \
-        CONFIG.PCW_UIPARAM_DDR_BUS_WIDTH {16 Bit} \
-        CONFIG.PCW_UIPARAM_DDR_ECC {Disabled} \
         CONFIG.PCW_USE_FABRIC_INTERRUPT {1} \
         CONFIG.PCW_IRQ_F2P_INTR {1}] $ps
+    if {$BOARD eq "smart_zynq_sl"} {
+        # SD0: the TF card on MIO 40..45 (the only SD boot pins the BootROM
+        # supports), card detect on MIO 47, no write protect. The FSBL needs it
+        # to read the bitstream and the host from BOOT.BIN; bank 501 is 3.3 V.
+        set_property -dict [list \
+            CONFIG.PCW_UART0_PERIPHERAL_ENABLE {1} \
+            CONFIG.PCW_UART0_UART0_IO {EMIO} \
+            CONFIG.PCW_UART0_GRP_FULL_ENABLE {0} \
+            CONFIG.PCW_UART_PERIPHERAL_FREQMHZ {100} \
+            CONFIG.PCW_SD0_PERIPHERAL_ENABLE {1} \
+            CONFIG.PCW_SD0_SD0_IO {MIO 40 .. 45} \
+            CONFIG.PCW_SD0_GRP_CD_ENABLE {1} \
+            CONFIG.PCW_SD0_GRP_CD_IO {MIO 47} \
+            CONFIG.PCW_SD0_GRP_WP_ENABLE {0} \
+            CONFIG.PCW_SD0_GRP_POW_ENABLE {0} \
+            CONFIG.PCW_SDIO_PERIPHERAL_FREQMHZ {100} \
+            CONFIG.PCW_UIPARAM_DDR_PARTNO {MT41K256M16 RE-125} \
+            CONFIG.PCW_UIPARAM_DDR_BUS_WIDTH {16 Bit} \
+            CONFIG.PCW_UIPARAM_DDR_ECC {Disabled}] $ps
+    } else {
+        # I2C0 to the ADV7511 (HD-SCL, HD-SDA on PL pins).
+        set_property -dict [list \
+            CONFIG.PCW_I2C0_PERIPHERAL_ENABLE {1} \
+            CONFIG.PCW_I2C0_I2C0_IO {EMIO}] $ps
+    }
     create_bd_cell -type ip -vlnv user.org:user:gpgpu_axi:1.0 gpgpu_axi_0
     set smc [create_bd_cell -type ip -vlnv xilinx.com:ip:smartconnect:1.0 gpgpu_ctrl]
     set_property -dict [list CONFIG.NUM_SI {1} CONFIG.NUM_MI {1}] $smc
@@ -124,8 +169,9 @@ proc create_block_design {} {
         CONFIG.enable_detection {false} \
         CONFIG.max_clocks_per_line {2048} \
         CONFIG.max_lines_per_frame {1024}] $vtc
-    # 720p60 pixel clock from the 50 MHz oscillator (clk_50m, whose frequency
-    # the wizard takes as its input); the PLL settings are Vivado's. rgb2dvi makes the 5x TMDS serial clock itself
+    # 720p60 pixel clock from the PL oscillator (pl_clock, whose frequency the
+    # wizard takes as its input); the PLL settings are Vivado's. On the Smart
+    # Zynq SL, rgb2dvi makes the 5x TMDS serial clock itself
     # with an MMCM in the TMDS pins' clock region (BUFIO for the serial clock,
     # BUFR for the serializers' pixel clock), so the OSERDES clocks stay off
     # the global clock network the GPGPU's switching disturbs (see
@@ -139,11 +185,15 @@ proc create_block_design {} {
         CONFIG.PRIMITIVE {PLL} \
         CONFIG.USE_RESET {false}] $pixel_clk
     create_bd_cell -type ip -vlnv xilinx.com:ip:proc_sys_reset:5.0 proc_sys_reset_0
-    set hdmi [create_bd_cell -type ip -vlnv digilentinc.com:ip:rgb2dvi:1.4 rgb2dvi_0]
-    set_property -dict [list \
-        CONFIG.kClkPrimitive {MMCM} \
-        CONFIG.kClkRange {2} \
-        CONFIG.kGenerateSerialClk {true}] $hdmi
+    if {$BOARD eq "smart_zynq_sl"} {
+        set hdmi [create_bd_cell -type ip -vlnv [board_display_ip $BOARD] rgb2dvi_0]
+        set_property -dict [list \
+            CONFIG.kClkPrimitive {MMCM} \
+            CONFIG.kClkRange {2} \
+            CONFIG.kGenerateSerialClk {true}] $hdmi
+    } else {
+        create_bd_cell -type ip -vlnv [board_display_ip $BOARD] adv7511_video_0
+    }
     # Clock enables tied on; field id tied to 0 (progressive).
     create_bd_cell -type inline_hdl -vlnv xilinx.com:inline_hdl:ilconstant:1.0 clk_en
     set field [create_bd_cell -type inline_hdl -vlnv xilinx.com:inline_hdl:ilconstant:1.0 clk_en1]
@@ -152,7 +202,11 @@ proc create_block_design {} {
     foreach name {DDR FIXED_IO} {
         connect_bd_intf_net [get_bd_intf_ports $name] [get_bd_intf_pins processing_system7_0/$name]
     }
-    connect_bd_intf_net [get_bd_intf_ports UART_0_0] [get_bd_intf_pins processing_system7_0/UART_0]
+    if {$BOARD eq "smart_zynq_sl"} {
+        connect_bd_intf_net [get_bd_intf_ports UART_0_0] [get_bd_intf_pins processing_system7_0/UART_0]
+    } else {
+        connect_bd_intf_net [get_bd_intf_ports IIC_0] [get_bd_intf_pins processing_system7_0/IIC_0]
+    }
     connect_bd_intf_net [get_bd_intf_pins processing_system7_0/M_AXI_GP0] [get_bd_intf_pins gpgpu_ctrl/S00_AXI]
     connect_bd_intf_net [get_bd_intf_pins gpgpu_ctrl/M00_AXI] [get_bd_intf_pins gpgpu_axi_0/s00_axi]
     connect_bd_intf_net [get_bd_intf_pins gpgpu_axi_0/m00_axi] [get_bd_intf_pins gpgpu_ddr/S00_AXI]
@@ -164,7 +218,6 @@ proc create_block_design {} {
     connect_bd_intf_net [get_bd_intf_pins axi_vdma_0/M_AXIS_MM2S] [get_bd_intf_pins axis_subset_converter_0/S_AXIS]
     connect_bd_intf_net [get_bd_intf_pins axis_subset_converter_0/M_AXIS] [get_bd_intf_pins v_axi4s_vid_out_0/video_in]
     connect_bd_intf_net [get_bd_intf_pins v_tc_0/vtiming_out] [get_bd_intf_pins v_axi4s_vid_out_0/vtiming_in]
-    connect_bd_intf_net [get_bd_intf_pins rgb2dvi_0/TMDS] [get_bd_intf_ports TMDS_0]
 
     # FCLK_CLK0: the GPGPU, GP0 and HP0
     connect_bd_net [get_bd_pins processing_system7_0/FCLK_CLK0] \
@@ -188,22 +241,39 @@ proc create_block_design {} {
     connect_bd_net [get_bd_pins rst_ps7_0_35M/peripheral_aresetn] \
         [get_bd_pins axi_smc_1/aresetn] [get_bd_pins vdma_ddr/aresetn] [get_bd_pins axi_vdma_0/axi_resetn] \
         [get_bd_pins axis_subset_converter_0/aresetn] [get_bd_pins v_axi4s_vid_out_0/aresetn]
-    # Pixel clock domain
-    connect_bd_net [get_bd_ports clk_50m] [get_bd_pins clk_wiz_0/clk_in1]
+    # Pixel clock domain. The output stage takes the pixel clock, the active
+    # high reset and the video out's parallel video.
+    if {$BOARD eq "smart_zynq_sl"} {
+        set stage rgb2dvi_0
+        set stage_pins {PixelClk aRst {vid_active_video vid_pVDE vid_data vid_pData vid_hsync vid_pHSync vid_vsync vid_pVSync}}
+    } else {
+        set stage adv7511_video_0
+        set stage_pins {clk reset {vid_active_video vid_active_video vid_data vid_data vid_hsync vid_hsync vid_vsync vid_vsync}}
+    }
+    lassign $stage_pins stage_clock stage_reset stage_video
+    connect_bd_net [get_bd_ports $pl_clock] [get_bd_pins clk_wiz_0/clk_in1]
     connect_bd_net [get_bd_pins clk_wiz_0/clk_out1] \
         [get_bd_pins proc_sys_reset_0/slowest_sync_clk] [get_bd_pins v_axi4s_vid_out_0/vid_io_out_clk] \
-        [get_bd_pins v_tc_0/clk] [get_bd_pins rgb2dvi_0/PixelClk]
+        [get_bd_pins v_tc_0/clk] [get_bd_pins $stage/$stage_clock]
     connect_bd_net [get_bd_pins clk_wiz_0/locked] [get_bd_pins proc_sys_reset_0/dcm_locked]
     connect_bd_net [get_bd_pins proc_sys_reset_0/peripheral_aresetn] [get_bd_pins v_tc_0/resetn]
     connect_bd_net [get_bd_pins proc_sys_reset_0/peripheral_reset] \
-        [get_bd_pins v_axi4s_vid_out_0/vid_io_out_reset] [get_bd_pins rgb2dvi_0/aRst]
+        [get_bd_pins v_axi4s_vid_out_0/vid_io_out_reset] [get_bd_pins $stage/$stage_reset]
     connect_bd_net [get_bd_pins clk_en/dout] \
         [get_bd_pins v_axi4s_vid_out_0/aclken] [get_bd_pins v_axi4s_vid_out_0/vid_io_out_ce] \
         [get_bd_pins v_tc_0/clken]
     connect_bd_net [get_bd_pins v_axi4s_vid_out_0/vtg_ce] [get_bd_pins v_tc_0/gen_clken]
     connect_bd_net [get_bd_pins clk_en1/dout] [get_bd_pins v_axi4s_vid_out_0/fid]
-    foreach {pin rgb} {vid_active_video vid_pVDE vid_data vid_pData vid_hsync vid_pHSync vid_vsync vid_pVSync} {
-        connect_bd_net [get_bd_pins v_axi4s_vid_out_0/$pin] [get_bd_pins rgb2dvi_0/$rgb]
+    foreach {pin input} $stage_video {
+        connect_bd_net [get_bd_pins v_axi4s_vid_out_0/$pin] [get_bd_pins $stage/$input]
+    }
+    # The output stage's pins
+    if {$BOARD eq "smart_zynq_sl"} {
+        connect_bd_intf_net [get_bd_intf_pins rgb2dvi_0/TMDS] [get_bd_intf_ports TMDS_0]
+    } else {
+        foreach name {hdmi_clk hdmi_d hdmi_de hdmi_hsync hdmi_vsync} {
+            connect_bd_net [get_bd_pins adv7511_video_0/$name] [get_bd_ports $name]
+        }
     }
     # In0 is bit 0 of the 16-bit fabric IRQ bus (PS interrupt ID 61).
     connect_bd_net [get_bd_pins gpgpu_axi_0/irq] [get_bd_pins irq_concat/In0]

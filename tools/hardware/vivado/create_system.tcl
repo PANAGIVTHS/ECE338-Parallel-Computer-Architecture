@@ -55,22 +55,22 @@ if {$existing_project} {
 # This must precede both open_bd_design and create_bd_design.
 set_property ip_repo_paths [list $IP_REPO_DIR] [current_project]
 update_ip_catalog
-# Every IP the bootstrap design instantiates (create_block_design.tcl);
-# rgb2dvi comes from the vendor IP published beside the GPGPU package.
-foreach vlnv {
-    user.org:user:gpgpu_axi:1.0
-    xilinx.com:ip:processing_system7:5.5
-    xilinx.com:ip:smartconnect:1.0
-    xilinx.com:ip:proc_sys_reset:5.0
-    xilinx.com:inline_hdl:ilconcat:1.0
-    xilinx.com:inline_hdl:ilconstant:1.0
-    xilinx.com:ip:axi_vdma:6.3
-    xilinx.com:ip:axis_subset_converter:1.1
-    xilinx.com:ip:v_axi4s_vid_out:4.0
-    xilinx.com:ip:v_tc:6.2
-    xilinx.com:ip:clk_wiz:6.0
-    digilentinc.com:ip:rgb2dvi:1.4
-} {
+# Every IP the bootstrap design instantiates (create_block_design.tcl). The
+# board's HDMI output stage (rgb2dvi, adv7511_video) comes from the vendor IP
+# published beside the GPGPU package.
+foreach vlnv [list \
+    user.org:user:gpgpu_axi:1.0 \
+    xilinx.com:ip:processing_system7:5.5 \
+    xilinx.com:ip:smartconnect:1.0 \
+    xilinx.com:ip:proc_sys_reset:5.0 \
+    xilinx.com:inline_hdl:ilconcat:1.0 \
+    xilinx.com:inline_hdl:ilconstant:1.0 \
+    xilinx.com:ip:axi_vdma:6.3 \
+    xilinx.com:ip:axis_subset_converter:1.1 \
+    xilinx.com:ip:v_axi4s_vid_out:4.0 \
+    xilinx.com:ip:v_tc:6.2 \
+    xilinx.com:ip:clk_wiz:6.0 \
+    [board_display_ip $BOARD]] {
     if {[llength [get_ipdefs -all -quiet $vlnv]] == 0} {
         error "Required IP missing from configured catalog: $vlnv"
     }

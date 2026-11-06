@@ -5,7 +5,7 @@ array set options {
     -sources-manifest "" -xdc-file "" -bitstream-dir "" -platform-dir ""
     -xsa-name "" -export-file "" -num-cores "" -hdl-parameters "" -build-identity "" -jobs ""
     -repo-root "" -ip-repo-dir "" -axi-base "" -axi-range "" -fclk0-mhz "" -post-route-phys-opt ""
-    -post-route-phys-opt-directive "" -flow-version "" -ip-revision 1
+    -post-route-phys-opt-directive "" -flow-version "" -board "" -ip-revision 1
 }
 foreach {key value} $argv {
     if {![info exists options($key)] || $value eq ""} {error "Invalid/missing Vivado argument: $key"}
@@ -21,7 +21,7 @@ foreach {key name} {
     -export-file EXPORT_FILE -num-cores NUM_CORES -hdl-parameters HDL_PARAMETER_LIST -build-identity BUILD_IDENTITY_FILE -jobs JOBS -repo-root REPO_ROOT
     -ip-repo-dir IP_REPO_DIR -axi-base AXI_BASE -axi-range AXI_RANGE -fclk0-mhz FCLK0_MHZ
     -post-route-phys-opt POST_ROUTE_PHYS_OPT -post-route-phys-opt-directive POST_ROUTE_PHYS_OPT_DIRECTIVE
-    -flow-version FLOW_VERSION -ip-revision IP_REVISION
+    -flow-version FLOW_VERSION -board BOARD -ip-revision IP_REVISION
 } {set $name $options($key)}
 foreach name {PROJECT_DIR SOURCES_MANIFEST BUILD_IDENTITY_FILE XDC_FILE BITSTREAM_DIR PLATFORM_DIR EXPORT_FILE REPO_ROOT IP_REPO_DIR} {
     set $name [file normalize [set $name]]

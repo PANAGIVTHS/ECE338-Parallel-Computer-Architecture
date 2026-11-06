@@ -169,7 +169,7 @@ configure_block_design
     assert "CLOCK_KHZ" not in result.stdout
 
 
-def system_script(tmp_path, existing=False, missing_cell=None, wrong_vlnv=False):
+def system_script(tmp_path, existing=False, missing_cell=None, wrong_vlnv=False, board="smart_zynq_sl"):
     for name in ("create_block_design.tcl", "configure_block_design.tcl", "create_system.tcl"):
         if (VIVADO / name).exists():
             shutil.copy(VIVADO / name, tmp_path / name)
@@ -191,6 +191,7 @@ set NUM_CORES 8
 set AXI_BASE 0x43C00000
 set AXI_RANGE 0x10000
 set FCLK0_MHZ 35
+set BOARD {board}
 ''')
     return RECORDING_API + CONFIGURATION_API + f'''
 set missing {{{missing_cell or ''}}}
@@ -345,6 +346,58 @@ def test_bootstrap_ports_match_the_board_constraints():
     assert {"UART_0_0", "TMDS_0", "o_core_idle_0", "o_core_running_0"} <= constrained
     for port in constrained:
         assert re.search(rf"create_bd_(?:intf_)?port [^\n]* {port}$", text, re.M), port
+
+
+def test_zedboard_bootstrap_uses_the_preset_and_the_adv7511_output_stage(tmp_path):
+    result = run_tcl(system_script(tmp_path, board="zedboard"))
+    assert result.returncode == 0, result.stderr
+    out = result.stdout
+    lines = out.splitlines()
+    # The board preset comes before the design's own PS settings.
+    assert out.index("CONFIG.preset ZedBoard") < out.index("CONFIG.PCW_USE_S_AXI_HP0 1")
+    assert "CONFIG.PCW_I2C0_PERIPHERAL_ENABLE 1 CONFIG.PCW_I2C0_I2C0_IO EMIO" in out
+    assert "PCW_UART0" not in out and "PCW_UIPARAM_DDR" not in out
+    assert "connect_bd_intf_net IIC_0 processing_system7_0/IIC_0" in out
+    # No direct TMDS: the ADV7511 takes 16-bit YCbCr 4:2:2 from adv7511_video.
+    assert "rgb2dvi" not in out and "TMDS" not in out
+    assert "create_bd_cell -type ip -vlnv user.org:user:adv7511_video:1.0 adv7511_video_0" in out
+    assert "create_bd_port -dir O -from 15 -to 0 hdmi_d" in out
+    for pin in ("hdmi_clk", "hdmi_d", "hdmi_de", "hdmi_hsync", "hdmi_vsync"):
+        assert f"connect_bd_net adv7511_video_0/{pin} {pin}" in out
+    for pin, stage in (("vid_active_video", "vid_active_video"), ("vid_data", "vid_data"),
+                       ("vid_hsync", "vid_hsync"), ("vid_vsync", "vid_vsync")):
+        assert f"connect_bd_net v_axi4s_vid_out_0/{pin} adv7511_video_0/{stage}" in out
+    pixel = next(line for line in lines if line.startswith("connect_bd_net clk_wiz_0/clk_out1"))
+    assert "adv7511_video_0/clk" in pixel.split()
+    reset = next(line for line in lines if line.startswith("connect_bd_net proc_sys_reset_0/peripheral_reset"))
+    assert "adv7511_video_0/reset" in reset.split()
+    # The pixel clock from the 100 MHz PL oscillator.
+    assert "create_bd_port -dir I -type clk -freq_hz 100000000 clk_100m" in out
+    assert "connect_bd_net clk_100m clk_wiz_0/clk_in1" in out
+
+
+def test_unsupported_board_is_refused_before_the_design_is_created(tmp_path):
+    result = run_tcl(system_script(tmp_path, board="no_such_board"))
+    assert result.returncode != 0
+    assert "Unsupported board" in result.stderr
+    assert "create_bd_design" not in result.stdout
+
+
+def test_zedboard_ports_match_its_constraints():
+    text = (VIVADO / "create_block_design.tcl").read_text()
+    constrained = set()
+    for line in (ROOT / "hardware/constraints/zedboard.xdc").read_text().splitlines():
+        if line.lstrip().startswith("#"):
+            continue
+        for port in re.findall(r"get_ports \{?([\w\[\]]+)\}?\]", line):
+            # Interface and bus ports expand to <port>_<signal> or <port>[index].
+            constrained.add(re.sub(r"(?:_(?:scl_io|sda_io))|(?:\[\d+\])$", "", port))
+    assert {"IIC_0", "clk_100m", "hdmi_clk", "hdmi_d", "hdmi_de", "hdmi_hsync", "hdmi_vsync",
+            "o_core_idle_0", "o_core_running_0"} == constrained
+    for port in constrained - {"hdmi_clk", "hdmi_de", "hdmi_hsync", "hdmi_vsync"}:
+        assert re.search(rf"create_bd_(?:intf_)?port [^\n]* {port}$", text, re.M), port
+    # The four single-bit HDMI outputs are made in one loop.
+    assert "foreach name {hdmi_clk hdmi_de hdmi_hsync hdmi_vsync}" in text
 
 
 def test_system_reuses_saved_gui_design_without_bootstrap(tmp_path):

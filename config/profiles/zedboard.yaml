@@ -1,0 +1,39 @@
+# The Digilent/Avnet ZedBoard (same xc7z020clg484-1 as the default board).
+# Select it with `./gpgpu --profile zedboard ...`; values not set here come
+# from default.yaml.
+#
+# What differs from the Smart Zynq SL:
+# - PS: Vivado's ZedBoard preset (32-bit DDR3, UART1 on MIO 48/49, SD0 with
+#   write protect), plus PS I2C0 over EMIO for the HDMI transmitter.
+# - PL clock: the 100 MHz oscillator on Y9 instead of 50 MHz.
+# - HDMI: through an ADV7511 transmitter (16-bit YCbCr 4:2:2 from the
+#   adv7511_video IP, set up over I2C by the host's adv7511.c) instead of
+#   TMDS straight from the FPGA (rgb2dvi).
+hardware:
+  board:
+    name: zedboard
+    constraints: hardware/constraints/zedboard.xdc
+  vivado:
+    # The GPGPU's worst path (a core's EX/MEM register into the DDR write
+    # ring, ~26 ns) misses 40 MHz on this board's placement by 0.66 ns and
+    # 38.46 MHz by 0.03 ns, though it meets 40 MHz on the Smart Zynq SL. The
+    # PS makes 37.04 MHz from this (I/O PLL 1000 MHz / 27).
+    # config/local.yaml overrides it when it sets its own.
+    fabric_clock_mhz: 37
+  vitis:
+    host_sources:
+      - software/host/xc7z020/gpgpu_driver.c
+      - software/host/xc7z020/main.c
+      - software/host/xc7z020/adv7511.c
+
+# A separate build tree, so a ZedBoard build never reuses the default board's
+# saved project or Vitis workspace.
+paths:
+  build:
+    root: build/zedboard
+
+software:
+  host:
+    autorun:
+      enabled: true
+      program: ripple

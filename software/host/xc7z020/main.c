@@ -1,4 +1,5 @@
 #include "gpgpu_driver.h"
+#include "hdmi_encoder.h"
 
 #include "xparameters.h"
 #include "xil_io.h"
@@ -44,6 +45,12 @@
  * is not built in, so the count cannot be read back. */
 static const u32 framebuffers[] = { GPGPU_FB0_BASE, GPGPU_FB1_BASE };
 #define FB_COUNT                 (sizeof(framebuffers) / sizeof(framebuffers[0]))
+
+/* No HDMI transmitter chip to set up (the FPGA drives HDMI itself); a board
+ * with one links its own hdmi_encoder_init() (hdmi_encoder.h). */
+__attribute__((weak)) int hdmi_encoder_init(void) {
+    return 0;
+}
 
 static u32 rx_buffer[GPGPU_MAX_WORDS];
 static u32 shown_fb = 0U;
@@ -485,6 +492,8 @@ int main(void) {
     }
 
     gpgpu_print_status();
+    if (hdmi_encoder_init() != 0)
+        xil_printf("ERROR: HDMI transmitter setup failed; no picture expected\r\n");
     display_start(shown_fb);
 #if GPGPU_AUTORUN
     autorun();
