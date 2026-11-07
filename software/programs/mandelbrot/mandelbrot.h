@@ -1,129 +1,57 @@
 #ifndef mandelbrot_h
 #define mandelbrot_h
 
-#define WIDTH 64
-#define HEIGHT 64
-#define LOG2_WIDTH 6
+#include "../gpgpu_math.h"
 
 /*
- * Fixed-point format: Q20
+ * Escape-time fractals (mandelbrot, julia) drawn into a framebuffer.
  *
- * 1.0 = 1048576
- * 2.0 = 2097152
- * 4.0 = 4194304
+ * Fixed-point format: Q20 (1.0 = 1048576).
  *
- * Q20 gives enough zoom precision for the default 1000-frame x86 animation.
- * With WIDTH=64, the center-to-center pixel step is roughly:
- *
- *     pixel_step_q = scale_q >> 6
- *
- * Q13 stopped visibly changing once scale_q was clamped at 64. Q20 moves that
- * quantization limit 128x deeper while still keeping coordinates in the 26-bit
- * packed argument field used by the FPGA adapter.
+ * Keep multiplication in 32-bit arithmetic for the RV32/GPU path. Shifting both
+ * operands down before the multiply avoids overflow for escaped z values; the
+ * result still has Q20 scale, with about Q12 effective multiply precision. That
+ * limits zooming: below a pixel step of about 2^-12 the picture turns blocky.
  */
 #define FP_SHIFT 20
 #define FP_ONE (1 << FP_SHIFT)
-
-/*
- * Keep multiplication in 32-bit arithmetic for the RV32/GPU path. Shifting both
- * operands down before the multiply avoids overflow for escaped z values; the
- * result still has Q20 scale, with about Q16 effective multiply precision.
- */
 #define FP_MUL_PRE_SHIFT 8
 
-#define MAX_ITER 64
 #define ESCAPE_RADIUS2_Q (4 << FP_SHIFT)
 
-/*
- * Boundary-focused Mandelbrot viewport.
- *
- * The old default center (-0.75, 0.0) lies inside the black Mandelbrot set, so
- * zooming there quickly becomes black. This center is near the Seahorse Valley
- * boundary, so zooming reveals fractal detail.
- *
- * Approximate real values:
- *   center_re ~= -0.74365
- *   center_im ~=  0.13184
- *   scale     =   3.0
- */
-#define DEFAULT_CENTER_RE_Q (-779776)  /* old Q13 -6092 converted to Q20 */
-#define DEFAULT_CENTER_IM_Q (138240)   /* old Q13  1080 converted to Q20 */
-#define DEFAULT_SCALE_Q     (3145728)  /* 3.00000 * 1048576 */
+/* Samples are 2x2 pixels: one per lane in each chunk of 2 * CORES pixels. */
+#define FRACTAL_BLOCK 2
 
-/*
- * For x86 CSV generation only. The zoom update uses scale -= scale >> 7, so it
- * has no division and maps cleanly to the current RV32/GPU instruction subset.
- */
-#define DEFAULT_FRAMES 1000
-#define DEFAULT_ZOOM_SHIFT 7
-
-static inline int select_int(int old_value, int new_value, int mask)
-{
-    return (old_value & ~mask) | (new_value & mask);
-}
-
-static inline int fixed_mul(int a, int b)
+INLINE int fixed_mul(int a, int b)
 {
     return ((a >> FP_MUL_PRE_SHIFT) * (b >> FP_MUL_PRE_SHIFT)) >>
            (FP_SHIFT - (2 * FP_MUL_PRE_SHIFT));
 }
 
-static inline int zoom_next_scale(int scale_q)
-{
-    int delta = scale_q >> DEFAULT_ZOOM_SHIFT;
-    int delta_is_zero = (delta == 0);
-    delta = select_int(delta, 1, -delta_is_zero);
-
-    int next = scale_q - delta;
-    int below_min = (next < 1);
-    return select_int(next, 1, -below_min);
-}
-
 /*
- * Branchless Mandelbrot pixel.
+ * Branchless escape time of z -> z^2 + c from z = (zr, zi).
  *
- * Every pixel executes exactly MAX_ITER iterations.
+ * Every pixel executes exactly max_iter iterations.
  * There is no early exit, so there is no divergence from the escape condition.
+ * Returns the iteration at which |z|^2 first exceeded 4, or max_iter.
  */
-static inline int mandel_pixel(
-    unsigned int px,
-    unsigned int py,
-    int center_re_q,
-    int center_im_q,
-    int scale_q
-)
+INLINE int escape_time(int zr, int zi, int cx, int cy, int max_iter)
 {
-    int x_off = (int)px - (WIDTH >> 1);
-    int y_off = (int)py - (HEIGHT >> 1);
-
-    int cx = center_re_q + ((x_off * scale_q) >> LOG2_WIDTH);
-    int cy = center_im_q + ((y_off * scale_q) >> LOG2_WIDTH);
-
-    int zr = 0;
-    int zi = 0;
-
     int escaped = 0;
-    int escape_iter = MAX_ITER;
+    int escape_iter = max_iter;
 
-    for (int iter = 0; iter < MAX_ITER; iter++) {
+    for (int iter = 0; iter < max_iter; iter++) {
         int zr2 = fixed_mul(zr, zr);
         int zi2 = fixed_mul(zi, zi);
         int mag2 = zr2 + zi2;
 
-        /*
-         * escaped_now = 1 if |z|^2 > 4, else 0.
-         * This should compile to a compare instruction, not a branch.
-         */
+        /* escaped_now = 1 if |z|^2 > 4, else 0: a compare, not a branch. */
         int escaped_now = (mag2 > ESCAPE_RADIUS2_Q);
 
         int active = escaped ^ 1;
-        int new_escape = active & escaped_now;
-        int new_escape_mask = -new_escape;
-        volatile int keep_escape_iter_mask = ~new_escape_mask;
-        volatile int set_escape_iter_mask = new_escape_mask;
+        int new_escape_mask = mask_of(active & escaped_now);
 
-        escape_iter = (escape_iter & keep_escape_iter_mask) |
-                      (iter & set_escape_iter_mask);
+        escape_iter = select_mask(new_escape_mask, iter, escape_iter);
 
         escaped = escaped | escaped_now;
 
@@ -145,7 +73,7 @@ static inline int mandel_pixel(
          * longer need z after escape_iter has been recorded, so zeroing it is
          * safe and keeps the arithmetic bounded.
          */
-        int update_mask = -(escaped ^ 1);
+        int update_mask = mask_of(escaped ^ 1);
 
         zr = zr_next & update_mask;
         zi = zi_next & update_mask;
@@ -153,5 +81,123 @@ static inline int mandel_pixel(
 
     return escape_iter;
 }
+
+/* One frame's view. The pixel p (relative to the screen center, times step)
+ * goes into z for a Julia set (c fixed at (cx, cy)) and into c for the
+ * Mandelbrot set (z starting at 0, c = (cx, cy) + p). */
+typedef struct {
+    int julia;  /* 1: Julia set, 0: Mandelbrot set */
+    int cx, cy; /* Q20 */
+    int step;   /* distance between pixels, Q20 */
+    int max_iter;
+} fractal_t;
+
+/* Color of the sample at pixel (px, py): black inside the set, outside a
+ * rainbow by escape time that cycles with the frame and fades out towards
+ * the background. */
+INLINE unsigned int fractal_sample(int px, int py, int width, int height, int frame,
+                                   volatile const fractal_t *f)
+{
+    int pr = (px - (width >> 1)) * f->step;
+    int pi = (py - (height >> 1)) * f->step;
+    int n;
+
+    if (f->julia) /* the same in every lane */
+        n = escape_time(pr, pi, f->cx, f->cy, f->max_iter);
+    else
+        n = escape_time(0, 0, f->cx + pr, f->cy + pi, f->max_iter);
+
+    int t = n * 40 + frame * 6;
+    int level = min255(n * 24 + 16);
+    int outside = mask_of(n != f->max_iter);
+    int r = 128 + ((127 * sine_q14(t)) >> 14);
+    int g = 128 + ((127 * sine_q14(t + TURN / 3)) >> 14);
+    int b = 128 + ((127 * sine_q14(t + 2 * TURN / 3)) >> 14);
+
+    r = ((r * level) >> 8) & outside;
+    g = ((g * level) >> 8) & outside;
+    b = ((b * level) >> 8) & outside;
+    return ((unsigned int)r << 16) | ((unsigned int)g << 8) | (unsigned int)b;
+}
+
+#ifdef __riscv
+
+#include "../gpgpu_runtime.h"
+
+/*
+ * Draw one frame of *f into the framebuffer, then advance the frame counter.
+ *
+ * Args (the ripple convention):
+ *   GPGPU_ARGS[0] = framebuffer base, byte address (GPGPU_FB0_BASE or GPGPU_FB1_BASE)
+ *   GPGPU_ARGS[1] = width in pixels, a multiple of 2 * GPGPU_NUM_CORES
+ *   GPGPU_ARGS[2] = height in pixels, even
+ *   GPGPU_ARGS[3] = frame number
+ *
+ * Each sample colors a 2x2 block: lane j computes the sample of pixels
+ * x0 + 2j, x0 + 2j + 1 in rows y and y + 1, and the lanes swap samples
+ * through `samples` in DMEM so each store still writes GPGPU_NUM_CORES
+ * consecutive pixels (one DDR burst). That is a quarter of the escape loops
+ * of full resolution.
+ *
+ * Each lane's stack is only GPGPU_STACK_STRIDE bytes, too small for the
+ * spills of this loop nest. So the loops keep only y and x0 in registers
+ * across the escape loop: the arguments are reloaded (GPGPU_ARGS is
+ * volatile) and *f is in DMEM.
+ */
+INLINE void fractal_render(volatile const fractal_t *f, volatile unsigned int *samples)
+{
+    const int cores = (int)GPGPU_NUM_CORES;
+
+    for (int y = 0; y < GPGPU_ARGS[2]; y += FRACTAL_BLOCK) {
+        for (int x0 = 0; x0 < GPGPU_ARGS[1]; x0 += FRACTAL_BLOCK * cores) {
+            int tid = (int)gpgpu_thread_id();
+
+            samples[tid] = fractal_sample(x0 + FRACTAL_BLOCK * tid, y, GPGPU_ARGS[1],
+                                          GPGPU_ARGS[2], GPGPU_ARGS[3], f);
+
+            /* The store above completes in every lane before these loads:
+             * the warp waits for all lanes' responses to each access.
+             * Output pixel x0 + tid shows sample tid / 2, and x0 + cores +
+             * tid shows sample cores / 2 + tid / 2. */
+            tid = (int)gpgpu_thread_id();
+            unsigned int a = samples[tid >> 1];
+            unsigned int b = samples[(cores >> 1) + (tid >> 1)];
+            int width = GPGPU_ARGS[1];
+            volatile unsigned int *p =
+                (volatile unsigned int *)(uintptr_t)GPGPU_ARGS[0] + y * width + x0 + tid;
+
+            p[0] = a;
+            p[cores] = b;
+            p[width] = a;
+            p[width + cores] = b;
+        }
+    }
+
+    /* Every lane stores the same value. */
+    GPGPU_ARGS[3] = GPGPU_ARGS[3] + 1;
+}
+
+#else
+
+#include <stdio.h>
+
+/* The x86 reference: the same frame as a binary PPM on stdout. */
+static void fractal_ppm(const fractal_t *f, int width, int height, int frame)
+{
+    printf("P6\n%d %d\n255\n", width, height);
+    for (int y = 0; y < height; y++) {
+        for (int x = 0; x < width; x++) {
+            /* The sample of the 2x2 block the pixel is in. */
+            unsigned int color = fractal_sample(x & ~(FRACTAL_BLOCK - 1), y & ~(FRACTAL_BLOCK - 1),
+                                                width, height, frame, f);
+
+            putchar((color >> 16) & 0xFF);
+            putchar((color >> 8) & 0xFF);
+            putchar(color & 0xFF);
+        }
+    }
+}
+
+#endif
 
 #endif // mandelbrot_h
