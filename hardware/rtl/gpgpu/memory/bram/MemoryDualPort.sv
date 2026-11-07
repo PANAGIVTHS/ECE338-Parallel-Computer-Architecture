@@ -1,8 +1,8 @@
 /**
- * True dual-port memory targeting Vivado BRAM.
+ * True dual-port memory targeting Vivado BRAM, with byte write enables.
  *
  * Simultaneous writes to the same address have undefined behavior.
- * Both ports use write-first behavior.
+ * Both ports use read-first behavior: a write returns the word's old value.
  */
 module MemoryDualPort #(
     parameter int DEPTH = 1024,
@@ -10,14 +10,15 @@ module MemoryDualPort #(
 )(
     input logic clk,
 
-    MemoryInterface.slave memory_a,
-    MemoryInterface.slave memory_b
+    MemoryInterface.byte_slave memory_a,
+    MemoryInterface.byte_slave memory_b
 );
 
     (* ram_style = "block" *) 
     logic [memory_a.DATA_WIDTH-1:0] data [0:DEPTH-1];
 
     localparam int EXPECTED_ADDR_WIDTH = (DEPTH > 1) ? $clog2(DEPTH) : 1;
+    localparam int NUM_BYTES = memory_a.DATA_WIDTH / 8;
     if (DEPTH <= 0) begin : g_depth_check
         $fatal(1, "Memory DEPTH must be positive");
     end
@@ -46,24 +47,24 @@ module MemoryDualPort #(
     // Port A
     always @(posedge clk) begin
         if (memory_a.ren) begin
-            if (memory_a.wen) begin
-                data[memory_a.addr] <= memory_a.wdata;
-                memory_a.rdata <= memory_a.wdata;
-            end else begin
-                memory_a.rdata <= data[memory_a.addr];
+            for (int i = 0; i < NUM_BYTES; i++) begin
+                if (memory_a.wen && memory_a.wstrb[i]) begin
+                    data[memory_a.addr][i*8 +: 8] <= memory_a.wdata[i*8 +: 8];
+                end
             end
+            memory_a.rdata <= data[memory_a.addr];
         end
     end
 
     // Port B
     always @(posedge clk) begin
         if (memory_b.ren) begin
-            if (memory_b.wen) begin
-                data[memory_b.addr] <= memory_b.wdata;
-                memory_b.rdata <= memory_b.wdata;
-            end else begin
-                memory_b.rdata <= data[memory_b.addr];
+            for (int i = 0; i < NUM_BYTES; i++) begin
+                if (memory_b.wen && memory_b.wstrb[i]) begin
+                    data[memory_b.addr][i*8 +: 8] <= memory_b.wdata[i*8 +: 8];
+                end
             end
+            memory_b.rdata <= data[memory_b.addr];
         end
     end
 
