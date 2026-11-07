@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from gpgpu.adapters.doit_engine import _StateCheck
+from gpgpu.adapters.doit_engine import DoitEngine, _StateCheck
 from gpgpu.adapters.tools import Machine
 from gpgpu.adapters.vivado.system_project import canonicalize
 from gpgpu.api import GpgpuError, Step, SyncRefused, SyncReport, SyncState, Task, classify
@@ -192,6 +192,20 @@ def test_required_tasks_are_checked_and_never_run(tmp_path):
     assert workspace.run("sw:app", warn=warnings.append) == 0
     assert engine.loaded == ["sw:app"]  # the engine never even hears of hw:build
     assert "`gpgpu hw build` is out of date (rtl.sv changed)" in warnings[0]
+
+
+def test_stages_and_log_numbers_follow_the_order_pydoit_runs_them(tmp_path):
+    # vitis:build:host's shape: a deep chain declared before a need without needs of its own.
+    stage = Step(action=lambda: None, always_run=True)
+    tasks = [Task("sw:deep0", "D0.", stage), Task("sw:deep1", "D1.", stage, needs=("sw:deep0",)),
+             Task("sw:leaf", "L.", stage), Task("sw:top", "T.", stage, needs=("sw:deep1", "sw:leaf"))]
+    engine = DoitEngine(SimpleNamespace(repo_root=tmp_path, build_root=tmp_path / "build"))
+    assert engine.run(tasks, "sw:top", monitor=False) == 0
+    run_dir = next((tmp_path / "logs/runs").iterdir())
+    stages = json.loads((run_dir / "run.json").read_text())["tasks"]
+    assert stages == sorted(stages, key=lambda stage: stage["started_at"])
+    assert [stage["log"] for stage in stages] == [f"{index:02d}_sw-{stage['task'][3:]}.log" for index, stage in enumerate(stages)]
+    assert all((run_dir / stage["log"]).is_file() for stage in stages)
 
 
 def test_one_command_per_category_of_a_build_tree(tmp_path):

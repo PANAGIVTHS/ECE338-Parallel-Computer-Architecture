@@ -295,7 +295,7 @@ proc cr_bd_design_1 { parentCell } {
     CONFIG.C_HYSTERESIS_LEVEL {16} \
     CONFIG.C_S_AXIS_VIDEO_DATA_WIDTH {8} \
     CONFIG.C_S_AXIS_VIDEO_FORMAT {2} \
-    CONFIG.C_VTG_MASTER_SLAVE {1} \
+    CONFIG.C_VTG_MASTER_SLAVE {0} \
   ] $v_axi4s_vid_out_0
 
 
@@ -314,6 +314,7 @@ proc cr_bd_design_1 { parentCell } {
   set_property -dict [list \
     CONFIG.CLKOUT1_REQUESTED_OUT_FREQ {74.25} \
     CONFIG.CLKOUT2_USED {false} \
+    CONFIG.JITTER_SEL {Max_I_Jitter} \
     CONFIG.PRIMITIVE {PLL} \
     CONFIG.USE_RESET {false} \
   ] $clk_wiz_0
@@ -364,8 +365,7 @@ proc cr_bd_design_1 { parentCell } {
   connect_bd_net -net clk_en_dout [get_bd_pins clk_en/dout] \
   [get_bd_pins v_axi4s_vid_out_0/aclken] \
   [get_bd_pins v_axi4s_vid_out_0/vid_io_out_ce] \
-  [get_bd_pins v_tc_0/clken] \
-  [get_bd_pins v_tc_0/gen_clken]
+  [get_bd_pins v_tc_0/clken]
   connect_bd_net -net clk_wiz_0_clk_out1 [get_bd_pins clk_wiz_0/clk_out1] \
   [get_bd_pins proc_sys_reset_0/slowest_sync_clk] \
   [get_bd_pins rgb2dvi_0/PixelClk] \
@@ -432,6 +432,8 @@ proc cr_bd_design_1 { parentCell } {
   [get_bd_pins v_axi4s_vid_out_0/vid_hsync]
   connect_bd_net -net v_axi4s_vid_out_0_vid_vsync [get_bd_pins rgb2dvi_0/vid_pVSync] \
   [get_bd_pins v_axi4s_vid_out_0/vid_vsync]
+  connect_bd_net -net v_axi4s_vid_out_0_vtg_ce [get_bd_pins v_axi4s_vid_out_0/vtg_ce] \
+  [get_bd_pins v_tc_0/gen_clken]
 
   # Create address segments
   assign_bd_address -offset 0x83000000 -range 0x00010000 -target_address_space [get_bd_addr_spaces processing_system7_0/Data] [get_bd_addr_segs axi_vdma_0/S_AXI_LITE/Reg] -force

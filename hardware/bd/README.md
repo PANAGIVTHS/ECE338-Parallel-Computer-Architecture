@@ -32,7 +32,9 @@ Both see the PS DDR identity-mapped. GP0 reaches the GPGPU's CSRs, GP1 the VDMA'
 **Scanout.** A read-only VDMA of 32-bit pixels (one framebuffer word each), two frame stores
 (FB0, FB1), 16-beat bursts -> 4-to-3-byte subset converter (`0x00RRGGBB` to the 24-bit
 AXI4-Stream video order {R, B, G}) -> AXI4-Stream video out, timed by a VTC in its default
-mode -> `rgb2dvi`. Clock enables are tied on, and the field id is tied to 0 (progressive).
+mode -> `rgb2dvi`. The video out is the VTC’s slave: its vtg_ce drives the VTC’s gen_clken,
+so the timing waits for the stream. The other clock enables are tied on, and the field id
+is tied to 0 (progressive).
 
 **Clocks.** FCLK_CLK0 is owned by the configuration and follows the GPGPU's timing, so it
 runs only the GPGPU, GP0 and HP0. The display runs on the fixed FCLK_CLK1 (GP1, the VDMA, HP2

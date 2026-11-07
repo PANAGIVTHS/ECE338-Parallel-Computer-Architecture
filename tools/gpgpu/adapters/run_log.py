@@ -101,7 +101,8 @@ class RunLogReporter(ConsoleReporter):
             "git_commit": (_git(repo_root, "rev-parse", "--short", "HEAD") or "").strip() or None,
             "git_dirty": bool(_git(repo_root, "status", "--porcelain")), "tasks": []}
         self._records: dict[str, dict[str, Any]] = {}  # stage -> its entry in run.json
-        self._logs: dict[str, str] = {}                # stage -> its log file name
+        self._logs: dict[str, str] = {}                # stage -> its log file name, once pydoit reaches it
+        self._reached = 0                              # stages reached so far; they lead run.json
         self._started: dict[str, float] = {}
         self._capture: _Capture | None = None
         self._active: str | None = None
@@ -149,26 +150,39 @@ class RunLogReporter(ConsoleReporter):
 
         for name in selected_tasks:
             visit(name)
-        for index, task in enumerate(planned):
+        for task in planned:
             record = {"task": task.name, "status": "not_run"}
             self.metadata["tasks"].append(record)
             self._records[task.name] = record
-            self._logs[task.name] = f"{index:02d}_{_slug(task.name)}.log"
         self._save()
         if self._monitor:
             self._dashboard = BuildDashboard(self.run_dir, self._dashboard_failed)
             self._dashboard.start()
+
+    def _reach(self, name: str) -> str:
+        """Move a stage to where pydoit actually ran it, and number its log from there.
+
+        The dependency-order plan cannot predict pydoit, which runs a need without needs of its
+        own before a deep chain declared ahead of it.
+        """
+        if name not in self._logs:
+            tasks, record = self.metadata["tasks"], self._records[name]
+            tasks.insert(self._reached, tasks.pop(next(i for i, item in enumerate(tasks) if item is record)))
+            self._logs[name] = f"{self._reached:02d}_{_slug(name)}.log"
+            self._reached += 1
+        return self._logs[name]
 
     def execute_task(self, task: Task) -> None:
         record = self._records.get(task.name)
         if record is None:
             super().execute_task(task)
             return
-        record.update(status="running", log=self._logs[task.name],
+        log = self._reach(task.name)
+        record.update(status="running", log=log,
                       started_at=datetime.now().astimezone().isoformat(timespec="microseconds"))
         self._started[task.name] = time.perf_counter()
         self._active = task.name
-        self._capture = _Capture(self.run_dir / self._logs[task.name], mirror=not self._dashboard_active())
+        self._capture = _Capture(self.run_dir / log, mirror=not self._dashboard_active())
         self._capture.start()
         if not self._dashboard_active():  # the dashboard may have failed since the line above
             self._capture.mirror = True
@@ -186,8 +200,8 @@ class RunLogReporter(ConsoleReporter):
         else:
             self.write(f"ERROR: {message}\n")
             if task.name in self._records:  # failed before it started: a missing input
-                self._records[task.name]["log"] = self._logs[task.name]
-                (self.run_dir / self._logs[task.name]).write_text(f"ERROR: {message}\n", encoding="utf-8")
+                log = self._records[task.name]["log"] = self._reach(task.name)
+                (self.run_dir / log).write_text(f"ERROR: {message}\n", encoding="utf-8")
         if task.name in self._records:
             self._records[task.name].update(exit_code=_exit_code(message), error=message)
         self._finish(task, "failed")
@@ -195,6 +209,7 @@ class RunLogReporter(ConsoleReporter):
 
     def skip_uptodate(self, task: Task) -> None:
         if task.name in self._records:
+            self._reach(task.name)
             self._records[task.name]["status"] = "up_to_date"
             self._save()
         super().skip_uptodate(task)
