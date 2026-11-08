@@ -50,7 +50,8 @@ module DDRBackend
     //& =============================================
     logic [NUM_REQ-1:0] cand, selected;
     logic push_rd, push_wr;
-    ring_group_t group_address;
+    logic rd_beats, wr_beats; // the group pushed last cycle, with its beats
+    ring_group_t cmd_group;
     beat_t first_beat, last_beat;
     logic rd_ring_free, wr_ring_free;
     assign rd_ring_free = 1'b0; // TODO: remove when read ring is impemented (Currently hangs read instrutions)
@@ -72,7 +73,9 @@ module DDRBackend
         .accept       (selected),
         .push_rd      (push_rd),
         .push_wr      (push_wr),
-        .group_address(group_address),
+        .rd_cmd       (rd_beats),
+        .wr_cmd       (wr_beats),
+        .cmd_group    (cmd_group),
         .first_beat   (first_beat),
         .last_beat    (last_beat)
     );
@@ -114,7 +117,8 @@ module DDRBackend
         .free         (wr_ring_free),
         .wr_alloc     (wr_alloc),
         .push_wr      (push_wr),
-        .group_address(group_address),
+        .wr_cmd       (wr_beats),
+        .cmd_group    (cmd_group),
         .first_beat   (first_beat),
         .last_beat    (last_beat),
         // DDR interface from requesters

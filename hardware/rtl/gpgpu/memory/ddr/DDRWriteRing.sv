@@ -19,12 +19,13 @@ module DDRWriteRing
     output cmd_t aw_cmd, // For last accepted group (AW channel)
 
     // For accepting groups
-    output logic free, // AW command register free and a slot is free
+    output logic free, // A slot is free, and the AW register will be when the beats arrive
     output ring_index_t wr_alloc, // Next free slot
     
-    // Formed group
+    // Formed group: pushed into a slot, then its beats in the next cycle
     input logic push_wr, // Push new group into a slot
-    input ring_group_t group_address,
+    input logic wr_cmd, // The group pushed last cycle: its address and beats
+    input ring_group_t cmd_group,
     input beat_t first_beat, 
     input beat_t last_beat,
 
@@ -73,7 +74,8 @@ module DDRWriteRing
 
     //& =============================================
     //& AW command register, empties when AW channel 
-    //& handshakes and fills when new group is pushed to a slot
+    //& handshakes and fills the cycle after a group is
+    //& pushed to a slot, when its beats arrive
     //& =============================================
     beat_t length;
     assign length = last_beat - first_beat;
@@ -81,10 +83,10 @@ module DDRWriteRing
     always_ff @(posedge clk) begin
         if (~rst_n) begin
             aw_cmd <= '0;
-        end else if (push_wr) begin
+        end else if (wr_cmd) begin
             aw_cmd <= cmd_t'{
                 valid: 1'b1,
-                addr: axi_addr_t'(word_of(group_address, first_beat)),
+                addr: axi_addr_t'(word_of(cmd_group, first_beat)),
                 len: axi_len_t'(length)
             };
         end else if (aw_fire) begin
@@ -100,8 +102,10 @@ module DDRWriteRing
     logic empty, full, pop;
 
     // Slot indices: the pointers without their wrap bit
-    wr_slot_idx_t alloc_idx, w_idx, w_next_idx, b_idx, head_idx;
+    wr_slot_idx_t alloc_idx, cmd_idx, w_idx, w_next_idx, b_idx, head_idx;
     assign alloc_idx = alloc[SLOT_W-1:0];
+    // The slot pushed last cycle: no push follows one directly (see free)
+    assign cmd_idx = alloc_idx - wr_slot_idx_t'(1);
     assign w_idx = w[SLOT_W-1:0];
     assign w_next_idx = w_next[SLOT_W-1:0];
     assign b_idx = b[SLOT_W-1:0];
@@ -110,7 +114,9 @@ module DDRWriteRing
     assign w_next = w + wr_ptr_t'(1);
     assign empty = (head == alloc);
     assign full = (head_idx == alloc_idx) & (head[SLOT_W] != alloc[SLOT_W]);
-    assign w_valid = (w != alloc) & ~(aw_cmd.valid & (w_next == alloc)); // AW of slot w has gone
+    // AW of slot w has gone: when w is the newest slot, its AW is neither
+    // in the AW register nor still to arrive
+    assign w_valid = (w != alloc) & ~((aw_cmd.valid | wr_cmd) & (w_next == alloc));
 
     // Allocation pointer
     always_ff @(posedge clk) begin
@@ -176,12 +182,12 @@ module DDRWriteRing
             end
         end else begin
             if (push_wr) begin
-                slot[alloc_idx] <= '{
-                    first: first_beat,
-                    len: length,
-                    b_done: 1'b0,
-                    bresp: AXI_RESP_OKAY
-                };
+                slot[alloc_idx].b_done <= 1'b0;
+                slot[alloc_idx].bresp <= AXI_RESP_OKAY;
+            end
+            if (wr_cmd) begin
+                slot[cmd_idx].first <= first_beat;
+                slot[cmd_idx].len <= length;
             end
             if (b_fire) begin
                 slot[b_idx].b_done <= 1'b1;
@@ -239,12 +245,14 @@ module DDRWriteRing
     end
 
     assign busy = ~empty;
-    assign free = ~full & (~aw_cmd.valid | aw_ready);
+    // The AW register takes the beats in the cycle after a push, so the
+    // register must be empty by then and the cycle after a push takes none
+    assign free = ~full & ~wr_cmd & (~aw_cmd.valid | aw_ready);
 
     // Fatal faults
     logic stray_b, cmd_overrun, push_full;
     assign stray_b = b_valid & (b == w);
-    assign cmd_overrun = push_wr & aw_cmd.valid & ~aw_ready;
+    assign cmd_overrun = wr_cmd & aw_cmd.valid & ~aw_ready;
     assign push_full = push_wr & full;
     assign fatal = stray_b | cmd_overrun | push_full;
     assign fatal_code = stray_b ? FATAL_UNEXPECTED

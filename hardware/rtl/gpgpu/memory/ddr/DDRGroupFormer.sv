@@ -1,15 +1,18 @@
-// DDRGroupFormer: forms one AXI burst group per cycle from the candidates.
+// DDRGroupFormer: forms AXI burst groups from the candidates.
 //
-// Two stages, so that picking a seed and gathering its group are never in the
-// same cycle. The seed register holds the group being gathered (its 128-byte
-// window and direction): every candidate in it is a member, and all of them
-// are accepted together as soon as the group's ring is free. In the same
-// cycle the next seed is picked: the lowest-index eligible candidate outside
-// the held group, so a new group is still formed every cycle.
+// Three stages, so that picking a seed, gathering its group and finding the
+// group's beats are never in the same cycle. The seed register holds the
+// group being gathered (its 128-byte window and direction): every candidate
+// in it is a member, and all of them are accepted together (pushed) as soon
+// as the group's ring is free. In the same cycle the next seed is picked: the
+// lowest-index eligible candidate outside the held group. The cycle after a
+// push gives the ring the pushed group's first and last beat, for its AW
+// command; the ring takes no push in that cycle, so a group is pushed at
+// most every other cycle.
 //
 // A request stays a candidate, with the same address, until it is accepted,
 // so a group still gathers every request in its window: the bursts are the
-// ones the single-cycle former made, each one cycle later.
+// ones a single-cycle former would make.
 module DDRGroupFormer
     import gpu_pkg::*;
     import DDRBackendPkg::*;
@@ -32,8 +35,10 @@ module DDRGroupFormer
     output logic push_rd, // Accepted for read
     output logic push_wr, // Accepted for write
 
-    // Currently accepted group and its beats
-    output ring_group_t group_address,
+    // The group pushed last cycle, and its beats
+    output logic rd_cmd,
+    output logic wr_cmd,
+    output ring_group_t cmd_group,
     output beat_t first_beat,
     output beat_t last_beat
 );
@@ -116,8 +121,24 @@ module DDRGroupFormer
     end
 
     //& =============================================
-    //& FIRST AND LAST BEAT OF THE HELD GROUP
+    //& FIRST AND LAST BEAT OF THE GROUP PUSHED LAST CYCLE
     //& =============================================
+    // Its members wait in the ring with their requests unchanged
+    logic [NUM_REQ-1:0] pushed;
+
+    always_ff @(posedge clk) begin
+        if (~rst_n) begin
+            pushed <= '0;
+            rd_cmd <= 1'b0;
+            wr_cmd <= 1'b0;
+        end else begin
+            pushed <= accept;
+            rd_cmd <= push_rd;
+            wr_cmd <= push_wr;
+        end
+        cmd_group <= seed_group;
+    end
+
     beat_t beats [NUM_REQ];
     beat_mask_t valid_beats, valid_beats_reversed;
     beat_t last_index_reversed;
@@ -130,7 +151,7 @@ module DDRGroupFormer
     always_comb begin
         valid_beats = '0;
         for (int unsigned i = 0; i < NUM_REQ; i++) begin
-            if (members[i])
+            if (pushed[i])
                 valid_beats[beats[i]] = 1'b1;
         end
     end
@@ -165,7 +186,6 @@ module DDRGroupFormer
     //& =============================================
     //& RING CHECKER
     //& =============================================
-    assign group_address = seed_group;
     assign push_rd = push & ~seed_write;
     assign push_wr = push & seed_write;
     assign accept = {NUM_REQ{push}} & members;
