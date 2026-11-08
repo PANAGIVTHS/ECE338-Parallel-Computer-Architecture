@@ -135,6 +135,25 @@ module StreamingMultiprocessor
     );
 
     //& ===============
+    //& EVERY CORE'S DECODE
+    //& ===============
+    // Each core decodes its copy of the instruction into its own ID/EX
+    // register (cores reading one copy share one decoder after synthesis).
+    // The shared idex above serves the hazard unit.
+    id_ex_t lane_decoded [NUM_CORES];
+    for (genvar i = 0; i < NUM_CORES; i++) begin : g_lane_decode
+        Decoder laneDecoder (
+            .i_instr(i_lane_instruction[i]),
+            .i_program_counter(ifid_program_counter),
+            .o_decoded(lane_decoded[i])
+        );
+    end
+
+    // The instruction in ID enters EX; otherwise EX gets a bubble
+    logic issue;
+    assign issue = decode_enabled && !data_hazard;
+
+    //& ===============
     //& FORWARDING
     //& ===============
     // Resolved for the instruction in ID, against the writers it will meet
@@ -232,7 +251,8 @@ module StreamingMultiprocessor
                 .i_id_mux_rs2(i_lane_instruction[i][24:20]),
 
                 //! IDEX Pipeline
-                .i_idex(idex),
+                .i_id_decoded(lane_decoded[i]),
+                .i_id_issue(issue),
                 .i_id_forward_a(id_forward_a),
                 .i_id_forward_b(id_forward_b),
                 .i_id_written_a(id_written_a),

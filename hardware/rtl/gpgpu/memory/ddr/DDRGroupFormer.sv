@@ -24,6 +24,7 @@ module DDRGroupFormer
     input logic rst_n,
 
     input logic [NUM_REQ-1:0] cand,
+    input logic [NUM_REQ-1:0] pick, // candidates as of last cycle, from registers
     input mem_req_t [NUM_REQ-1:0] req,
 
     // Ring availability
@@ -79,10 +80,11 @@ module DDRGroupFormer
     logic next_write;
 
     // Candidates the requesting ring cannot serve now are skipped, as before:
-    // a read seed must not block writes while the read ring is full.
+    // a read seed must not block writes while the read ring is full. A seed
+    // that is no longer a candidate gathers nothing and is dropped.
     always_comb begin
         for (int unsigned i = 0; i < NUM_REQ; i++) begin
-            eligible[i] = cand[i] & ~(seed_valid & in_group[i])
+            eligible[i] = pick[i] & ~(seed_valid & in_group[i])
                         & (req[i].write ? wr_ring_free : rd_ring_free);
         end
     end
@@ -123,37 +125,33 @@ module DDRGroupFormer
     //& =============================================
     //& FIRST AND LAST BEAT OF THE GROUP PUSHED LAST CYCLE
     //& =============================================
-    // Its members wait in the ring with their requests unchanged
-    logic [NUM_REQ-1:0] pushed;
-
-    always_ff @(posedge clk) begin
-        if (~rst_n) begin
-            pushed <= '0;
-            rd_cmd <= 1'b0;
-            wr_cmd <= 1'b0;
-        end else begin
-            pushed <= accept;
-            rd_cmd <= push_rd;
-            wr_cmd <= push_wr;
-        end
-        cmd_group <= seed_group;
-    end
-
     beat_t beats [NUM_REQ];
-    beat_mask_t valid_beats, valid_beats_reversed;
+    beat_mask_t member_beats, valid_beats, valid_beats_reversed;
     beat_t last_index_reversed;
 
     for (genvar i = 0; i < NUM_REQ; i++) begin : beat_expansion
         assign beats[i] = beat_of(req[i].addr);
     end
 
-    // Mask of the beats the burst carries
+    // Mask of the beats the held group's burst carries, registered with the push
     always_comb begin
-        valid_beats = '0;
+        member_beats = '0;
         for (int unsigned i = 0; i < NUM_REQ; i++) begin
-            if (pushed[i])
-                valid_beats[beats[i]] = 1'b1;
+            if (members[i])
+                member_beats[beats[i]] = 1'b1;
         end
+    end
+
+    always_ff @(posedge clk) begin
+        if (~rst_n) begin
+            rd_cmd <= 1'b0;
+            wr_cmd <= 1'b0;
+        end else begin
+            rd_cmd <= push_rd;
+            wr_cmd <= push_wr;
+        end
+        valid_beats <= member_beats;
+        cmd_group <= seed_group;
     end
 
     // Reverse the mask to find the last beat

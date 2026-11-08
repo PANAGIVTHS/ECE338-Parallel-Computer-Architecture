@@ -56,8 +56,10 @@ module DDRBackend
     logic rd_ring_free, wr_ring_free;
     assign rd_ring_free = 1'b0; // TODO: remove when read ring is impemented (Currently hangs read instrutions)
 
+    logic [NUM_REQ-1:0] pick;
     for (genvar i = 0; i < NUM_REQ; i++) begin: cand_expand
         assign cand[i] = ddr_if[i].cand;
+        assign pick[i] = ddr_if[i].pick;
         assign ddr_if[i].accept = selected[i];
     end
 
@@ -67,6 +69,7 @@ module DDRBackend
         .clk          (clk),
         .rst_n        (rst_n),
         .cand         (cand),
+        .pick         (pick),
         .req          (req),
         .rd_ring_free (rd_ring_free),
         .wr_ring_free (wr_ring_free),

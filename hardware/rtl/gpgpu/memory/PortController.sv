@@ -65,6 +65,10 @@ module PortController
     assign err = cand & (decoded.target == TGT_ERR);
     assign bram_if.cand = cand & (decoded.target == TGT_BRAM);
     assign ddr_if.cand = cand & (decoded.target == TGT_DDR);
+    // A registered decode means the request was presented, in IDLE, last
+    // cycle and not taken: the port is still IDLE.
+    assign bram_if.pick = decoded_valid & (decoded.target == TGT_BRAM);
+    assign ddr_if.pick = decoded_valid & (decoded.target == TGT_DDR);
     assign o_req_ready = err | bram_if.accept | ddr_if.accept;
     assign o_idle = current_state == IDLE;
 

@@ -25,9 +25,10 @@ module BRAMBackend
     //& =============================================
     //& PORT EXPANSION
     //& =============================================
-    logic [NUM_REQ-1:0] cand, take;
+    logic [NUM_REQ-1:0] cand, pick, take;
     for (genvar i = 0; i < NUM_REQ; i++) begin : cand_expand
         assign cand[i] = bram_if[i].cand;
+        assign pick[i] = bram_if[i].pick;
         assign take[i] = bram_if[i].take;
     end
 
@@ -62,7 +63,7 @@ module BRAMBackend
         .N(NUM_REQ),
         .M(2)
     ) arbiterMLowest (
-        .req(cand & ~(win_oh[0] | win_oh[1])),
+        .req(pick & ~(win_oh[0] | win_oh[1])),
         .grant(),
         .win_oh(next_oh),
         .win_vld(),
