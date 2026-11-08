@@ -56,7 +56,8 @@ module DDRGroupFormer
 
     always_comb begin
         for (int unsigned i = 0; i < NUM_REQ; i++) begin
-            in_group[i] = (group_of(req[i].addr) == seed_group) & (req[i].write == seed_write);
+            // Candidates are DDR accesses: comparing inside the DDR window is enough
+            in_group[i] = (group_key(group_of(req[i].addr)) == group_key(seed_group)) & (req[i].write == seed_write);
         end
     end
 

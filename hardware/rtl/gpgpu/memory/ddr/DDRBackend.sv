@@ -88,8 +88,8 @@ module DDRBackend
     //& and prepares write addresses, write data, write responses
     //& =============================================
     logic [NUM_REQ-1:0] wr_members;
-    beat_t w_wbeat;
-    ring_index_t wr_alloc, w_slot;
+    beat_t w_wbeat_next;
+    ring_index_t wr_alloc, w_slot_next;
     logic wr_busy, wr_fatal;
     mem_fatal_t wr_fatal_code;
     logic aw_ready;
@@ -132,8 +132,8 @@ module DDRBackend
         .wr_bdone     (wr_bdone),
         .wr_bresp     (wr_bresp),
         // For write assembler 
-        .w_wbeat      (w_wbeat), // Current beat: first_beat + current
-        .w_slot       (w_slot), // Slot index serving the W channel
+        .w_wbeat_next (w_wbeat_next), // Beat offered next cycle
+        .w_slot_next  (w_slot_next), // Slot whose burst W offers next cycle
         // Ring state
         .busy         (wr_busy),
         .fatal        (wr_fatal),
@@ -152,8 +152,9 @@ module DDRBackend
         .req       (req),
         .wr_members(wr_members),
         .idx       (idx),
-        .w_slot    (w_slot),
-        .w_wbeat   (w_wbeat),
+        .clk         (clk),
+        .w_slot_next (w_slot_next),
+        .w_wbeat_next(w_wbeat_next),
         .w_data    (w_data),
         .w_strb    (w_strb)
     );
@@ -172,6 +173,15 @@ module DDRBackend
     logic axi_fatal;
     mem_fatal_t axi_fatal_code;
 
+    // TODO: the read ring presents a beat one cycle after R: registered here,
+    // so the requesters never see the interconnect's R channel directly
+    beat_rdata_t r_beat;
+    axi_resp_t r_beat_resp;
+    always_ff @(posedge clk) begin
+        o_rd_beat <= r_beat;
+        o_rd_resp <= r_beat_resp;
+    end
+
     AXI4Master axi4Master (
         .clk        (clk),
         .rst_n      (rst_n),
@@ -183,8 +193,8 @@ module DDRBackend
         .ar_ready   (ar_ready),
         .r_valid    (r_valid),
         .r_last     (r_last),
-        .r_data     (o_rd_beat),
-        .r_resp     (o_rd_resp),
+        .r_data     (r_beat),
+        .r_resp     (r_beat_resp),
         // Write ring and assembler
         .wr_cmd     (aw_cmd),
         .w_valid    (w_valid),

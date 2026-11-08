@@ -44,7 +44,10 @@ module PortController
     // stays off the backends' arbitration paths. A requester holds its
     // request unchanged until it is taken, and presents nothing for at least
     // one cycle before its next request, so the register always holds the
-    // decode of the request presented.
+    // decode of the request presented. The requests withdrawn without being
+    // taken (the cores' at a stop or reset, slot 0 changing owner) go while
+    // the port is disabled, which clears the register: a candidate needs no
+    // look at the requester's valid, which comes from far off.
     decode_t decoded;
     logic decoded_valid;
 
@@ -52,7 +55,7 @@ module PortController
         if (!rst_n) begin
             decoded_valid <= 1'b0;
         end else begin
-            decoded_valid <= i_req_valid & (current_state == IDLE) & ~o_req_ready;
+            decoded_valid <= i_req_valid & (current_state == IDLE) & ~o_req_ready & i_en;
         end
         decoded <= decode_access(req.addr, req.write, DDR_ENABLE);
         o_req_q <= req;
@@ -61,7 +64,7 @@ module PortController
     // Claim: a presented request in IDLE becomes a candidate while enabled.
     // o_req_ready is high only when it is actually taken (claim = issue).
     logic cand, err;
-    assign cand = i_req_valid & (current_state == IDLE) & i_en & decoded_valid;
+    assign cand = decoded_valid & i_en;
     assign err = cand & (decoded.target == TGT_ERR);
     assign bram_if.cand = cand & (decoded.target == TGT_BRAM);
     assign ddr_if.cand = cand & (decoded.target == TGT_DDR);

@@ -52,7 +52,8 @@ module StreamingMultiprocessor
     //* =========================================================================
     //* PIPELINE REGISTER 1: INSTRUCTION FETCH -> INSTRUCTION DECODE
     //* =========================================================================
-    pc_t ifid_program_counter;
+    // Every core's ID/EX register loads it: replicated next to the cores
+    (* max_fanout = 16 *) pc_t ifid_program_counter;
     always_ff @(posedge clk) begin
         if (!rst_n) begin
             ifid_program_counter <= INITIAL_PC;

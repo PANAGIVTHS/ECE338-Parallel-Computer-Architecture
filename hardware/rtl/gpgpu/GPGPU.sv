@@ -81,6 +81,14 @@ module GPGPU
 );
     // tdb was here...
 
+    // The reset, registered: it reaches nearly every register, so synthesis
+    // may replicate these flip-flops next to their loads. Leaving reset one
+    // cycle after the AXI4-Lite slave costs nothing: no access comes so soon.
+    (* max_fanout = 64 *) logic rst_n_q;
+    always_ff @(posedge clk) begin
+        rst_n_q <= rst_n;
+    end
+
     // Control for the core
     core_state_t core_state;
     logic core_complete, complete_pulse, stopped, faulted;
@@ -105,7 +113,7 @@ module GPGPU
 
     // Instruction memory copies, and the instruction each core reads its
     // registers with (see the instruction memory below)
-    localparam int unsigned IMEM_COPIES = SP_PER_SM < 4 ? SP_PER_SM : 4;
+    localparam int unsigned IMEM_COPIES = SP_PER_SM < 8 ? SP_PER_SM : 8;
     word_t imem_copy_rdata [IMEM_COPIES];
     word_t lane_instruction [SP_PER_SM];
 
@@ -126,7 +134,7 @@ module GPGPU
     assign imem_if.wen = ~o_core_idle ? '0 : host_imem_if.wen;
 
     MMIOController mmio (
-        .clk(clk), .rst_n(rst_n),
+        .clk(clk), .rst_n(rst_n_q),
         .i_req_valid(i_req_valid), .o_req_ready(o_req_ready),
         .i_req_write(i_req_write), .i_req_addr(i_req_addr),
         .i_req_wdata(i_req_wdata), .i_req_wstrb(i_req_wstrb),
@@ -143,7 +151,7 @@ module GPGPU
         .SP_PER_SM(SP_PER_SM), .INTERFACE_VERSION(INTERFACE_VERSION), .CLOCK_KHZ(CLOCK_KHZ),
         .BUILD_HASH(BUILD_HASH), .BUILD_DIRTY(BUILD_DIRTY), .DDR_ENABLE(DDR_ENABLE)
     ) regs (
-        .clk(clk), .rst_n(rst_n),
+        .clk(clk), .rst_n(rst_n_q),
         .i_write(i_req_write), .i_addr(i_req_addr), .i_wdata(i_req_wdata),
         .i_byte_en(i_req_wstrb), .i_write_fire(csr_write_fire),
         .o_rdata(csr_rdata), .o_status(csr_status),
@@ -156,7 +164,7 @@ module GPGPU
     );
 
     ExecutionController state (
-        .clk(clk), .rst_n(rst_n),
+        .clk(clk), .rst_n(rst_n_q),
         .i_start(control_start), .i_stop(control_stop),
         .i_clear_stopped(clear_stopped), .i_clear_faulted(clear_faulted),
         .i_core_complete(core_complete), .i_fault(core_fault),
@@ -169,7 +177,7 @@ module GPGPU
         .NUM_CORES(SP_PER_SM)
     ) smx (
         .clk(clk),
-        .rst_n(rst_n && !core_reset),
+        .rst_n(rst_n_q && !core_reset),
         .i_enable(o_core_running),
         .i_ifid_instruction(imem_if.rdata),
         .i_lane_instruction(lane_instruction),
@@ -320,7 +328,7 @@ module GPGPU
         .DDR_ENABLE(DDR_ENABLE)
     ) memory_subsystem (
         .clk(clk),
-        .rst_n(rst_n),
+        .rst_n(rst_n_q),
         .i_req_enable(o_core_running | o_core_idle),
         .memory_if(dmem_if),
         .axi_if(axi_if),

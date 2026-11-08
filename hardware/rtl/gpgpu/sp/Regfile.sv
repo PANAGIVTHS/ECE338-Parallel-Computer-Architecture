@@ -11,7 +11,8 @@ module Regfile
     input logic i_written_a, i_written_b,
     input logic i_stall,
     output word_t o_reg_a, o_reg_b,
-    //! The written mask as it is after this cycle's write
+    //! The written mask as it is after this cycle's write, if the cycle does
+    //! not stall (it is only read into registers that hold during a stall)
     output logic [REG_COUNT-1:0] o_written_next
 );
     //! Storage is distributed RAM (LUTRAM), which cannot be reset.
@@ -64,7 +65,7 @@ module Regfile
 
     always_comb begin
         o_written_next = written;
-        if (write_fire) begin
+        if (i_wen && write_allowed) begin
             o_written_next[i_waddr] = 1'b1;
         end
     end
@@ -72,8 +73,8 @@ module Regfile
     always_ff @(posedge clk) begin
         if (!rst_n) begin
             written <= '0;
-        end else begin
-            written <= o_written_next;
+        end else if (write_fire) begin
+            written[i_waddr] <= 1'b1;
         end
     end
 endmodule

@@ -41,7 +41,9 @@ module StreamingProcessor
     output logic o_core_complete
 );
 
-    ex_mem_t exmem;
+    //! keep: the control fields are the same in every lockstep core, and a
+    //! merged copy would drive all 32 cores' muxes and requests from afar
+    (* keep = "true" *) ex_mem_t exmem;
     mul_stage_t mul_in, mul_out;
     word_t mul_res;
 
@@ -84,7 +86,7 @@ module StreamingProcessor
     (* keep = "true" *) forward_sel_t forward_alu_a;
     (* keep = "true" *) forward_sel_t forward_alu_b;
     logic ex_is_mul, mul_not_ready;
-    mem_wb_t memwb;
+    (* keep = "true" *) mem_wb_t memwb;
     word_t wb_wdata;
 
     assign ex_is_mul = idex_valid && (idex.opcode == OP_R_TYPE) && (idex.imm_31_25 == FUNCT7_MULDIV); //! WARNING when adding DIV mul would be confused with div 

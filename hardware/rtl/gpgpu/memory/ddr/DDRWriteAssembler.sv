@@ -13,8 +13,10 @@ module DDRWriteAssembler
     input ring_index_t [NUM_REQ-1:0] idx,
 
     // Burst being sent and its current beat within the group
-    input ring_index_t w_slot,
-    input beat_t w_wbeat,
+    input logic clk,
+    // The burst W offers next cycle, and its beat within the group
+    input ring_index_t w_slot_next,
+    input beat_t w_wbeat_next,
 
     output axi_data_t w_data,
     output axi_strb_t w_strb
@@ -25,11 +27,15 @@ module DDRWriteAssembler
     //& =============================================
     //& MEMBERS IN THE CURRENT BEAT
     //& =============================================
+    // Registered a cycle ahead. A request that joins or leaves the members
+    // meanwhile is never in the burst being offered: a burst's W follows its
+    // AW, which follows the push, and a slot is reused only after its
+    // members took their response.
     logic [NUM_REQ-1:0] hit;
 
-    always_comb begin
+    always_ff @(posedge clk) begin
         for (int unsigned r = 0; r < NUM_REQ; r++) begin
-            hit[r] = wr_members[r] & (idx[r] == w_slot) & (beat_of(req[r].addr) == w_wbeat);
+            hit[r] <= wr_members[r] & (idx[r] == w_slot_next) & (beat_of(req[r].addr) == w_wbeat_next);
         end
     end
 

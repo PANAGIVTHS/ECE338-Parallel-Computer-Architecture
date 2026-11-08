@@ -35,8 +35,8 @@ module DDRWriteRing
     input logic [NUM_REQ-1:0] wr_take,
 
     // For write assembler
-    output beat_t w_wbeat, // Beat within the group (first + sent beats)
-    output ring_index_t w_slot, // Current slot sending its burst (W channel)
+    output beat_t w_wbeat_next, // Beat within the group offered next cycle
+    output ring_index_t w_slot_next, // Slot whose burst W offers next cycle
     // For DDR interface
     output logic [NUM_REQ-1:0] wr_bdone, // (B channel)
     output axi_resp_t[NUM_REQ-1:0] wr_bresp, // (B channel)
@@ -212,30 +212,42 @@ module DDRWriteRing
     //& =============================================
     beat_t w_len, w_group_beat;
 
+    beat_t w_len_next, w_group_beat_next;
+
+    always_comb begin
+        w_len_next = w_len;
+        w_group_beat_next = w_group_beat;
+        if (w_fire & w_last) begin
+            // The next slot is written already, unless it is pushed now: then
+            // its W waits for its AW, and the reload below catches up
+            w_len_next = slot[w_next_idx].len;
+            w_group_beat_next = slot[w_next_idx].first;
+        end else if (w_fire) begin
+            w_group_beat_next = w_group_beat + beat_t'(1);
+        end else if (~w_valid) begin
+            // No burst in progress (once offered, W stays valid to its last beat)
+            w_len_next = slot[w_idx].len;
+            w_group_beat_next = slot[w_idx].first;
+        end
+    end
+
     always_ff @(posedge clk) begin
         if (~rst_n) begin
             w_len <= '0;
             w_group_beat <= '0;
-        end else if (w_fire & w_last) begin
-            // The next slot is written already, unless it is pushed now: then
-            // its W waits for its AW, and the reload below catches up
-            w_len <= slot[w_next_idx].len;
-            w_group_beat <= slot[w_next_idx].first;
-        end else if (w_fire) begin
-            w_group_beat <= w_group_beat + beat_t'(1);
-        end else if (~w_valid) begin
-            // No burst in progress (once offered, W stays valid to its last beat)
-            w_len <= slot[w_idx].len;
-            w_group_beat <= slot[w_idx].first;
+        end else begin
+            w_len <= w_len_next;
+            w_group_beat <= w_group_beat_next;
         end
     end
 
     //& =============================================
     //& Outputs
     //& =============================================
-    assign w_wbeat = w_group_beat;
+    // The write assembler registers which requests the next beat carries
+    assign w_wbeat_next = w_group_beat_next;
     assign wr_owed = b != w;
-    assign w_slot = ring_index_t'(w_idx);
+    assign w_slot_next = ring_index_t'((w_fire & w_last) ? w_next_idx : w_idx);
     assign w_last = w_beat == w_len;
     assign wr_alloc = ring_index_t'(alloc_idx);
 

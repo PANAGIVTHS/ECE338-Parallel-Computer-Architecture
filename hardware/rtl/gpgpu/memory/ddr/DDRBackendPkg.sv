@@ -24,6 +24,20 @@ package DDRBackendPkg;
         return ring_group_t'(addr[XLEN-1:GROUP_LSB]);
     endfunction
 
+    // Every DDR region lies in one aligned window of 2^DDR_WINDOW_BITS bytes:
+    // the address bits above it are the same for every DDR access, so two
+    // groups of DDR accesses differ in the group bits inside the window.
+    localparam int unsigned DDR_LOW = (FB0_BASE < FB1_BASE ? (FB0_BASE < TEX_BASE ? FB0_BASE : TEX_BASE)
+                                                           : (FB1_BASE < TEX_BASE ? FB1_BASE : TEX_BASE));
+    localparam int unsigned DDR_HIGH_END = max(max(FB0_BASE + FB_SIZE, FB1_BASE + FB_SIZE), TEX_BASE + TEX_SIZE);
+    localparam int unsigned DDR_WINDOW_BITS = $clog2((DDR_LOW ^ (DDR_HIGH_END - 1)) + 1);
+    localparam int unsigned GROUP_KEY_W = DDR_WINDOW_BITS > GROUP_LSB ? DDR_WINDOW_BITS - GROUP_LSB : 1;
+    typedef logic [GROUP_KEY_W-1:0] group_key_t;
+
+    function automatic group_key_t group_key(input ring_group_t group);
+        return group_key_t'(group);
+    endfunction
+
     function automatic beat_t beat_of(input word_t addr);
         return beat_t'(addr[GROUP_LSB-1:BEAT_LSB]);
     endfunction
