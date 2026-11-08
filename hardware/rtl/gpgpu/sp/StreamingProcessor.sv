@@ -18,6 +18,10 @@ module StreamingProcessor
     //! Pipeline Register: IDEX -> EX
     input id_ex_t i_idex,
 
+    //! Forwarding for the instruction entering EX, from the SM's decode
+    input forward_sel_t i_id_forward_a,
+    input forward_sel_t i_id_forward_b,
+
     //! Hazard and Branch feedback
     output sp_feedback_t o_feedback,
     output mul_hazard_t o_mul_hazards [0:MUL_LATENCY-1],
@@ -46,10 +50,13 @@ module StreamingProcessor
     word_t ex_branch_operand_a, ex_branch_operand_b, ex_branch_target_addr;
     word_t ex_imm_i_type, ex_imm_s_type, ex_imm_u_type;
     word_t ex_reg_a, ex_reg_b;
-    word_t forwarded_rs2;
+    word_t forwarded_rs1, forwarded_rs2;
     word_t ex_actual_alu_in_a;
     word_t ex_actual_alu_in_b;
-    forward_sel_t forward_alu_a, forward_alu_b;
+    //! Registered with the instruction entering EX, like idex. Every core
+    //! keeps its own copy: the selects drive this core's operand muxes only.
+    (* keep = "true" *) forward_sel_t forward_alu_a;
+    (* keep = "true" *) forward_sel_t forward_alu_b;
     logic ex_is_mul, mul_not_ready;
     mem_wb_t memwb;
     word_t wb_wdata;
@@ -74,10 +81,10 @@ module StreamingProcessor
                             ex_reg_b;
 
     //? --- Forwarding Multiplexer A ---
-    assign ex_actual_alu_in_a = (i_idex.opcode == OP_JAL) ? i_idex.program_counter :
-                                (forward_alu_a == EXALU_MEMALU_DEP) ? exmem.alu_out :
-                                (forward_alu_a == MEMWB_EXALU_DEP)  ? wb_wdata :
-                                 ex_reg_a;
+    assign forwarded_rs1 = (forward_alu_a == EXALU_MEMALU_DEP) ? exmem.alu_out :
+                           (forward_alu_a == MEMWB_EXALU_DEP)  ? wb_wdata :
+                            ex_reg_a;
+    assign ex_actual_alu_in_a = (i_idex.opcode == OP_JAL) ? i_idex.program_counter : forwarded_rs1;
 
     //? --- Final ALU Input B ---
     always_comb begin
@@ -133,19 +140,25 @@ module StreamingProcessor
     assign ex_is_branch = (i_idex.opcode == OP_BEQ);
     assign ex_is_jal = (i_idex.opcode == OP_JAL);
     assign ex_is_jalr = (i_idex.opcode == OP_JALR);
+    // Branch conditions and the JALR target come from their own comparator
+    // and adder, not through the ALU's result mux: they steer the fetch.
+    logic ex_rs_eq, ex_rs_lt, ex_rs_ltu;
+    assign ex_rs_eq = forwarded_rs1 == forwarded_rs2;
+    assign ex_rs_lt = $signed(forwarded_rs1) < $signed(forwarded_rs2);
+    assign ex_rs_ltu = forwarded_rs1 < forwarded_rs2;
     assign ex_branch_condition_met =
-        (i_idex.funct3 == FUNCT3_BEQ) ? (ex_zero) :
-        (i_idex.funct3 == FUNCT3_BNE) ? (!ex_zero) :
-        (i_idex.funct3 == FUNCT3_BLT) ? (ex_alu_out) :
-        (i_idex.funct3 == FUNCT3_BGE) ? (!ex_alu_out) :
-        (i_idex.funct3 == FUNCT3_BLTU) ? (ex_alu_out) :
-        (i_idex.funct3 == FUNCT3_BGEU) ? (!ex_alu_out) :
+        (i_idex.funct3 == FUNCT3_BEQ) ? ex_rs_eq :
+        (i_idex.funct3 == FUNCT3_BNE) ? !ex_rs_eq :
+        (i_idex.funct3 == FUNCT3_BLT) ? ex_rs_lt :
+        (i_idex.funct3 == FUNCT3_BGE) ? !ex_rs_lt :
+        (i_idex.funct3 == FUNCT3_BLTU) ? ex_rs_ltu :
+        (i_idex.funct3 == FUNCT3_BGEU) ? !ex_rs_ltu :
         1'b0;
     assign o_feedback.branch_taken = (ex_is_branch && ex_branch_condition_met) || ex_is_jal || ex_is_jalr;
 
     assign ex_beq_offset = {{20{i_idex.imm_31_25[6]}}, i_idex.rd[0], i_idex.imm_31_25[5:0], i_idex.rd[4:1], 1'b0};
     assign ex_jal_offset = {{12{i_idex.imm_31_12[19]}}, i_idex.imm_31_12[7:0], i_idex.imm_31_12[8], i_idex.imm_31_12[18:9], 1'b0};
-    assign ex_jalr_target_addr = ex_alu_out & 32'hFFFF_FFFE;
+    assign ex_jalr_target_addr = (forwarded_rs1 + ex_imm_i_type) & 32'hFFFF_FFFE;
 
     assign ex_branch_operand_a = ex_is_jalr ? i_idex.program_counter : i_idex.program_counter[$clog2(IMEM_ENTRIES)+1:2];
     assign ex_branch_operand_b = ex_is_jalr ? 32'd4 : (ex_is_jal ? ex_jal_offset[31:2] : ex_beq_offset[31:2]);
@@ -254,17 +267,30 @@ module StreamingProcessor
     //& ===============
     //& FORWARDING
     //& ===============
-    (* dont_touch = `DEBUG *)
-    ForwardingUnit forwardingUnit (
-        .i_idex_rs1(i_idex.rs1),
-        .i_idex_rs2(i_idex.rs2),
-        .i_exmem_rd(exmem.rd),
-        .i_exmem_wen(exmem.wen),
-        .i_idex_instr_type(i_idex.instr_type),
-        .i_memwb_rd(memwb.rd),
-        .i_memwb_wen(memwb.wen),
-        .o_forward_alu_a(forward_alu_a),
-        .o_forward_alu_b(forward_alu_b)
-    );
+    // The SM compares the instruction in ID with the writers it will meet in
+    // EX: the one entering MEM now (exmem's next value) and the one in MEM
+    // now (memwb's next value).
+    writer_t ex_next_writer;
+    always_comb begin
+        if (mul_out.hazard.valid) begin
+            ex_next_writer = '{rd: mul_out.hazard.rd, wen: mul_out.hazard.rd != '0};
+        end else if (mul_not_ready) begin
+            ex_next_writer = '{rd: '0, wen: 1'b0};
+        end else begin
+            ex_next_writer = '{rd: i_idex.rd, wen: i_idex.wen && (i_idex.rd != '0)};
+        end
+    end
+    assign o_feedback.next_mem = ex_next_writer;
+    assign o_feedback.next_wb = '{rd: exmem.rd, wen: exmem.wen};
+
+    always_ff @(posedge clk) begin
+        if (!rst_n) begin
+            forward_alu_a <= NO_DEP;
+            forward_alu_b <= NO_DEP;
+        end else if (!i_stall) begin
+            forward_alu_a <= i_id_forward_a;
+            forward_alu_b <= i_id_forward_b;
+        end
+    end
 
 endmodule

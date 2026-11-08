@@ -21,23 +21,26 @@ module Regfile
         return is_written ? ram_value : reg_reset_value(addr, CORE_ID);
     endfunction
 
-    //! Read
+    //! Read: the addresses are registered as the instruction enters EX,
+    //! which reads the RAM asynchronously. A write by the instruction in WB
+    //! lands at the end of the cycle; the forwarding unit covers that cycle.
+    //! Every core keeps its own address register, so the instruction memory
+    //! drives 32 registers instead of every core's RAM address inputs.
+    (* keep = "true" *) reg_addr_t addr_a;
+    (* keep = "true" *) reg_addr_t addr_b;
+
     always_ff @(posedge clk) begin
         if (!rst_n) begin
-            o_reg_a <= '0;
-            o_reg_b <= '0;
-        end else if (!i_stall && !i_wen) begin
-            //! Output the data when write is disabled
-            o_reg_a <= stored(i_addr_a, written[i_addr_a], ram[i_addr_a]);
-            o_reg_b <= stored(i_addr_b, written[i_addr_b], ram[i_addr_b]);
+            addr_a <= '0;
+            addr_b <= '0;
         end else if (!i_stall) begin
-            //! Read the same address you want to write, forward the data
-            o_reg_a <= (write_allowed && i_addr_a == i_waddr) ? i_wdata
-                     : stored(i_addr_a, written[i_addr_a], ram[i_addr_a]);
-            o_reg_b <= (write_allowed && i_addr_b == i_waddr) ? i_wdata
-                     : stored(i_addr_b, written[i_addr_b], ram[i_addr_b]);
+            addr_a <= i_addr_a;
+            addr_b <= i_addr_b;
         end
     end
+
+    assign o_reg_a = stored(addr_a, written[addr_a], ram[addr_a]);
+    assign o_reg_b = stored(addr_b, written[addr_b], ram[addr_b]);
 
     //! Write (no reset: LUTRAM)
     wire write_fire = !i_stall && i_wen && write_allowed;

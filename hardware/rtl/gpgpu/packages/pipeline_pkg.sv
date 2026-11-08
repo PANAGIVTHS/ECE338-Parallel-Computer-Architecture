@@ -54,11 +54,21 @@ package pipeline_pkg;
         gpu_pkg::word_t rdata;
     } mem_wb_t;
 
+    //! A register write in flight: forwarded to the instruction in EX
+    typedef struct packed {
+        gpu_pkg::reg_addr_t rd;
+        logic wen;
+    } writer_t;
+
     //! SP -> SM feedback signals
     typedef struct packed {
         logic branch_taken;
         gpu_pkg::imem_idx_t branch_target_idx;
         gpu_pkg::pc_t mem_program_counter;
+        // The writers the instruction entering EX forwards from: the one
+        // entering MEM and the one entering WB
+        writer_t next_mem;
+        writer_t next_wb;
     } sp_feedback_t;
 
 endpackage

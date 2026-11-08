@@ -31,6 +31,7 @@ module StreamingMultiprocessor
 
     // Memory stall signal
     logic stall;
+    logic fault_q; // a lane faulted (see FAULT CAPTURE)
 
     //! =========================================================================
     //! STAGE 1: INSTRUCTION FETCH
@@ -131,6 +132,26 @@ module StreamingMultiprocessor
     );
 
     //& ===============
+    //& FORWARDING
+    //& ===============
+    // Resolved for the instruction in ID, against the writers it will meet
+    // in EX, and registered by every core with idex: in EX the operand
+    // muxes see registered selects. Lockstep: core 0's writers are all.
+    forward_sel_t id_forward_a, id_forward_b;
+
+    ForwardingUnit forwardingUnit (
+        .i_idex_rs1(decoded.rs1),
+        .i_idex_rs2(decoded.rs2),
+        .i_exmem_rd(sp_feedback[0].next_mem.rd),
+        .i_exmem_wen(sp_feedback[0].next_mem.wen),
+        .i_idex_instr_type(decoded.instr_type),
+        .i_memwb_rd(sp_feedback[0].next_wb.rd),
+        .i_memwb_wen(sp_feedback[0].next_wb.wen),
+        .o_forward_alu_a(id_forward_a),
+        .o_forward_alu_b(id_forward_b)
+    );
+
+    //& ===============
     //& STREAMING PROCESSOR CORES
     //& ===============
 
@@ -141,9 +162,11 @@ module StreamingMultiprocessor
 
     logic [NUM_CORES-1:0] mem_response_received;
     logic [NUM_CORES-1:0] mem_is_mem_vec;
-    // A fault stalls in the cycle its response arrives, so the next
-    // instruction never issues even when that response is the last one.
-    assign stall = !i_enable || (!(&mem_response_received) && mem_is_mem_vec[0]) || o_fault;
+    // A faulting response holds the stall in the cycle it arrives by itself:
+    // its lane has not received it yet. From the next cycle fault_q does, so
+    // the next instruction never issues, even when that response is the last
+    // one, and the stall depends on registers only.
+    assign stall = !i_enable || (!(&mem_response_received) && mem_is_mem_vec[0]) || fault_q;
 
     //& ===============
     //& FAULT CAPTURE
@@ -171,7 +194,6 @@ module StreamingMultiprocessor
         end
     end
 
-    logic fault_q;
     always_ff @(posedge clk) begin
         if (!rst_n) begin
             fault_q <= 1'b0;
@@ -204,6 +226,8 @@ module StreamingMultiprocessor
 
                 //! IDEX Pipeline
                 .i_idex(idex),
+                .i_id_forward_a(id_forward_a),
+                .i_id_forward_b(id_forward_b),
 
                 //! Feedback wires Hazard & PC
                 .o_feedback(sp_feedback[i]),
