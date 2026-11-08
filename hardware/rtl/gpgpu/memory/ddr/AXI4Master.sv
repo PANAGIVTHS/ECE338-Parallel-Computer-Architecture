@@ -1,10 +1,12 @@
 // AXIMasterPort — the only module connected to the DDR AXI4 bus.
 //
 // Drives the AR/AW command registers onto the bus with the fixed AXI
-// constants, passes W/B/R between the bus and the rings, checks BID/RID and
-// runs the timeout. After a fatal it stops issuing (AxVALID = WVALID = 0),
-// sinks stray responses (BREADY = RREADY = 1) and hides every handshake from
-// the rings, which then freeze. Recovery needs rst_n together with a reset of
+// constants, sends W through a skid buffer, passes B/R between the bus and
+// the rings, checks BID/RID and runs the timeout. The skid buffer keeps the
+// write assembler off the interconnect's combinational WREADY path. After a
+// fatal it stops issuing (AxVALID = WVALID = 0), sinks stray responses
+// (BREADY = RREADY = 1) and hides every handshake from the rings, which then
+// freeze. Recovery needs rst_n together with a reset of
 // the SmartConnect/HP path.
 module AXI4Master
     import AXI4FullPkg::*;
@@ -78,14 +80,46 @@ module AXI4Master
     //& =============================================
     //& DATA AND RESPONSE CHANNELS
     //& =============================================
-    assign axi_if.w = '{data: w_data, strb: w_strb, last: w_last};
-    assign axi_if.w_valid = w_valid & ~i_fatal;
+    // W skid buffer: the bus sees only registers, and the ring's WREADY is a
+    // register too. A beat taken from the ring is in the buffer until the bus
+    // takes it; one beat per cycle passes through.
+    axi_w_t w_out, w_skid;
+    logic w_out_valid, w_skid_valid;
+    logic w_in_fire, w_out_free;
+    assign w_in_fire = w_valid & w_ready;
+    assign w_out_free = ~w_out_valid | axi_if.w_ready;
+
+    always_ff @(posedge clk) begin
+        if (~rst_n) begin
+            w_out_valid <= 1'b0;
+            w_skid_valid <= 1'b0;
+        end else if (~i_fatal) begin
+            if (w_out_free) begin
+                w_out_valid <= w_skid_valid | w_in_fire;
+                w_skid_valid <= 1'b0;
+            end else if (w_in_fire) begin
+                w_skid_valid <= 1'b1;
+            end
+        end
+    end
+
+    always_ff @(posedge clk) begin
+        if (w_out_free) begin
+            w_out <= w_skid_valid ? w_skid : axi_w_t'{data: w_data, strb: w_strb, last: w_last};
+        end
+        if (w_in_fire & ~w_out_free) begin
+            w_skid <= axi_w_t'{data: w_data, strb: w_strb, last: w_last};
+        end
+    end
+
+    assign axi_if.w = w_out;
+    assign axi_if.w_valid = w_out_valid & ~i_fatal;
     assign axi_if.b_ready = 1'b1;                   // B goes straight into its slot
     assign axi_if.r_ready = r_ready | i_fatal;      // sink stray beats after a fatal
 
     // Handshakes are hidden from the rings after a fatal, so they freeze.
     assign aw_ready = axi_if.aw_ready & ~i_fatal;
-    assign w_ready = axi_if.w_ready & ~i_fatal;
+    assign w_ready = ~w_skid_valid & ~i_fatal;
     assign ar_ready = axi_if.ar_ready & ~i_fatal;
     assign b_valid = axi_if.b_valid & ~i_fatal;
     assign r_valid = axi_if.r_valid & ~i_fatal;

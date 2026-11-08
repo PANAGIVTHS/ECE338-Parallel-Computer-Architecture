@@ -45,7 +45,8 @@ module DDRBackend
 
     //& =============================================
     //& Group former that selects one group per cycle
-    //& for either reading or writing
+    //& for either reading or writing, one cycle after
+    //& its first request becomes a candidate
     //& =============================================
     logic [NUM_REQ-1:0] cand, selected;
     logic push_rd, push_wr;
@@ -62,6 +63,8 @@ module DDRBackend
     DDRGroupFormer #(
         .NUM_REQ(NUM_REQ)
      ) ddrGroupFormer (
+        .clk          (clk),
+        .rst_n        (rst_n),
         .cand         (cand),
         .req          (req),
         .rd_ring_free (rd_ring_free),

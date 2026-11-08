@@ -23,6 +23,9 @@ module MMIOController
     input logic i_idle,
     MemoryInterface.master imem,
     MemoryInterface.master dmem,
+    // The memory subsystem took the DMEM access (or never will): its read
+    // data follows one cycle later
+    input logic i_dmem_ready,
 
     // CSR bank
     output logic o_csr_write_fire,
@@ -69,9 +72,12 @@ module MMIOController
             end
 
             ACCESS_MEMORY: begin
-                next_state = memory_write
-                    ? ACCESS_RESPONSE
-                    : ACCESS_CAPTURE;
+                // IMEM is a plain BRAM; DMEM goes through the memory
+                // subsystem, which may take more than one cycle to accept.
+                if (memory_imem || i_dmem_ready || !i_idle)
+                    next_state = memory_write
+                        ? ACCESS_RESPONSE
+                        : ACCESS_CAPTURE;
             end
 
             ACCESS_CAPTURE: begin

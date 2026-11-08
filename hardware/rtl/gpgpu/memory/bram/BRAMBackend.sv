@@ -14,6 +14,13 @@ module BRAMBackend
 
     output logic o_busy
 );
+    // Two stages, so that picking requests and issuing them to the BRAM are
+    // never in the same cycle. Each cycle picks the two lowest-index
+    // candidates outside the two being issued, and the next cycle issues
+    // them: still two accesses per cycle, each accepted one cycle after it
+    // becomes a candidate. A pick that cannot issue (its port still holds
+    // data, or it writes the other pick's word) is issued first next cycle,
+    // so accesses to one word still reach the BRAM from the lowest index up.
 
     //& =============================================
     //& PORT EXPANSION
@@ -43,22 +50,30 @@ module BRAMBackend
     assign o_busy = busy[0] | busy[1];
 
     //& =============================================
-    //& PICK REQUESTS TO SERVE
+    //& PICK REQUESTS TO SERVE NEXT CYCLE
     //& =============================================
-    logic [1:0][NUM_REQ-1:0] win_oh; //one-hot
-    logic [1:0] win_vld;
+    // The picks being issued: one-hot, zero when there is none
+    logic [1:0][NUM_REQ-1:0] win_oh;
     logic [1:0][IDX_W-1:0] win_idx;
+    logic [1:0][NUM_REQ-1:0] next_oh;
+    logic [1:0][IDX_W-1:0] next_idx;
 
     ArbiterMLowest #(
         .N(NUM_REQ),
         .M(2)
     ) arbiterMLowest (
-        .req(cand),
+        .req(cand & ~(win_oh[0] | win_oh[1])),
         .grant(),
-        .win_oh(win_oh),
-        .win_vld(win_vld),
-        .win_idx(win_idx)
+        .win_oh(next_oh),
+        .win_vld(),
+        .win_idx(next_idx)
     );
+
+    // A pick is issued only while it is still a candidate
+    logic [1:0] win_vld;
+    for (genvar k = 0; k < 2; k++) begin : still_cand
+        assign win_vld[k] = |(win_oh[k] & cand);
+    end
 
     //& =============================================
     //& WRITE COLLISION DETECTION
@@ -73,8 +88,36 @@ module BRAMBackend
     assign win_issue[0] = (available[0] | available[1]) & win_vld[0];
     assign win_issue[1] = (available[0] & available[1]) & win_vld[1] & ~conflict;
 
+    // Picks left behind go first next cycle. Pick 0 is left behind only
+    // when no port is free, and then pick 1 is too: both are kept.
+    wire keep_both = win_vld[0] & ~win_issue[0];
+    wire keep_one = win_vld[1] & ~win_issue[1];
+
+    always_ff @(posedge clk) begin
+        if (!rst_n) begin
+            win_oh <= '0;
+        end else if (keep_both) begin
+            win_oh <= win_oh;
+        end else if (keep_one) begin
+            win_oh <= {next_oh[0], win_oh[1]};
+        end else begin
+            win_oh <= next_oh;
+        end
+    end
+
+    // Read only while its pick is set
+    always_ff @(posedge clk) begin
+        if (keep_both) begin
+            win_idx <= win_idx;
+        end else if (keep_one) begin
+            win_idx <= {next_idx[0], win_idx[1]};
+        end else begin
+            win_idx <= next_idx;
+        end
+    end
+
     for (genvar i = 0; i < NUM_REQ; i++) begin : accept_join
-        assign bram_if[i].accept = (win_issue[0] ? win_oh[0][i] : '0) | (win_issue[1] ? win_oh[1][i] : '0);
+        assign bram_if[i].accept = (win_issue[0] & win_oh[0][i]) | (win_issue[1] & win_oh[1][i]);
     end
 
     MemoryInterface #(
@@ -102,7 +145,9 @@ module BRAMBackend
     wire portB_win1 = ~available[0] & available[1] & win_issue[0];
     wire portB_win2 = available[0] & available[1] & win_issue[1];
     wire portB_valid = portB_win1 | portB_win2;
-    wire [IDX_W-1:0] portB_idx = portB_win1 ? win_idx[0] : win_idx[1];
+    // Port B serves pick 0 only while port A holds data: the BRAM address
+    // does not wait for the issue decision
+    wire [IDX_W-1:0] portB_idx = available[0] ? win_idx[1] : win_idx[0];
     wire portB_load = portB_valid & ~req[portB_idx].write;
 
     always_ff @(posedge clk) begin

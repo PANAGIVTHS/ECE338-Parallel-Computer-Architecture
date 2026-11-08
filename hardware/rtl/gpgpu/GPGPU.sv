@@ -127,6 +127,8 @@ module GPGPU
         .o_rsp_valid(o_rsp_valid), .i_rsp_ready(i_rsp_ready),
         .o_rsp_rdata(o_rsp_rdata), .o_rsp_status(o_rsp_status),
         .i_idle(o_core_idle), .imem(host_imem_if), .dmem(host_dmem_if),
+        // A fatal subsystem accepts nothing: the access completes without effect, as before
+        .i_dmem_ready(dmem_if[0].req_ready | memory_fatal),
         .o_csr_write_fire(csr_write_fire),
         .i_csr_rdata(csr_rdata), .i_csr_status(csr_status)
     );

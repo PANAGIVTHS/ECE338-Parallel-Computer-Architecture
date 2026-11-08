@@ -1,19 +1,33 @@
-module DDRGroupFormer 
+// DDRGroupFormer: forms one AXI burst group per cycle from the candidates.
+//
+// Two stages, so that picking a seed and gathering its group are never in the
+// same cycle. The seed register holds the group being gathered (its 128-byte
+// window and direction): every candidate in it is a member, and all of them
+// are accepted together as soon as the group's ring is free. In the same
+// cycle the next seed is picked: the lowest-index eligible candidate outside
+// the held group, so a new group is still formed every cycle.
+//
+// A request stays a candidate, with the same address, until it is accepted,
+// so a group still gathers every request in its window: the bursts are the
+// ones the single-cycle former made, each one cycle later.
+module DDRGroupFormer
     import gpu_pkg::*;
     import DDRBackendPkg::*;
     import MemorySubsystemPkg::*;
 #(
-    parameter int unsigned NUM_REQ,
-    localparam IDX_W = NUM_REQ > 1 ? $clog2(NUM_REQ) : 1
+    parameter int unsigned NUM_REQ
 ) (
+    input logic clk,
+    input logic rst_n,
+
     input logic [NUM_REQ-1:0] cand,
     input mem_req_t [NUM_REQ-1:0] req,
 
     // Ring availability
-    input rd_ring_free,
-    input wr_ring_free,
+    input logic rd_ring_free,
+    input logic wr_ring_free,
 
-    // All accepted requsts
+    // All accepted requests
     output logic [NUM_REQ-1:0] accept,
     output logic push_rd, // Accepted for read
     output logic push_wr, // Accepted for write
@@ -23,78 +37,105 @@ module DDRGroupFormer
     output beat_t first_beat,
     output beat_t last_beat
 );
-    
+
     //& =============================================
-    //& SEED FINDER AND MEMBER SELECTION
+    //& HELD GROUP AND ITS MEMBERS
     //& =============================================
-    
-    // A group can be issued this cycle
-    logic group_found;
-    // Remove candidates that cannot be served by the 
-    // requesting ring (ex. remove read candidates if read ring not free)
-    logic [NUM_REQ-1:0] eligible;
-    // Selected candidates that can be served
-    logic [NUM_REQ-1:0] selected;
-    logic [NUM_REQ-1:0] seed_oh;
-    word_t seed_addr;
+    logic seed_valid;
+    ring_group_t seed_group;
     logic seed_write;
-    assign group_address = group_of(seed_addr);
+
+    // Requests in the held group's window and direction, candidates or not
+    logic [NUM_REQ-1:0] in_group, members;
+
+    always_comb begin
+        for (int unsigned i = 0; i < NUM_REQ; i++) begin
+            in_group[i] = (group_of(req[i].addr) == seed_group) & (req[i].write == seed_write);
+        end
+    end
+
+    assign members = {NUM_REQ{seed_valid}} & cand & in_group;
+
+    logic any_member, ring_free, push, hold;
+    assign any_member = |members;
+    assign ring_free = seed_write ? wr_ring_free : rd_ring_free;
+    assign push = any_member & ring_free;
+    // Kept until its ring is free. A group whose requests were all withdrawn
+    // (the subsystem was disabled) is dropped, so it never blocks the others.
+    assign hold = any_member & ~ring_free;
+
+    //& =============================================
+    //& NEXT SEED: lowest-index eligible candidate
+    //& outside the held group
+    //& =============================================
+    logic [NUM_REQ-1:0] eligible, seed_oh;
+    logic seed_found;
+    word_t seed_addr;
+    logic next_write;
+
+    // Candidates the requesting ring cannot serve now are skipped, as before:
+    // a read seed must not block writes while the read ring is full.
+    always_comb begin
+        for (int unsigned i = 0; i < NUM_REQ; i++) begin
+            eligible[i] = cand[i] & ~(seed_valid & in_group[i])
+                        & (req[i].write ? wr_ring_free : rd_ring_free);
+        end
+    end
 
     ArbiterMLowest #(
         .N(NUM_REQ),
         .M(1)
-     ) arbiterMLowest (
-        .req(eligible),
-        .grant(),
-        .win_oh(seed_oh),
-        .win_vld(group_found),
+    ) seedArbiter (
+        .req    (eligible),
+        .grant  (),
+        .win_oh (seed_oh),
+        .win_vld(seed_found),
         .win_idx()
     );
 
+    // One-hot AND-OR mux
     always_comb begin
         seed_addr  = '0;
-        seed_write = 1'b0;
+        next_write = 1'b0;
         for (int unsigned i = 0; i < NUM_REQ; i++) begin
             seed_addr  |= {XLEN{seed_oh[i]}} & req[i].addr;
-            seed_write |= seed_oh[i] & req[i].write;
+            next_write |= seed_oh[i] & req[i].write;
         end
     end
 
-    always_comb begin
-        for (int unsigned i = 0; i < NUM_REQ; i++) begin
-            eligible[i] = cand[i] & (req[i].write ? wr_ring_free : rd_ring_free);
-        end
-    end
-
-    always_comb begin
-        for (int unsigned i = 0; i < NUM_REQ; i++) begin
-            selected[i] = group_found & cand[i] 
-            & (group_of(req[i].addr) == group_of(seed_addr)) & (req[i].write == seed_write);
+    always_ff @(posedge clk) begin
+        if (~rst_n) begin
+            seed_valid <= 1'b0;
+            seed_group <= '0;
+            seed_write <= 1'b0;
+        end else if (~hold) begin
+            seed_valid <= seed_found;
+            seed_group <= group_of(seed_addr);
+            seed_write <= next_write;
         end
     end
 
     //& =============================================
-    //& FIRST AND LAST BEAT
+    //& FIRST AND LAST BEAT OF THE HELD GROUP
     //& =============================================
     beat_t beats [NUM_REQ];
     beat_mask_t valid_beats, valid_beats_reversed;
     beat_t last_index_reversed;
 
-    for (genvar i = 0; i < NUM_REQ; i++) begin: beat_expansion
+    for (genvar i = 0; i < NUM_REQ; i++) begin : beat_expansion
         assign beats[i] = beat_of(req[i].addr);
     end
 
-    // Create mask of which beats in the burst will be valid
+    // Mask of the beats the burst carries
     always_comb begin
         valid_beats = '0;
-
         for (int unsigned i = 0; i < NUM_REQ; i++) begin
-            if (selected[i])
+            if (members[i])
                 valid_beats[beats[i]] = 1'b1;
         end
     end
 
-    // Reverse the mast to find the last beat
+    // Reverse the mask to find the last beat
     assign valid_beats_reversed = {<<{valid_beats}};
 
     ArbiterMLowest #(
@@ -120,12 +161,13 @@ module DDRGroupFormer
     );
 
     assign last_beat = ~last_index_reversed;
-    
+
     //& =============================================
     //& RING CHECKER
     //& =============================================
-    assign push_rd = group_found & rd_ring_free & ~seed_write;
-    assign push_wr = group_found & wr_ring_free & seed_write;
-    assign accept = selected;
+    assign group_address = seed_group;
+    assign push_rd = push & ~seed_write;
+    assign push_wr = push & seed_write;
+    assign accept = {NUM_REQ{push}} & members;
 
 endmodule
