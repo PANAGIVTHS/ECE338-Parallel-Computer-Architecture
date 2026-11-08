@@ -103,6 +103,12 @@ module GPGPU
     word_t csr_rdata;
     rsp_status_t csr_status;
 
+    // Instruction memory copies, and the instruction each core reads its
+    // registers with (see the instruction memory below)
+    localparam int unsigned IMEM_COPIES = SP_PER_SM < 4 ? SP_PER_SM : 4;
+    word_t imem_copy_rdata [IMEM_COPIES];
+    word_t lane_instruction [SP_PER_SM];
+
     // Memory interfaces 
     MemoryInterface #(.ADDR_WIDTH(IMEM_AW)) host_imem_if ();
     MemoryInterface #(.ADDR_WIDTH(IMEM_AW)) smx_imem_if ();
@@ -166,6 +172,7 @@ module GPGPU
         .rst_n(rst_n && !core_reset),
         .i_enable(o_core_running),
         .i_ifid_instruction(imem_if.rdata),
+        .i_lane_instruction(lane_instruction),
         .o_imem_addr(smx_imem_if.addr),
         .o_imem_ren(smx_imem_if.ren),
 
@@ -189,6 +196,38 @@ module GPGPU
         .clk(clk),
         .memory(imem_if.slave)
     );
+
+    // Copies for the cores' register reads: copy k gives its share of the
+    // cores their register addresses, so no BRAM output has to reach every
+    // core across the device. They take instructionMemory's accesses, so
+    // they hold its words; simulation, whose benches load instructionMemory,
+    // reads it for every copy. dont_touch keeps synthesis from merging them.
+    for (genvar k = 1; k < IMEM_COPIES; k++) begin : g_imem_copy
+`ifdef SYNTHESIS
+        MemoryInterface #(.ADDR_WIDTH(IMEM_AW)) copy_if ();
+        assign copy_if.addr = imem_if.addr;
+        assign copy_if.wdata = imem_if.wdata;
+        assign copy_if.ren = imem_if.ren;
+        assign copy_if.wen = imem_if.wen;
+        assign imem_copy_rdata[k] = copy_if.rdata;
+
+        (* dont_touch = "true" *)
+        MemorySinglePort #(
+            .DEPTH(IMEM_ENTRIES),
+            .INIT_FILE(MEMORY_INIT)
+        ) instructionMemory (
+            .clk(clk),
+            .memory(copy_if.slave)
+        );
+`else
+        assign imem_copy_rdata[k] = imem_if.rdata;
+`endif
+    end
+
+    assign imem_copy_rdata[0] = imem_if.rdata;
+    for (genvar i = 0; i < SP_PER_SM; i++) begin : g_lane_instruction
+        assign lane_instruction[i] = imem_copy_rdata[i * IMEM_COPIES / SP_PER_SM];
+    end
 
     //! Data memory (BRAM + DRAM)
 

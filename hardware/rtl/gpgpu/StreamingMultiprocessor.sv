@@ -12,6 +12,9 @@ module StreamingMultiprocessor
     input logic i_enable,
 
     input word_t i_ifid_instruction,
+    // The same instruction, from the copy of the instruction memory each
+    // core reads its register addresses from
+    input word_t i_lane_instruction [NUM_CORES],
     output imem_idx_t o_imem_addr,
     output logic o_imem_ren,
 
@@ -138,6 +141,10 @@ module StreamingMultiprocessor
     // in EX, and registered by every core with idex: in EX the operand
     // muxes see registered selects. Lockstep: core 0's writers are all.
     forward_sel_t id_forward_a, id_forward_b;
+    // Likewise whether the registers read have been written since reset
+    logic id_written_a, id_written_b;
+    assign id_written_a = sp_feedback[0].written_next[decoded.rs1];
+    assign id_written_b = sp_feedback[0].written_next[decoded.rs2];
 
     ForwardingUnit forwardingUnit (
         .i_idex_rs1(decoded.rs1),
@@ -221,13 +228,15 @@ module StreamingMultiprocessor
                 .rst_n(rst_n),
 
                 //! Regfile Muxes forward
-                .i_id_mux_rs1(decoded.rs1),
-                .i_id_mux_rs2(decoded.rs2),
+                .i_id_mux_rs1(i_lane_instruction[i][19:15]),
+                .i_id_mux_rs2(i_lane_instruction[i][24:20]),
 
                 //! IDEX Pipeline
                 .i_idex(idex),
                 .i_id_forward_a(id_forward_a),
                 .i_id_forward_b(id_forward_b),
+                .i_id_written_a(id_written_a),
+                .i_id_written_b(id_written_b),
 
                 //! Feedback wires Hazard & PC
                 .o_feedback(sp_feedback[i]),

@@ -12,6 +12,9 @@ module PortController
     input logic i_rsp_ready,
     input logic i_req_valid,
     input mem_req_t req,
+    // The request, registered with its decode: what the backends serve. It
+    // is the request presented whenever this port is a candidate or waits.
+    output mem_req_t o_req_q,
 
     output logic o_req_ready,
     output logic o_rsp_valid,
@@ -52,6 +55,7 @@ module PortController
             decoded_valid <= i_req_valid & (current_state == IDLE) & ~o_req_ready;
         end
         decoded <= decode_access(req.addr, req.write, DDR_ENABLE);
+        o_req_q <= req;
     end
 
     // Claim: a presented request in IDLE becomes a candidate while enabled.

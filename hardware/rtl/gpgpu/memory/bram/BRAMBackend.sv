@@ -137,6 +137,46 @@ module BRAMBackend
         .memory_b(port_b.slave)
     );
 
+    // Copies for the read data: requester g reads copy g*COPIES/NUM_REQ, so
+    // no BRAM output has to reach every requester across the device. They
+    // take dataMemory's accesses, so they hold its words; simulation, whose
+    // benches access dataMemory, reads it for every copy. dont_touch keeps
+    // synthesis from merging them.
+    localparam int unsigned COPIES = NUM_REQ < 4 ? NUM_REQ : 4;
+    word_t copy_rdata_a [COPIES], copy_rdata_b [COPIES];
+    assign copy_rdata_a[0] = port_a.rdata;
+    assign copy_rdata_b[0] = port_b.rdata;
+
+    for (genvar k = 1; k < COPIES; k++) begin : g_copy
+`ifdef SYNTHESIS
+        MemoryInterface #(.ADDR_WIDTH(DMEM_AW)) copy_a ();
+        MemoryInterface #(.ADDR_WIDTH(DMEM_AW)) copy_b ();
+        assign copy_a.addr = port_a.addr;
+        assign copy_a.wdata = port_a.wdata;
+        assign copy_a.ren = port_a.ren;
+        assign copy_a.wen = port_a.wen;
+        assign copy_b.addr = port_b.addr;
+        assign copy_b.wdata = port_b.wdata;
+        assign copy_b.ren = port_b.ren;
+        assign copy_b.wen = port_b.wen;
+        assign copy_rdata_a[k] = copy_a.rdata;
+        assign copy_rdata_b[k] = copy_b.rdata;
+
+        (* dont_touch = "true" *)
+        MemoryDualPort #(
+            .DEPTH(DMEM_ENTRIES),
+            .INIT_FILE(BRAM_INIT)
+        ) dataMemory (
+            .clk(clk),
+            .memory_a(copy_a.slave),
+            .memory_b(copy_b.slave)
+        );
+`else
+        assign copy_rdata_a[k] = port_a.rdata;
+        assign copy_rdata_b[k] = port_b.rdata;
+`endif
+    end
+
     // Port B is used only if 2 winners are selected or portA is not available
     wire portA_valid = available[0] & win_issue[0];
     wire [IDX_W-1:0] portA_idx = win_idx[0];
@@ -187,9 +227,9 @@ module BRAMBackend
     for (genvar g = 0; g < NUM_REQ; g = g + 1) begin : routing
         always_comb begin
             if (busy[0] && owners[0] == g[IDX_W-1:0]) begin
-                bram_if[g].rdata = port_a.rdata;
+                bram_if[g].rdata = copy_rdata_a[g * COPIES / NUM_REQ];
             end else if (busy[1] && owners[1] == g[IDX_W-1:0]) begin
-                bram_if[g].rdata = port_b.rdata;
+                bram_if[g].rdata = copy_rdata_b[g * COPIES / NUM_REQ];
             end else begin
                 bram_if[g].rdata = '0;
             end

@@ -100,9 +100,10 @@ module DDRWriteRing
     logic empty, full, pop;
 
     // Slot indices: the pointers without their wrap bit
-    wr_slot_idx_t alloc_idx, w_idx, b_idx, head_idx;
+    wr_slot_idx_t alloc_idx, w_idx, w_next_idx, b_idx, head_idx;
     assign alloc_idx = alloc[SLOT_W-1:0];
     assign w_idx = w[SLOT_W-1:0];
+    assign w_next_idx = w_next[SLOT_W-1:0];
     assign b_idx = b[SLOT_W-1:0];
     assign head_idx = head[SLOT_W-1:0];
 
@@ -199,12 +200,37 @@ module DDRWriteRing
     assign pop = ~empty & slot[head_idx].b_done & ~|waiting_at_head;
 
     //& =============================================
+    //& Current W slot: its length and the beat being
+    //& sent within the group, in registers so that the
+    //& write assembler starts from flip-flops
+    //& =============================================
+    beat_t w_len, w_group_beat;
+
+    always_ff @(posedge clk) begin
+        if (~rst_n) begin
+            w_len <= '0;
+            w_group_beat <= '0;
+        end else if (w_fire & w_last) begin
+            // The next slot is written already, unless it is pushed now: then
+            // its W waits for its AW, and the reload below catches up
+            w_len <= slot[w_next_idx].len;
+            w_group_beat <= slot[w_next_idx].first;
+        end else if (w_fire) begin
+            w_group_beat <= w_group_beat + beat_t'(1);
+        end else if (~w_valid) begin
+            // No burst in progress (once offered, W stays valid to its last beat)
+            w_len <= slot[w_idx].len;
+            w_group_beat <= slot[w_idx].first;
+        end
+    end
+
+    //& =============================================
     //& Outputs
     //& =============================================
-    assign w_wbeat = w_beat + slot[w_idx].first;
+    assign w_wbeat = w_group_beat;
     assign wr_owed = b != w;
     assign w_slot = ring_index_t'(w_idx);
-    assign w_last = w_beat == slot[w_idx].len;
+    assign w_last = w_beat == w_len;
     assign wr_alloc = ring_index_t'(alloc_idx);
 
     for (genvar i = 0; i < NUM_REQ; i++) begin : wr_response

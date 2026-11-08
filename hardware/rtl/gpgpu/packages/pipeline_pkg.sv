@@ -69,6 +69,8 @@ package pipeline_pkg;
         // entering MEM and the one entering WB
         writer_t next_mem;
         writer_t next_wb;
+        // The register file's written mask after this cycle's write
+        logic [gpu_pkg::REG_COUNT-1:0] written_next;
     } sp_feedback_t;
 
 endpackage

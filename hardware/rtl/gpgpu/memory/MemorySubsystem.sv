@@ -35,6 +35,9 @@ module MemorySubsystem
     
     // Request expansions
     mem_req_t [NUM_REQ-1:0] req;
+    // The requests as the port controllers registered them: the backends
+    // read these flip-flops, not the requesters' far-off pipeline registers
+    mem_req_t [NUM_REQ-1:0] req_q;
     logic [NUM_REQ-1:0] req_valid;
     logic [NUM_REQ-1:0] rsp_ready;
     logic [NUM_REQ-1:0] port_idle;
@@ -64,6 +67,7 @@ module MemorySubsystem
             .o_rsp_valid(memory_if[i].rsp_valid),
             .i_rsp_ready(rsp_ready[i]),
             .req(req[i]),
+            .o_req_q(req_q[i]),
             .rsp(memory_if[i].rsp),
             .bram_if(bram_if[i]),
             .ddr_if(ddr_if[i]),
@@ -80,7 +84,7 @@ module MemorySubsystem
     ) bramBackend (
         .clk(clk),
         .rst_n(rst_n),
-        .req(req),
+        .req(req_q),
         .bram_if(bram_if),
         .o_busy(bram_busy)
     );
@@ -90,7 +94,7 @@ module MemorySubsystem
     ) ddrBackend (
         .clk(clk),
         .rst_n(rst_n),
-        .req(req),
+        .req(req_q),
         .axi_if(axi_if),
         .ddr_if(ddr_if),
         .o_rd_beat(ddr_rd_beat),

@@ -6,8 +6,13 @@ module Regfile
     input logic clk, rst_n, i_wen,
     input word_t i_wdata,
     input reg_addr_t i_addr_a, i_addr_b, i_waddr,
+    //! Whether the registers read have been written since reset, resolved
+    //! with the addresses (the mask is the same in every lockstep core)
+    input logic i_written_a, i_written_b,
     input logic i_stall,
-    output word_t o_reg_a, o_reg_b
+    output word_t o_reg_a, o_reg_b,
+    //! The written mask as it is after this cycle's write
+    output logic [REG_COUNT-1:0] o_written_next
 );
     //! Storage is distributed RAM (LUTRAM), which cannot be reset.
     (* ram_style = "distributed" *)
@@ -28,19 +33,25 @@ module Regfile
     //! drives 32 registers instead of every core's RAM address inputs.
     (* keep = "true" *) reg_addr_t addr_a;
     (* keep = "true" *) reg_addr_t addr_b;
+    (* keep = "true" *) logic written_a;
+    (* keep = "true" *) logic written_b;
 
     always_ff @(posedge clk) begin
         if (!rst_n) begin
             addr_a <= '0;
             addr_b <= '0;
+            written_a <= 1'b0;
+            written_b <= 1'b0;
         end else if (!i_stall) begin
             addr_a <= i_addr_a;
             addr_b <= i_addr_b;
+            written_a <= i_written_a;
+            written_b <= i_written_b;
         end
     end
 
-    assign o_reg_a = stored(addr_a, written[addr_a], ram[addr_a]);
-    assign o_reg_b = stored(addr_b, written[addr_b], ram[addr_b]);
+    assign o_reg_a = stored(addr_a, written_a, ram[addr_a]);
+    assign o_reg_b = stored(addr_b, written_b, ram[addr_b]);
 
     //! Write (no reset: LUTRAM)
     wire write_fire = !i_stall && i_wen && write_allowed;
@@ -51,11 +62,18 @@ module Regfile
         end
     end
 
+    always_comb begin
+        o_written_next = written;
+        if (write_fire) begin
+            o_written_next[i_waddr] = 1'b1;
+        end
+    end
+
     always_ff @(posedge clk) begin
         if (!rst_n) begin
             written <= '0;
-        end else if (write_fire) begin
-            written[i_waddr] <= 1'b1;
+        end else begin
+            written <= o_written_next;
         end
     end
 endmodule
