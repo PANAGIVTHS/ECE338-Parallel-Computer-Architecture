@@ -20,12 +20,9 @@ module StreamingProcessor
     input id_ex_t i_id_decoded,
     input logic i_id_issue,
 
-    //! Forwarding for the instruction entering EX, from the SM's decode,
-    //! and whether the registers it reads have been written since reset
+    //! Forwarding for the instruction entering EX, from the SM's decode
     input forward_sel_t i_id_forward_a,
     input forward_sel_t i_id_forward_b,
-    input logic i_id_written_a,
-    input logic i_id_written_b,
 
     //! Hazard and Branch feedback
     output sp_feedback_t o_feedback,
@@ -100,9 +97,7 @@ module StreamingProcessor
     ) regfile (
         .clk(clk), .rst_n(rst_n), .i_wen(memwb.wen), .i_wdata(wb_wdata), 
         .i_addr_a(i_id_mux_rs1), .i_addr_b(i_id_mux_rs2), .i_waddr(memwb.rd), 
-        .i_written_a(i_id_written_a), .i_written_b(i_id_written_b),
-        .o_reg_a(ex_reg_a), .o_reg_b(ex_reg_b), .i_stall(i_stall),
-        .o_written_next(o_feedback.written_next)
+        .o_reg_a(ex_reg_a), .o_reg_b(ex_reg_b), .i_stall(i_stall)
     );
 
     //? --- Forwarding Multiplexer B ---

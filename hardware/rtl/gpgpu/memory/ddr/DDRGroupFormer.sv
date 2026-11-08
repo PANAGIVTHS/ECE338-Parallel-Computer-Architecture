@@ -30,6 +30,7 @@ module DDRGroupFormer
     // Ring availability
     input logic rd_ring_free,
     input logic wr_ring_free,
+    input logic wr_slot_free, // a hint for picking: the write ring has a free slot
 
     // All accepted requests
     output logic [NUM_REQ-1:0] accept,
@@ -81,12 +82,14 @@ module DDRGroupFormer
     logic next_write;
 
     // Candidates the requesting ring cannot serve now are skipped, as before:
-    // a read seed must not block writes while the read ring is full. A seed
-    // that is no longer a candidate gathers nothing and is dropped.
+    // a read seed must not block writes while the read ring is full. A write
+    // seed needs only a free slot: the gathering stage waits for the AW
+    // register, which frees on its own. A seed that is no longer a candidate
+    // gathers nothing and is dropped.
     always_comb begin
         for (int unsigned i = 0; i < NUM_REQ; i++) begin
             eligible[i] = pick[i] & ~(seed_valid & in_group[i])
-                        & (req[i].write ? wr_ring_free : rd_ring_free);
+                        & (req[i].write ? wr_slot_free : rd_ring_free);
         end
     end
 

@@ -93,7 +93,7 @@ module GPGPU
     core_state_t core_state;
     logic core_complete, complete_pulse, stopped, faulted;
     logic control_start, control_stop, clear_stopped, clear_faulted;
-    logic core_reset, memory_quiet;
+    logic core_reset, memory_quiet, memory_enable;
 
     // Faults: SM capture (until the next START) and memory subsystem lock-up
     logic core_fault;
@@ -170,7 +170,8 @@ module GPGPU
         .i_core_complete(core_complete), .i_fault(core_fault),
         .i_memory_quiet(memory_quiet), .i_fatal(memory_fatal),
         .o_core_state(core_state), .o_stopped(stopped), .o_faulted(faulted),
-        .o_complete_pulse(complete_pulse)
+        .o_complete_pulse(complete_pulse),
+        .o_memory_enable(memory_enable)
     );
 
     StreamingMultiprocessor #(
@@ -329,7 +330,7 @@ module GPGPU
     ) memory_subsystem (
         .clk(clk),
         .rst_n(rst_n_q),
-        .i_req_enable(o_core_running | o_core_idle),
+        .i_req_enable(memory_enable), // RUNNING or IDLE
         .memory_if(dmem_if),
         .axi_if(axi_if),
         .o_idle(memory_quiet),

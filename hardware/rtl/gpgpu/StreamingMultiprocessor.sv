@@ -161,10 +161,6 @@ module StreamingMultiprocessor
     // in EX, and registered by every core with idex: in EX the operand
     // muxes see registered selects. Lockstep: core 0's writers are all.
     forward_sel_t id_forward_a, id_forward_b;
-    // Likewise whether the registers read have been written since reset
-    logic id_written_a, id_written_b;
-    assign id_written_a = sp_feedback[0].written_next[decoded.rs1];
-    assign id_written_b = sp_feedback[0].written_next[decoded.rs2];
 
     ForwardingUnit forwardingUnit (
         .i_idex_rs1(decoded.rs1),
@@ -256,8 +252,6 @@ module StreamingMultiprocessor
                 .i_id_issue(issue),
                 .i_id_forward_a(id_forward_a),
                 .i_id_forward_b(id_forward_b),
-                .i_id_written_a(id_written_a),
-                .i_id_written_b(id_written_b),
 
                 //! Feedback wires Hazard & PC
                 .o_feedback(sp_feedback[i]),

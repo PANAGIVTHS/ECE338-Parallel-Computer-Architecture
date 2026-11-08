@@ -20,6 +20,7 @@ module DDRWriteRing
 
     // For accepting groups
     output logic free, // A slot is free, and the AW register will be when the beats arrive
+    output logic slot_free, // A slot is free (registers only)
     output ring_index_t wr_alloc, // Next free slot
     
     // Formed group: pushed into a slot, then its beats in the next cycle
@@ -260,6 +261,7 @@ module DDRWriteRing
     // The AW register takes the beats in the cycle after a push, so the
     // register must be empty by then and the cycle after a push takes none
     assign free = ~full & ~wr_cmd & (~aw_cmd.valid | aw_ready);
+    assign slot_free = ~full;
 
     // Fatal faults
     logic stray_b, cmd_overrun, push_full;

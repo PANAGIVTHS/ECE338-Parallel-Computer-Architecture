@@ -53,7 +53,7 @@ module DDRBackend
     logic rd_beats, wr_beats; // the group pushed last cycle, with its beats
     ring_group_t cmd_group;
     beat_t first_beat, last_beat;
-    logic rd_ring_free, wr_ring_free;
+    logic rd_ring_free, wr_ring_free, wr_slot_free;
     assign rd_ring_free = 1'b0; // TODO: remove when read ring is impemented (Currently hangs read instrutions)
 
     logic [NUM_REQ-1:0] pick;
@@ -73,6 +73,7 @@ module DDRBackend
         .req          (req),
         .rd_ring_free (rd_ring_free),
         .wr_ring_free (wr_ring_free),
+        .wr_slot_free (wr_slot_free),
         .accept       (selected),
         .push_rd      (push_rd),
         .push_wr      (push_wr),
@@ -118,6 +119,7 @@ module DDRBackend
         .aw_cmd       (aw_cmd),
         // Group formation
         .free         (wr_ring_free),
+        .slot_free    (wr_slot_free),
         .wr_alloc     (wr_alloc),
         .push_wr      (push_wr),
         .wr_cmd       (wr_beats),
@@ -177,10 +179,14 @@ module DDRBackend
     // so the requesters never see the interconnect's R channel directly
     beat_rdata_t r_beat;
     axi_resp_t r_beat_resp;
+    (* max_fanout = 8 *) beat_rdata_t rd_beat_q;
+    (* max_fanout = 8 *) axi_resp_t rd_resp_q;
     always_ff @(posedge clk) begin
-        o_rd_beat <= r_beat;
-        o_rd_resp <= r_beat_resp;
+        rd_beat_q <= r_beat;
+        rd_resp_q <= r_beat_resp;
     end
+    assign o_rd_beat = rd_beat_q;
+    assign o_rd_resp = rd_resp_q;
 
     AXI4Master axi4Master (
         .clk        (clk),

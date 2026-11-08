@@ -6,19 +6,15 @@ module Regfile
     input logic clk, rst_n, i_wen,
     input word_t i_wdata,
     input reg_addr_t i_addr_a, i_addr_b, i_waddr,
-    //! Whether the registers read have been written since reset, resolved
-    //! with the addresses (the mask is the same in every lockstep core)
-    input logic i_written_a, i_written_b,
     input logic i_stall,
-    output word_t o_reg_a, o_reg_b,
-    //! The written mask as it is after this cycle's write, if the cycle does
-    //! not stall (it is only read into registers that hold during a stall)
-    output logic [REG_COUNT-1:0] o_written_next
+    output word_t o_reg_a, o_reg_b
 );
     //! Storage is distributed RAM (LUTRAM), which cannot be reset.
     (* ram_style = "distributed" *)
     word_t ram [REG_COUNT-1:0];
-    logic [REG_COUNT-1:0] written;
+    //! keep: the mask is the same in every lockstep core; its own copy keeps
+    //! each core's read of it local
+    (* keep = "true" *) logic [REG_COUNT-1:0] written;
     wire write_allowed = (i_waddr != '0) && (i_waddr != TXD_REGISTER);
 
     //! Reset values come from a per-register "written since reset" mask 
@@ -46,8 +42,10 @@ module Regfile
         end else if (!i_stall) begin
             addr_a <= i_addr_a;
             addr_b <= i_addr_b;
-            written_a <= i_written_a;
-            written_b <= i_written_b;
+            // A write in WB this cycle counts: these registers load only
+            // when the cycle does not stall, and then the write happens
+            written_a <= written[i_addr_a] || (i_wen && write_allowed && i_waddr == i_addr_a);
+            written_b <= written[i_addr_b] || (i_wen && write_allowed && i_waddr == i_addr_b);
         end
     end
 
@@ -60,13 +58,6 @@ module Regfile
     always_ff @(posedge clk) begin
         if (write_fire) begin
             ram[i_waddr] <= i_wdata;
-        end
-    end
-
-    always_comb begin
-        o_written_next = written;
-        if (i_wen && write_allowed) begin
-            o_written_next[i_waddr] = 1'b1;
         end
     end
 
