@@ -113,7 +113,7 @@ module GPGPU
 
     // Instruction memory copies, and the instruction each core reads its
     // registers with (see the instruction memory below)
-    localparam int unsigned IMEM_COPIES = SP_PER_SM < 8 ? SP_PER_SM : 8;
+    localparam int unsigned IMEM_COPIES = SP_PER_SM < 16 ? SP_PER_SM : 16;
     word_t imem_copy_rdata [IMEM_COPIES];
     word_t lane_instruction [SP_PER_SM];
 

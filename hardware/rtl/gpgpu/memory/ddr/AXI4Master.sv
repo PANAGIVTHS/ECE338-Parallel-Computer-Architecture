@@ -153,9 +153,17 @@ module AXI4Master
         assign timeout = 1'b0;
     end else begin : g_timeout
         logic [$clog2(AXI_TIMEOUT + 1)-1:0] wait_cycles;
+        // Registered: the interconnect's READY depends on our VALID, and the
+        // count is long enough that a cycle's delay does not matter
+        logic any_fire_q, slave_owes_q;
 
         always_ff @(posedge clk) begin
-            if (~rst_n || any_fire || ~slave_owes) begin
+            any_fire_q <= any_fire;
+            slave_owes_q <= slave_owes;
+        end
+
+        always_ff @(posedge clk) begin
+            if (~rst_n || any_fire_q || ~slave_owes_q) begin
                 wait_cycles <= '0;
             end else if (~timeout) begin
                 wait_cycles <= wait_cycles + 1'b1;
@@ -163,7 +171,7 @@ module AXI4Master
         end
 
         // The AXI_TIMEOUT-th consecutive owed cycle without a handshake
-        assign timeout = slave_owes & ~any_fire
+        assign timeout = slave_owes_q & ~any_fire_q
                        & (wait_cycles == $bits(wait_cycles)'(AXI_TIMEOUT - 1));
     end
 

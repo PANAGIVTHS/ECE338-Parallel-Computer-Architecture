@@ -5,10 +5,12 @@
 // group being gathered (its 128-byte window and direction): every candidate
 // in it is a member, and all of them are accepted together (pushed) as soon
 // as the group's ring is free. In the same cycle the next seed is picked: the
-// lowest-index eligible candidate outside the held group. The cycle after a
-// push gives the ring the pushed group's first and last beat, for its AW
-// command; the ring takes no push in that cycle, so a group is pushed at
-// most every other cycle.
+// lowest-index eligible candidate. The cycle after a push gives the ring the
+// pushed group's first and last beat, for its AW command; the ring takes no
+// push in that cycle, so a group is pushed at most every other cycle. A seed
+// picked among the members being pushed gathers nothing in that cycle (they
+// are no longer candidates) and is dropped, so picking needs no address
+// compare and costs no push.
 //
 // A request stays a candidate, with the same address, until it is accepted,
 // so a group still gathers every request in its window: the bursts are the
@@ -88,8 +90,7 @@ module DDRGroupFormer
     // gathers nothing and is dropped.
     always_comb begin
         for (int unsigned i = 0; i < NUM_REQ; i++) begin
-            eligible[i] = pick[i] & ~(seed_valid & in_group[i])
-                        & (req[i].write ? wr_slot_free : rd_ring_free);
+            eligible[i] = pick[i] & (req[i].write ? wr_slot_free : rd_ring_free);
         end
     end
 
@@ -190,6 +191,7 @@ module DDRGroupFormer
     //& =============================================
     assign push_rd = push & ~seed_write;
     assign push_wr = push & seed_write;
-    assign accept = {NUM_REQ{push}} & members;
+    // push is |members & ring_free: no member waits for the OR of the others
+    assign accept = {NUM_REQ{ring_free}} & members;
 
 endmodule

@@ -20,9 +20,6 @@ module StreamingProcessor
     input id_ex_t i_id_decoded,
     input logic i_id_issue,
 
-    //! Forwarding for the instruction entering EX, from the SM's decode
-    input forward_sel_t i_id_forward_a,
-    input forward_sel_t i_id_forward_b,
 
     //! Hazard and Branch feedback
     output sp_feedback_t o_feedback,
@@ -274,11 +271,9 @@ module StreamingProcessor
             memwb <= '{
                 rd: exmem.rd,
                 is_mul: exmem.mul_valid,
-                is_load: mem_is_load,
-                alu_out: exmem.alu_out,
+                wdata: mem_is_load ? temp_memory : exmem.alu_out,
                 wen: exmem.wen,
-                program_counter: exmem.program_counter,
-                rdata: temp_memory
+                program_counter: exmem.program_counter
             };
         end
     end
@@ -287,14 +282,16 @@ module StreamingProcessor
     //! STAGE 5: WRITE BACK
     //! =========================================================================
 
-    assign wb_wdata = memwb.is_load ? memwb.rdata : memwb.alu_out;
+    assign wb_wdata = memwb.wdata;
 
     //& ===============
     //& FORWARDING
     //& ===============
-    // The SM compares the instruction in ID with the writers it will meet in
+    // Resolved for the instruction in ID, against the writers it will meet in
     // EX: the one entering MEM now (exmem's next value) and the one in MEM
-    // now (memwb's next value).
+    // now (memwb's next value). Every core resolves its own: the writers are
+    // the same in every lockstep core, and the instruction comes from this
+    // core's instruction-memory copy, so the logic stays local.
     writer_t ex_next_writer;
     always_comb begin
         if (mul_out.hazard.valid) begin
@@ -305,16 +302,27 @@ module StreamingProcessor
             ex_next_writer = '{rd: idex.rd, wen: idex_valid && idex.wen && (idex.rd != '0)};
         end
     end
-    assign o_feedback.next_mem = ex_next_writer;
-    assign o_feedback.next_wb = '{rd: exmem.rd, wen: exmem.wen};
+    forward_sel_t id_forward_a, id_forward_b;
+
+    ForwardingUnit forwardingUnit (
+        .i_idex_rs1(i_id_decoded.rs1),
+        .i_idex_rs2(i_id_decoded.rs2),
+        .i_exmem_rd(ex_next_writer.rd),
+        .i_exmem_wen(ex_next_writer.wen),
+        .i_idex_instr_type(i_id_decoded.instr_type),
+        .i_memwb_rd(exmem.rd),
+        .i_memwb_wen(exmem.wen),
+        .o_forward_alu_a(id_forward_a),
+        .o_forward_alu_b(id_forward_b)
+    );
 
     always_ff @(posedge clk) begin
         if (!rst_n) begin
             forward_alu_a <= NO_DEP;
             forward_alu_b <= NO_DEP;
         end else if (!i_stall) begin
-            forward_alu_a <= i_id_forward_a;
-            forward_alu_b <= i_id_forward_b;
+            forward_alu_a <= id_forward_a;
+            forward_alu_b <= id_forward_b;
         end
     end
 

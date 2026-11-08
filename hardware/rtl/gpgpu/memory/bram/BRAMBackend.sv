@@ -35,8 +35,8 @@ module BRAMBackend
     //& =============================================
     //& BUSY PORT MANAGING
     //& =============================================
-    // current port owners
-    logic [1:0][IDX_W-1:0] owners; 
+    // current port owners, one-hot
+    logic [1:0][NUM_REQ-1:0] owners; 
     // busy ports (port used for read on the previous cycle)
     logic [1:0] busy; 
     // port contains previous requested result but requester not ready
@@ -45,7 +45,7 @@ module BRAMBackend
     wire [1:0] available = ~hold;
 
     for (genvar i = 0; i < 2; i++) begin : hold_ports
-        assign hold[i] = busy[i] & ~take[owners[i]];
+        assign hold[i] = busy[i] & ~|(owners[i] & take);
     end
 
     assign o_busy = busy[0] | busy[1];
@@ -53,11 +53,10 @@ module BRAMBackend
     //& =============================================
     //& PICK REQUESTS TO SERVE NEXT CYCLE
     //& =============================================
-    // The picks being issued: one-hot, zero when there is none
+    // The picks being issued: one-hot, zero when there is none. They select
+    // their requests with AND-OR muxes, so no index is ever encoded.
     logic [1:0][NUM_REQ-1:0] win_oh;
-    logic [1:0][IDX_W-1:0] win_idx;
     logic [1:0][NUM_REQ-1:0] next_oh;
-    logic [1:0][IDX_W-1:0] next_idx;
 
     ArbiterMLowest #(
         .N(NUM_REQ),
@@ -67,8 +66,26 @@ module BRAMBackend
         .grant(),
         .win_oh(next_oh),
         .win_vld(),
-        .win_idx(next_idx)
+        .win_idx()
     );
+
+    // Each pick's request
+    logic [1:0] win_write;
+    logic [1:0][DMEM_AW-1:0] win_addr;
+    word_t win_wdata [2];
+
+    always_comb begin
+        for (int unsigned k = 0; k < 2; k++) begin
+            win_write[k] = 1'b0;
+            win_addr[k] = '0;
+            win_wdata[k] = '0;
+            for (int unsigned i = 0; i < NUM_REQ; i++) begin
+                win_write[k] |= win_oh[k][i] & req[i].write;
+                win_addr[k] |= {DMEM_AW{win_oh[k][i]}} & req[i].addr[DMEM_AW+1:2];
+                win_wdata[k] |= {XLEN{win_oh[k][i]}} & req[i].wdata;
+            end
+        end
+    end
 
     // A pick is issued only while it is still a candidate
     logic [1:0] win_vld;
@@ -79,8 +96,8 @@ module BRAMBackend
     //& =============================================
     //& WRITE COLLISION DETECTION
     //& =============================================
-    wire same_word = (req[win_idx[0]].addr[DMEM_AW+1:2] == req[win_idx[1]].addr[DMEM_AW+1:2]);
-    wire conflict  = win_vld[0] & win_vld[1] & same_word & (req[win_idx[0]].write | req[win_idx[1]].write);
+    wire same_word = (win_addr[0] == win_addr[1]);
+    wire conflict  = win_vld[0] & win_vld[1] & same_word & (win_write[0] | win_write[1]);
 
     //& =============================================
     //& MUX THE WINNERS' SIGNALS INTO THE BRAM
@@ -103,17 +120,6 @@ module BRAMBackend
             win_oh <= {next_oh[0], win_oh[1]};
         end else begin
             win_oh <= next_oh;
-        end
-    end
-
-    // Read only while its pick is set
-    always_ff @(posedge clk) begin
-        if (keep_both) begin
-            win_idx <= win_idx;
-        end else if (keep_one) begin
-            win_idx <= {next_idx[0], win_idx[1]};
-        end else begin
-            win_idx <= next_idx;
         end
     end
 
@@ -180,16 +186,15 @@ module BRAMBackend
 
     // Port B is used only if 2 winners are selected or portA is not available
     wire portA_valid = available[0] & win_issue[0];
-    wire [IDX_W-1:0] portA_idx = win_idx[0];
-    wire portA_load = portA_valid & ~req[portA_idx].write;
+    wire portA_load = portA_valid & ~win_write[0];
     // Port B is used only if 2 winners are selected or portA is not available
     wire portB_win1 = ~available[0] & available[1] & win_issue[0];
     wire portB_win2 = available[0] & available[1] & win_issue[1];
     wire portB_valid = portB_win1 | portB_win2;
     // Port B serves pick 0 only while port A holds data: the BRAM address
     // does not wait for the issue decision
-    wire [IDX_W-1:0] portB_idx = available[0] ? win_idx[1] : win_idx[0];
-    wire portB_load = portB_valid & ~req[portB_idx].write;
+    wire portB_pick = available[0];
+    wire portB_load = portB_valid & ~win_write[portB_pick];
 
     always_ff @(posedge clk) begin
         if (!rst_n) begin
@@ -198,27 +203,27 @@ module BRAMBackend
         end else begin
             if (portA_load) begin 
                 busy[0] <= 1'b1; 
-                owners[0] <= portA_idx; 
-            end else if (busy[0] & take[owners[0]]) 
+                owners[0] <= win_oh[0]; 
+            end else if (busy[0] & |(owners[0] & take)) 
                 busy[0] <= 1'b0;
             
             if (portB_load) begin 
                 busy[1] <= 1'b1;
-                owners[1] <= portB_idx; 
-            end else if (busy[1] & take[owners[1]]) 
+                owners[1] <= win_oh[portB_pick]; 
+            end else if (busy[1] & |(owners[1] & take)) 
                 busy[1] <= 1'b0;
         end
     end
 
     assign port_a.ren = portA_valid;
-    assign port_a.wen = req[portA_idx].write;
-    assign port_a.addr = req[portA_idx].addr[DMEM_AW+1:2];
-    assign port_a.wdata = req[portA_idx].wdata;
+    assign port_a.wen = win_write[0];
+    assign port_a.addr = win_addr[0];
+    assign port_a.wdata = win_wdata[0];
 
     assign port_b.ren = portB_valid;
-    assign port_b.wen = req[portB_idx].write;
-    assign port_b.addr = req[portB_idx].addr[DMEM_AW+1:2];
-    assign port_b.wdata = req[portB_idx].wdata;
+    assign port_b.wen = win_write[portB_pick];
+    assign port_b.addr = win_addr[portB_pick];
+    assign port_b.wdata = win_wdata[portB_pick];
 
     //& =============================================
     //& READ-DATA ROUTING
@@ -227,9 +232,9 @@ module BRAMBackend
     //! Steer the delayed BRAM output back to the specific requester that requested it
     for (genvar g = 0; g < NUM_REQ; g = g + 1) begin : routing
         always_comb begin
-            if (busy[0] && owners[0] == g[IDX_W-1:0]) begin
+            if (busy[0] && owners[0][g]) begin
                 bram_if[g].rdata = copy_rdata_a[g * COPIES / NUM_REQ];
-            end else if (busy[1] && owners[1] == g[IDX_W-1:0]) begin
+            end else if (busy[1] && owners[1][g]) begin
                 bram_if[g].rdata = copy_rdata_b[g * COPIES / NUM_REQ];
             end else begin
                 bram_if[g].rdata = '0;

@@ -150,29 +150,10 @@ module StreamingMultiprocessor
         );
     end
 
-    // The instruction in ID enters EX; otherwise EX gets a bubble
-    logic issue;
+    // The instruction in ID enters EX; otherwise EX gets a bubble. Every
+    // core's ID/EX copy loads it: replicated next to them.
+    (* max_fanout = 8 *) logic issue;
     assign issue = decode_enabled && !data_hazard;
-
-    //& ===============
-    //& FORWARDING
-    //& ===============
-    // Resolved for the instruction in ID, against the writers it will meet
-    // in EX, and registered by every core with idex: in EX the operand
-    // muxes see registered selects. Lockstep: core 0's writers are all.
-    forward_sel_t id_forward_a, id_forward_b;
-
-    ForwardingUnit forwardingUnit (
-        .i_idex_rs1(decoded.rs1),
-        .i_idex_rs2(decoded.rs2),
-        .i_exmem_rd(sp_feedback[0].next_mem.rd),
-        .i_exmem_wen(sp_feedback[0].next_mem.wen),
-        .i_idex_instr_type(decoded.instr_type),
-        .i_memwb_rd(sp_feedback[0].next_wb.rd),
-        .i_memwb_wen(sp_feedback[0].next_wb.wen),
-        .o_forward_alu_a(id_forward_a),
-        .o_forward_alu_b(id_forward_b)
-    );
 
     //& ===============
     //& STREAMING PROCESSOR CORES
@@ -250,8 +231,6 @@ module StreamingMultiprocessor
                 //! IDEX Pipeline
                 .i_id_decoded(lane_decoded[i]),
                 .i_id_issue(issue),
-                .i_id_forward_a(id_forward_a),
-                .i_id_forward_b(id_forward_b),
 
                 //! Feedback wires Hazard & PC
                 .o_feedback(sp_feedback[i]),
