@@ -13,7 +13,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 from gpgpu.api import GpgpuError
 
 _MISSING = object()
-_PROTECTED = (".git", "config", "demo", "docs", "hardware", "software", "tests", "tools")
+_PROTECTED = (".git", "config", "docs", "hardware", "software", "tests", "tools")
 M = TypeVar("M", bound=BaseModel)
 
 

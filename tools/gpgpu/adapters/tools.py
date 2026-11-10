@@ -14,7 +14,7 @@ from gpgpu.api import CheckResult, GpgpuError
 from .config import Config
 
 _REQUIRED_DIRECTORIES = ("config", "hardware/rtl", "hardware/constraints", "software/host", "software/programs",
-                         "tests/hardware/rtl", "demo")
+                         "tests/hardware/rtl")
 
 
 def run(command: Sequence[str], cwd: Path | None = None, creates: Path | None = None) -> None:

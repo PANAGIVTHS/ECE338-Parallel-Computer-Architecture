@@ -46,7 +46,7 @@ tools/gpgpu/
     board/              Board over SSH, and the UART driver that runs on the board's machine
   bootstrap.py        the only module that knows which adapter implements which port
 tools/tests/          the assembler and GPGPU model scripts that the rtl tasks run
-tools/board/          the UART client, shared with the demos and host tests
+tools/board/          the UART client, shared with fpga_run.py and the host tests
 tests/cli/            basic checks, including the import rules below
 ```
 
