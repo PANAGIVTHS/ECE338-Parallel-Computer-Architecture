@@ -850,7 +850,9 @@ u32 gpgpu_perf_report(const gpgpu_perf_t *perf, u32 runs)
     if (runs != 0U && khz != 0U)
         xil_printf(", %s us of GPU time per run", perf_u64((kernel * 1000U) / ((u64)khz * runs), digits));
     xil_printf("\r\n");
-    xil_printf("  Columns: name, %% of the cycles it divides (counts of cycles only), total%s\r\n",
+    /* One base for every percentage: the run's cycles. A warp's lines and the
+     * reset and drain line, like each global partition, sum to 100%. */
+    xil_printf("  Columns: name, %% of KERNEL_CYCLES (for counts of cycles), total%s\r\n",
                runs > 1U ? ", per run" : "");
 
     for (u32 w = 0U; w < GPGPU_WARPS_PER_SM; w++) {
@@ -859,17 +861,20 @@ u32 gpgpu_perf_report(const gpgpu_perf_t *perf, u32 runs)
 
         for (u32 l = 0U; l < GPGPU_PERF_WARP_LEAF_COUNT; l++)
             groups[perf_leaf_group[l]] += perf->warp[w][l];
-        xil_printf("  Warp %u (of its %s RUNNING cycles)\r\n", (unsigned int)w, perf_u64(running, digits));
+        xil_printf("  Warp %u (RUNNING is %s cycles)\r\n", (unsigned int)w, perf_u64(running, digits));
         for (u32 group = 0U; group < PERF_GROUP_COUNT; group++) {
-            perf_line(PERF_LINE_INDENT, perf_group_names[group], width, groups[group], running, 1, runs);
+            perf_line(PERF_LINE_INDENT, perf_group_names[group], width, groups[group], kernel, 1, runs);
             for (u32 l = 0U; l < GPGPU_PERF_WARP_LEAF_COUNT; l++)
                 if (perf_leaf_group[l] == group)
-                    perf_line(PERF_LEAF_INDENT, perf_leaf_names[l], width, perf->warp[w][l], running, 1, runs);
+                    perf_line(PERF_LEAF_INDENT, perf_leaf_names[l], width, perf->warp[w][l], kernel, 1, runs);
         }
+        /* The run's cycles outside RUNNING, so the warp's lines sum to 100% */
+        perf_line(PERF_LINE_INDENT, "RUN_RESET + RUN_DRAIN", width,
+                  g[GPGPU_PERF_RUN_RESET] + g[GPGPU_PERF_RUN_DRAIN], kernel, 1, runs);
         perf_ratio("IPC (WARP_ISSUED / RUNNING)", perf->warp[w][GPGPU_PERF_WARP_ISSUED], running);
     }
 
-    xil_printf("  Global counters (cycles as a %% of KERNEL_CYCLES)\r\n");
+    xil_printf("  Global counters\r\n");
     for (u32 group = 0U; group < PERF_GLOBAL_GROUP_COUNT; group++) {
         perf_pad(0U, PERF_LINE_INDENT);
         xil_printf("%s\r\n", perf_global_group_names[group]);
