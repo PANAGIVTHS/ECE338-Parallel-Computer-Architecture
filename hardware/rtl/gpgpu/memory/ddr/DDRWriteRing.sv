@@ -44,7 +44,13 @@ module DDRWriteRing
     // State
     output logic busy,
     output logic fatal,
-    output mem_fatal_t fatal_code
+    output mem_fatal_t fatal_code,
+
+    // Performance counters: a slot's beats wait for W, slots occupied, and
+    // bursts sent on W whose B has not arrived
+    output logic perf_w_pending,
+    output logic [$clog2(AXI_MAX_OUTSTANDING_WRITES):0] perf_inflight,
+    output logic [$clog2(AXI_MAX_OUTSTANDING_WRITES):0] perf_owed
 );
 
     localparam int unsigned WR_DEPTH = AXI_MAX_OUTSTANDING_WRITES;
@@ -216,6 +222,10 @@ module DDRWriteRing
     assign busy = ~empty;
     assign free = ~full & (~aw_cmd.valid | aw_ready);
     assign slot_free = ~full;
+
+    assign perf_w_pending = w != alloc;
+    assign perf_inflight = alloc - head;
+    assign perf_owed = w - b;
 
     // Fatal faults
     logic stray_b, cmd_overrun, push_full;

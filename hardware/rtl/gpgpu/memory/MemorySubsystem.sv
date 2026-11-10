@@ -23,7 +23,16 @@ module MemorySubsystem
     // write path, and one admitted and waiting; and a free write ring slot
     output logic [NUM_REQ-1:0] o_perf_st_waiting,
     output logic [NUM_REQ-1:0] o_perf_st_admitted,
-    output logic o_perf_wr_slot_free
+    output logic o_perf_wr_slot_free,
+    // The write ring (a slot's beats wait for W, slots occupied, bursts sent
+    // whose B has not arrived), lane stores admitted to the DDR write path
+    // this cycle, and BRAM accesses issued and picks deferred
+    output logic o_perf_w_pending,
+    output logic [$clog2(AXI_MAX_OUTSTANDING_WRITES):0] o_perf_wr_inflight,
+    output logic [$clog2(AXI_MAX_OUTSTANDING_WRITES):0] o_perf_wr_owed,
+    output logic [$clog2(NUM_REQ+1)-1:0] o_perf_wr_lane_stores,
+    output logic [$clog2(BRAM_PORTS+1)-1:0] o_perf_bram_accesses,
+    output logic [$clog2(BRAM_PORTS+1)-1:0] o_perf_bram_deferred
 );
     // Elaboration-time checks
     if (ARB_RR != 1'b0) begin : g_arb_rr_check
@@ -51,6 +60,8 @@ module MemorySubsystem
     axi_resp_t   ddr_rd_resp;
     ring_index_t ddr_alloc;
     logic bram_busy, ddr_busy;
+    logic [NUM_REQ-1:0] st_admit;
+    assign o_perf_wr_lane_stores = $bits(o_perf_wr_lane_stores)'($countones(st_admit));
 
     for (genvar i = 0; i < NUM_REQ; i++) begin : gen_reqs
         assign req[i] = memory_if[i].req;
@@ -78,7 +89,8 @@ module MemorySubsystem
             .i_ddr_alloc(ddr_alloc),
             .o_idle(port_idle[i]),
             .o_perf_st_waiting(o_perf_st_waiting[i]),
-            .o_perf_st_admitted(o_perf_st_admitted[i])
+            .o_perf_st_admitted(o_perf_st_admitted[i]),
+            .o_perf_st_admit(st_admit[i])
         );
     end
 
@@ -90,7 +102,9 @@ module MemorySubsystem
         .rst_n(rst_n),
         .req(req),
         .bram_if(bram_if),
-        .o_busy(bram_busy)
+        .o_busy(bram_busy),
+        .o_perf_accesses(o_perf_bram_accesses),
+        .o_perf_deferred(o_perf_bram_deferred)
     );
 
     DDRBackend #(
@@ -106,6 +120,9 @@ module MemorySubsystem
         .o_alloc(ddr_alloc),
         .o_busy(ddr_busy),
         .o_wr_slot_free(o_perf_wr_slot_free),
+        .o_perf_w_pending(o_perf_w_pending),
+        .o_perf_wr_inflight(o_perf_wr_inflight),
+        .o_perf_wr_owed(o_perf_wr_owed),
         .o_fatal(o_fatal),
         .o_fatal_code(o_fatal_code)
     );

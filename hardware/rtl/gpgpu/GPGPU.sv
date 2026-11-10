@@ -104,6 +104,10 @@ module GPGPU
     perf_warp_leaf_t warp_leaf [WARPS_PER_SM];
     logic [SP_PER_SM-1:0] perf_st_waiting, perf_st_admitted;
     logic perf_wr_slot_free;
+    logic perf_w_pending;
+    logic [$clog2(AXI_MAX_OUTSTANDING_WRITES):0] perf_wr_inflight, perf_wr_owed;
+    logic [$clog2(SP_PER_SM+1)-1:0] perf_wr_lane_stores;
+    logic [$clog2(BRAM_PORTS+1)-1:0] perf_bram_accesses, perf_bram_deferred;
     logic perf_hit;
     word_t perf_rdata;
 
@@ -303,12 +307,16 @@ module GPGPU
         .o_fatal_code(memory_fatal_code),
         .o_perf_st_waiting(perf_st_waiting),
         .o_perf_st_admitted(perf_st_admitted),
-        .o_perf_wr_slot_free(perf_wr_slot_free)
+        .o_perf_wr_slot_free(perf_wr_slot_free),
+        .o_perf_w_pending(perf_w_pending),
+        .o_perf_wr_inflight(perf_wr_inflight),
+        .o_perf_wr_owed(perf_wr_owed),
+        .o_perf_wr_lane_stores(perf_wr_lane_stores),
+        .o_perf_bram_accesses(perf_bram_accesses),
+        .o_perf_bram_deferred(perf_bram_deferred)
     );
 
-    //! Performance counters. The memory-side taps the warp leaves do not
-    //! need (W pending, ring occupancy, lane stores, BRAM) are connected with
-    //! the memory counters; until then they count nothing.
+    //! Performance counters
     PerfCounters #(
         .NUM_WARPS(WARPS_PER_SM),
         .SP_PER_SM(SP_PER_SM),
@@ -323,13 +331,13 @@ module GPGPU
         .i_aw_ready(axi_if.aw_ready),
         .i_w_valid(axi_if.w_valid),
         .i_w_ready(axi_if.w_ready),
-        .i_w_pending(1'b0),
-        .i_wr_inflight('0),
-        .i_wr_owed('0),
+        .i_w_pending(perf_w_pending),
+        .i_wr_inflight(perf_wr_inflight),
+        .i_wr_owed(perf_wr_owed),
         .i_wr_ring_full(!perf_wr_slot_free),
-        .i_wr_lane_stores('0),
-        .i_bram_accesses('0),
-        .i_bram_deferred('0),
+        .i_wr_lane_stores(perf_wr_lane_stores),
+        .i_bram_accesses(perf_bram_accesses),
+        .i_bram_deferred(perf_bram_deferred),
         .i_addr(i_req_addr),
         .o_hit(perf_hit),
         .o_rdata(perf_rdata)

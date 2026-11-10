@@ -136,6 +136,7 @@ def clean_random_test_files(random_test_dir=RANDOM_TEST_DIR):
     files_to_remove = [
         "program.mem", 
         "data.mem", 
+        "perf.mem",
         "trace.csv",
         ".gpgpu-random-test", # Cleanup marker created by earlier runner versions
     ]

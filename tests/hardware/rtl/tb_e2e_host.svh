@@ -349,6 +349,10 @@
                      name, perf_g(PerfPkg::PERF_AW_TRANSFER), perf_g(PerfPkg::PERF_AW_BLOCKED), perf_g(PerfPkg::PERF_AW_IDLE),
                      perf_g(PerfPkg::PERF_W_TRANSFER), perf_g(PerfPkg::PERF_W_BLOCKED), perf_g(PerfPkg::PERF_W_WAIT_AW),
                      perf_g(PerfPkg::PERF_W_IDLE), perf_g(PerfPkg::PERF_WR_RING_FULL));
+            $display("  [PERF] %0s: inflight sum %0d, owed sum %0d, lane stores %0d; BRAM accesses %0d busy %0d deferred %0d",
+                     name, perf_g(PerfPkg::PERF_WR_INFLIGHT_SUM), perf_g(PerfPkg::PERF_WR_OWED_SUM),
+                     perf_g(PerfPkg::PERF_WR_LANE_STORES), perf_g(PerfPkg::PERF_BRAM_ACCESSES),
+                     perf_g(PerfPkg::PERF_BRAM_BUSY), perf_g(PerfPkg::PERF_BRAM_DEFERRED));
             if (perf_g(PerfPkg::PERF_AW_TRANSFER) + perf_g(PerfPkg::PERF_AW_BLOCKED) + perf_g(PerfPkg::PERF_AW_IDLE) != kernel) begin
                 $display("  [ERROR] %0s: the AW partition does not sum to KERNEL_CYCLES", name);
                 csr_errors = csr_errors + 1;
@@ -506,7 +510,7 @@
         string test_root, case_prefix, program_name, data_name, ddr_seed_name, ddr_name, perf_name;
         string prog_file, data_file, ddr_seed_file, ddr_file, perf_file;
         string perf_key;
-        longint unsigned model_instructions;
+        longint unsigned model_instructions, model_ddr_lane_stores, model_dmem_lane_accesses;
 
         `REQUIRE_PLUSARG("TEST_ROOT=%s", test_root)
         `REQUIRE_PLUSARG("TEST_IDX=%d", test_idx)
@@ -674,7 +678,21 @@
                 $fatal(1, "[ERROR] Test %0d: no %0s (run tests:rtl:generate)", test_idx, perf_file);
             if ($fscanf(fd, "%s %d", perf_key, model_instructions) != 2 || perf_key != "instructions")
                 $fatal(1, "[ERROR] %0s: expected 'instructions <count>' first", perf_file);
+            if ($fscanf(fd, "%s %d", perf_key, model_ddr_lane_stores) != 2 || perf_key != "ddr_lane_stores")
+                $fatal(1, "[ERROR] %0s: expected 'ddr_lane_stores <count>' second", perf_file);
+            if ($fscanf(fd, "%s %d", perf_key, model_dmem_lane_accesses) != 2 || perf_key != "dmem_lane_accesses")
+                $fatal(1, "[ERROR] %0s: expected 'dmem_lane_accesses <count>' third", perf_file);
             $fclose(fd);
+            if (perf_g(PerfPkg::PERF_WR_LANE_STORES) != model_ddr_lane_stores) begin
+                $display("  [ERROR] WR_LANE_STORES: Expected %0d (the model's DDR lane stores), Found %0d",
+                         model_ddr_lane_stores, perf_g(PerfPkg::PERF_WR_LANE_STORES));
+                csr_errors = csr_errors + 1;
+            end
+            if (perf_g(PerfPkg::PERF_BRAM_ACCESSES) != model_dmem_lane_accesses) begin
+                $display("  [ERROR] BRAM_ACCESSES: Expected %0d (the model's DMEM lane accesses), Found %0d",
+                         model_dmem_lane_accesses, perf_g(PerfPkg::PERF_BRAM_ACCESSES));
+                csr_errors = csr_errors + 1;
+            end
             // The instruction at RET's target issues before the controller
             // sees the completion: one more than the kernel executes, until
             // the halt instruction changes.
