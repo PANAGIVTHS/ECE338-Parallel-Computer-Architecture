@@ -12,6 +12,9 @@ module PortController
     input logic i_rsp_ready,
     input logic i_req_valid,
     input mem_req_t req,
+    // The request, registered with its decode: what the backends serve. It
+    // is the request presented whenever this port is a candidate or waits.
+    output mem_req_t o_req_q,
 
     output logic o_req_ready,
     output logic o_rsp_valid,
@@ -35,16 +38,40 @@ module PortController
     } port_ctrl_state_t;
 
     port_ctrl_state_t current_state, next_state;
+
+    // The address is decoded into a register in the first cycle a request is
+    // presented, and the request is a candidate from the next: the decode
+    // stays off the backends' arbitration paths. A requester holds its
+    // request unchanged until it is taken, and presents nothing for at least
+    // one cycle before its next request, so the register always holds the
+    // decode of the request presented. The requests withdrawn without being
+    // taken (the cores' at a stop or reset, slot 0 changing owner) go while
+    // the port is disabled, which clears the register: a candidate needs no
+    // look at the requester's valid, which comes from far off.
     decode_t decoded;
-    assign decoded = decode_access(req.addr, req.write, DDR_ENABLE);
+    logic decoded_valid;
+
+    always_ff @(posedge clk) begin
+        if (!rst_n) begin
+            decoded_valid <= 1'b0;
+        end else begin
+            decoded_valid <= i_req_valid & (current_state == IDLE) & ~o_req_ready & i_en;
+        end
+        decoded <= decode_access(req.addr, req.write, DDR_ENABLE);
+        o_req_q <= req;
+    end
 
     // Claim: a presented request in IDLE becomes a candidate while enabled.
     // o_req_ready is high only when it is actually taken (claim = issue).
     logic cand, err;
-    assign cand = i_req_valid & (current_state == IDLE) & i_en;
+    assign cand = decoded_valid & i_en;
     assign err = cand & (decoded.target == TGT_ERR);
     assign bram_if.cand = cand & (decoded.target == TGT_BRAM);
     assign ddr_if.cand = cand & (decoded.target == TGT_DDR);
+    // A registered decode means the request was presented, in IDLE, last
+    // cycle and not taken: the port is still IDLE.
+    assign bram_if.pick = decoded_valid & (decoded.target == TGT_BRAM);
+    assign ddr_if.pick = decoded_valid & (decoded.target == TGT_DDR);
     assign o_req_ready = err | bram_if.accept | ddr_if.accept;
     assign o_idle = current_state == IDLE;
 

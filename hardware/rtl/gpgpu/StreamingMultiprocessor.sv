@@ -12,6 +12,9 @@ module StreamingMultiprocessor
     input logic i_enable,
 
     input word_t i_ifid_instruction,
+    // The same instruction, from the copy of the instruction memory each
+    // core reads its register addresses from
+    input word_t i_lane_instruction [NUM_CORES],
     output imem_idx_t o_imem_addr,
     output logic o_imem_ren,
 
@@ -31,6 +34,7 @@ module StreamingMultiprocessor
 
     // Memory stall signal
     logic stall;
+    logic fault_q; // a lane faulted (see FAULT CAPTURE)
 
     //! =========================================================================
     //! STAGE 1: INSTRUCTION FETCH
@@ -48,7 +52,8 @@ module StreamingMultiprocessor
     //* =========================================================================
     //* PIPELINE REGISTER 1: INSTRUCTION FETCH -> INSTRUCTION DECODE
     //* =========================================================================
-    pc_t ifid_program_counter;
+    // Every core's ID/EX register loads it: replicated next to the cores
+    (* max_fanout = 16 *) pc_t ifid_program_counter;
     always_ff @(posedge clk) begin
         if (!rst_n) begin
             ifid_program_counter <= INITIAL_PC;
@@ -131,6 +136,26 @@ module StreamingMultiprocessor
     );
 
     //& ===============
+    //& EVERY CORE'S DECODE
+    //& ===============
+    // Each core decodes its copy of the instruction into its own ID/EX
+    // register (cores reading one copy share one decoder after synthesis).
+    // The shared idex above serves the hazard unit.
+    id_ex_t lane_decoded [NUM_CORES];
+    for (genvar i = 0; i < NUM_CORES; i++) begin : g_lane_decode
+        Decoder laneDecoder (
+            .i_instr(i_lane_instruction[i]),
+            .i_program_counter(ifid_program_counter),
+            .o_decoded(lane_decoded[i])
+        );
+    end
+
+    // The instruction in ID enters EX; otherwise EX gets a bubble. Every
+    // core's ID/EX copy loads it: replicated next to them.
+    (* max_fanout = 8 *) logic issue;
+    assign issue = decode_enabled && !data_hazard;
+
+    //& ===============
     //& STREAMING PROCESSOR CORES
     //& ===============
 
@@ -141,9 +166,11 @@ module StreamingMultiprocessor
 
     logic [NUM_CORES-1:0] mem_response_received;
     logic [NUM_CORES-1:0] mem_is_mem_vec;
-    // A fault stalls in the cycle its response arrives, so the next
-    // instruction never issues even when that response is the last one.
-    assign stall = !i_enable || (!(&mem_response_received) && mem_is_mem_vec[0]) || o_fault;
+    // A faulting response holds the stall in the cycle it arrives by itself:
+    // its lane has not received it yet. From the next cycle fault_q does, so
+    // the next instruction never issues, even when that response is the last
+    // one, and the stall depends on registers only.
+    assign stall = !i_enable || (!(&mem_response_received) && mem_is_mem_vec[0]) || fault_q;
 
     //& ===============
     //& FAULT CAPTURE
@@ -171,7 +198,6 @@ module StreamingMultiprocessor
         end
     end
 
-    logic fault_q;
     always_ff @(posedge clk) begin
         if (!rst_n) begin
             fault_q <= 1'b0;
@@ -199,11 +225,12 @@ module StreamingMultiprocessor
                 .rst_n(rst_n),
 
                 //! Regfile Muxes forward
-                .i_id_mux_rs1(decoded.rs1),
-                .i_id_mux_rs2(decoded.rs2),
+                .i_id_mux_rs1(i_lane_instruction[i][19:15]),
+                .i_id_mux_rs2(i_lane_instruction[i][24:20]),
 
                 //! IDEX Pipeline
-                .i_idex(idex),
+                .i_id_decoded(lane_decoded[i]),
+                .i_id_issue(issue),
 
                 //! Feedback wires Hazard & PC
                 .o_feedback(sp_feedback[i]),

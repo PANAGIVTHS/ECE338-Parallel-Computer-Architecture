@@ -15,7 +15,9 @@ module Multiplier
     output mul_hazard_t o_hazards [0:LATENCY-1]
 );
     (* use_dsp = "yes" *) word_t mul_result [0:LATENCY-1];
-    mul_stage_t mul_stage [0:LATENCY-1];
+    // Every core keeps its own stages (the same in every lockstep core): a
+    // completing result selects this core's ALU output mux only.
+    (* keep = "true" *) mul_stage_t mul_stage [0:LATENCY-1];
 
     initial begin
         if (LATENCY < 1) $fatal(1, "Multiplier LATENCY must be at least 1");

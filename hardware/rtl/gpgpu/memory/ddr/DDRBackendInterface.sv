@@ -5,6 +5,9 @@ interface DDRBackendInterface;
     import AXI4FullPkg::*;
 
     logic cand;
+    // A candidate as of last cycle, from registers only: what the backend may
+    // pick now. It accepts only what is still a candidate (cand).
+    logic pick;
     logic accept;
     ring_index_t idx;
 
@@ -21,6 +24,7 @@ interface DDRBackendInterface;
 
     modport requester (
         output cand,
+        output pick,
         output rd_member,
         output wr_member,
         output idx,
@@ -35,6 +39,7 @@ interface DDRBackendInterface;
 
     modport responder (
         input cand,
+        input pick,
         input rd_member,
         input wr_member,
         input idx,

@@ -45,31 +45,41 @@ module DDRBackend
 
     //& =============================================
     //& Group former that selects one group per cycle
-    //& for either reading or writing
+    //& for either reading or writing, one cycle after
+    //& its first request becomes a candidate
     //& =============================================
     logic [NUM_REQ-1:0] cand, selected;
     logic push_rd, push_wr;
-    ring_group_t group_address;
+    logic rd_beats, wr_beats; // the group pushed last cycle, with its beats
+    ring_group_t cmd_group;
     beat_t first_beat, last_beat;
-    logic rd_ring_free, wr_ring_free;
+    logic rd_ring_free, wr_ring_free, wr_slot_free;
     assign rd_ring_free = 1'b0; // TODO: remove when read ring is impemented (Currently hangs read instrutions)
 
+    logic [NUM_REQ-1:0] pick;
     for (genvar i = 0; i < NUM_REQ; i++) begin: cand_expand
         assign cand[i] = ddr_if[i].cand;
+        assign pick[i] = ddr_if[i].pick;
         assign ddr_if[i].accept = selected[i];
     end
 
     DDRGroupFormer #(
         .NUM_REQ(NUM_REQ)
      ) ddrGroupFormer (
+        .clk          (clk),
+        .rst_n        (rst_n),
         .cand         (cand),
+        .pick         (pick),
         .req          (req),
         .rd_ring_free (rd_ring_free),
         .wr_ring_free (wr_ring_free),
+        .wr_slot_free (wr_slot_free),
         .accept       (selected),
         .push_rd      (push_rd),
         .push_wr      (push_wr),
-        .group_address(group_address),
+        .rd_cmd       (rd_beats),
+        .wr_cmd       (wr_beats),
+        .cmd_group    (cmd_group),
         .first_beat   (first_beat),
         .last_beat    (last_beat)
     );
@@ -79,8 +89,8 @@ module DDRBackend
     //& and prepares write addresses, write data, write responses
     //& =============================================
     logic [NUM_REQ-1:0] wr_members;
-    beat_t w_wbeat;
-    ring_index_t wr_alloc, w_slot;
+    beat_t w_wbeat_next;
+    ring_index_t wr_alloc, w_slot_next;
     logic wr_busy, wr_fatal;
     mem_fatal_t wr_fatal_code;
     logic aw_ready;
@@ -109,9 +119,11 @@ module DDRBackend
         .aw_cmd       (aw_cmd),
         // Group formation
         .free         (wr_ring_free),
+        .slot_free    (wr_slot_free),
         .wr_alloc     (wr_alloc),
         .push_wr      (push_wr),
-        .group_address(group_address),
+        .wr_cmd       (wr_beats),
+        .cmd_group    (cmd_group),
         .first_beat   (first_beat),
         .last_beat    (last_beat),
         // DDR interface from requesters
@@ -122,8 +134,8 @@ module DDRBackend
         .wr_bdone     (wr_bdone),
         .wr_bresp     (wr_bresp),
         // For write assembler 
-        .w_wbeat      (w_wbeat), // Current beat: first_beat + current
-        .w_slot       (w_slot), // Slot index serving the W channel
+        .w_wbeat_next (w_wbeat_next), // Beat offered next cycle
+        .w_slot_next  (w_slot_next), // Slot whose burst W offers next cycle
         // Ring state
         .busy         (wr_busy),
         .fatal        (wr_fatal),
@@ -142,8 +154,9 @@ module DDRBackend
         .req       (req),
         .wr_members(wr_members),
         .idx       (idx),
-        .w_slot    (w_slot),
-        .w_wbeat   (w_wbeat),
+        .clk         (clk),
+        .w_slot_next (w_slot_next),
+        .w_wbeat_next(w_wbeat_next),
         .w_data    (w_data),
         .w_strb    (w_strb)
     );
@@ -162,6 +175,19 @@ module DDRBackend
     logic axi_fatal;
     mem_fatal_t axi_fatal_code;
 
+    // TODO: the read ring presents a beat one cycle after R: registered here,
+    // so the requesters never see the interconnect's R channel directly
+    beat_rdata_t r_beat;
+    axi_resp_t r_beat_resp;
+    (* max_fanout = 8 *) beat_rdata_t rd_beat_q;
+    (* max_fanout = 8 *) axi_resp_t rd_resp_q;
+    always_ff @(posedge clk) begin
+        rd_beat_q <= r_beat;
+        rd_resp_q <= r_beat_resp;
+    end
+    assign o_rd_beat = rd_beat_q;
+    assign o_rd_resp = rd_resp_q;
+
     AXI4Master axi4Master (
         .clk        (clk),
         .rst_n      (rst_n),
@@ -173,8 +199,8 @@ module DDRBackend
         .ar_ready   (ar_ready),
         .r_valid    (r_valid),
         .r_last     (r_last),
-        .r_data     (o_rd_beat),
-        .r_resp     (o_rd_resp),
+        .r_data     (r_beat),
+        .r_resp     (r_beat_resp),
         // Write ring and assembler
         .wr_cmd     (aw_cmd),
         .w_valid    (w_valid),

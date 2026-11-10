@@ -18,7 +18,10 @@ module ExecutionController
     output core_state_t o_core_state,
     output logic o_stopped,
     output logic o_faulted,
-    output logic o_complete_pulse
+    output logic o_complete_pulse,
+    // The memory subsystem takes requests (RUNNING or IDLE): a register,
+    // loaded with the state's next value, so it is exact and replicable
+    output logic o_memory_enable
 );
     core_state_t current_state, next_state;
     logic stopped;
@@ -30,6 +33,16 @@ module ExecutionController
             current_state <= next_state;
         end
     end
+
+    (* max_fanout = 16 *) logic memory_enable;
+    always_ff @(posedge clk) begin
+        if (!rst_n) begin
+            memory_enable <= 1'b1; // IDLE
+        end else begin
+            memory_enable <= (next_state == CORE_RUNNING) || (next_state == CORE_IDLE);
+        end
+    end
+    assign o_memory_enable = memory_enable;
 
     always_comb begin
         case (current_state)

@@ -47,12 +47,18 @@ package pipeline_pkg;
     typedef struct packed {
         gpu_pkg::reg_addr_t rd;
         logic is_mul;
-        logic is_load;
-        gpu_pkg::word_t alu_out;
+        // The value written back: the loaded word or the ALU result, chosen
+        // as MEM/WB loads, so WB and forwarding read a register
+        gpu_pkg::word_t wdata;
         logic wen;
         gpu_pkg::pc_t program_counter;
-        gpu_pkg::word_t rdata;
     } mem_wb_t;
+
+    //! A register write in flight: forwarded to the instruction in EX
+    typedef struct packed {
+        gpu_pkg::reg_addr_t rd;
+        logic wen;
+    } writer_t;
 
     //! SP -> SM feedback signals
     typedef struct packed {

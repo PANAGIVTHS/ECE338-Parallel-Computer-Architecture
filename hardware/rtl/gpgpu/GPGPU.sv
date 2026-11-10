@@ -81,11 +81,19 @@ module GPGPU
 );
     // tdb was here...
 
+    // The reset, registered: it reaches nearly every register, so synthesis
+    // may replicate these flip-flops next to their loads. Leaving reset one
+    // cycle after the AXI4-Lite slave costs nothing: no access comes so soon.
+    (* max_fanout = 64 *) logic rst_n_q;
+    always_ff @(posedge clk) begin
+        rst_n_q <= rst_n;
+    end
+
     // Control for the core
     core_state_t core_state;
     logic core_complete, complete_pulse, stopped, faulted;
     logic control_start, control_stop, clear_stopped, clear_faulted;
-    logic core_reset, memory_quiet;
+    logic core_reset, memory_quiet, memory_enable;
 
     // Faults: SM capture (until the next START) and memory subsystem lock-up
     logic core_fault;
@@ -102,6 +110,12 @@ module GPGPU
     logic csr_write_fire;
     word_t csr_rdata;
     rsp_status_t csr_status;
+
+    // Instruction memory copies, and the instruction each core reads its
+    // registers with (see the instruction memory below)
+    localparam int unsigned IMEM_COPIES = SP_PER_SM < 16 ? SP_PER_SM : 16;
+    word_t imem_copy_rdata [IMEM_COPIES];
+    word_t lane_instruction [SP_PER_SM];
 
     // Memory interfaces 
     MemoryInterface #(.ADDR_WIDTH(IMEM_AW)) host_imem_if ();
@@ -120,13 +134,15 @@ module GPGPU
     assign imem_if.wen = ~o_core_idle ? '0 : host_imem_if.wen;
 
     MMIOController mmio (
-        .clk(clk), .rst_n(rst_n),
+        .clk(clk), .rst_n(rst_n_q),
         .i_req_valid(i_req_valid), .o_req_ready(o_req_ready),
         .i_req_write(i_req_write), .i_req_addr(i_req_addr),
         .i_req_wdata(i_req_wdata), .i_req_wstrb(i_req_wstrb),
         .o_rsp_valid(o_rsp_valid), .i_rsp_ready(i_rsp_ready),
         .o_rsp_rdata(o_rsp_rdata), .o_rsp_status(o_rsp_status),
         .i_idle(o_core_idle), .imem(host_imem_if), .dmem(host_dmem_if),
+        // A fatal subsystem accepts nothing: the access completes without effect, as before
+        .i_dmem_ready(dmem_if[0].req_ready | memory_fatal),
         .o_csr_write_fire(csr_write_fire),
         .i_csr_rdata(csr_rdata), .i_csr_status(csr_status)
     );
@@ -135,7 +151,7 @@ module GPGPU
         .SP_PER_SM(SP_PER_SM), .INTERFACE_VERSION(INTERFACE_VERSION), .CLOCK_KHZ(CLOCK_KHZ),
         .BUILD_HASH(BUILD_HASH), .BUILD_DIRTY(BUILD_DIRTY), .DDR_ENABLE(DDR_ENABLE)
     ) regs (
-        .clk(clk), .rst_n(rst_n),
+        .clk(clk), .rst_n(rst_n_q),
         .i_write(i_req_write), .i_addr(i_req_addr), .i_wdata(i_req_wdata),
         .i_byte_en(i_req_wstrb), .i_write_fire(csr_write_fire),
         .o_rdata(csr_rdata), .o_status(csr_status),
@@ -148,22 +164,24 @@ module GPGPU
     );
 
     ExecutionController state (
-        .clk(clk), .rst_n(rst_n),
+        .clk(clk), .rst_n(rst_n_q),
         .i_start(control_start), .i_stop(control_stop),
         .i_clear_stopped(clear_stopped), .i_clear_faulted(clear_faulted),
         .i_core_complete(core_complete), .i_fault(core_fault),
         .i_memory_quiet(memory_quiet), .i_fatal(memory_fatal),
         .o_core_state(core_state), .o_stopped(stopped), .o_faulted(faulted),
-        .o_complete_pulse(complete_pulse)
+        .o_complete_pulse(complete_pulse),
+        .o_memory_enable(memory_enable)
     );
 
     StreamingMultiprocessor #(
         .NUM_CORES(SP_PER_SM)
     ) smx (
         .clk(clk),
-        .rst_n(rst_n && !core_reset),
+        .rst_n(rst_n_q && !core_reset),
         .i_enable(o_core_running),
         .i_ifid_instruction(imem_if.rdata),
+        .i_lane_instruction(lane_instruction),
         .o_imem_addr(smx_imem_if.addr),
         .o_imem_ren(smx_imem_if.ren),
 
@@ -187,6 +205,38 @@ module GPGPU
         .clk(clk),
         .memory(imem_if.slave)
     );
+
+    // Copies for the cores' register reads: copy k gives its share of the
+    // cores their register addresses, so no BRAM output has to reach every
+    // core across the device. They take instructionMemory's accesses, so
+    // they hold its words; simulation, whose benches load instructionMemory,
+    // reads it for every copy. dont_touch keeps synthesis from merging them.
+    for (genvar k = 1; k < IMEM_COPIES; k++) begin : g_imem_copy
+`ifdef SYNTHESIS
+        MemoryInterface #(.ADDR_WIDTH(IMEM_AW)) copy_if ();
+        assign copy_if.addr = imem_if.addr;
+        assign copy_if.wdata = imem_if.wdata;
+        assign copy_if.ren = imem_if.ren;
+        assign copy_if.wen = imem_if.wen;
+        assign imem_copy_rdata[k] = copy_if.rdata;
+
+        (* dont_touch = "true" *)
+        MemorySinglePort #(
+            .DEPTH(IMEM_ENTRIES),
+            .INIT_FILE(MEMORY_INIT)
+        ) instructionMemory (
+            .clk(clk),
+            .memory(copy_if.slave)
+        );
+`else
+        assign imem_copy_rdata[k] = imem_if.rdata;
+`endif
+    end
+
+    assign imem_copy_rdata[0] = imem_if.rdata;
+    for (genvar i = 0; i < SP_PER_SM; i++) begin : g_lane_instruction
+        assign lane_instruction[i] = imem_copy_rdata[i * IMEM_COPIES / SP_PER_SM];
+    end
 
     //! Data memory (BRAM + DRAM)
 
@@ -279,8 +329,8 @@ module GPGPU
         .DDR_ENABLE(DDR_ENABLE)
     ) memory_subsystem (
         .clk(clk),
-        .rst_n(rst_n),
-        .i_req_enable(o_core_running | o_core_idle),
+        .rst_n(rst_n_q),
+        .i_req_enable(memory_enable), // RUNNING or IDLE
         .memory_if(dmem_if),
         .axi_if(axi_if),
         .o_idle(memory_quiet),

@@ -23,6 +23,9 @@ module MMIOController
     input logic i_idle,
     MemoryInterface.master imem,
     MemoryInterface.master dmem,
+    // The memory subsystem took the DMEM access (or never will): its read
+    // data follows one cycle later
+    input logic i_dmem_ready,
 
     // CSR bank
     output logic o_csr_write_fire,
@@ -62,16 +65,22 @@ module MMIOController
 
         case (current_state)
             ACCESS_IDLE: begin
+                // A CSR access answers from the CSR bank's registered output
+                // a cycle later (ACCESS_CAPTURE): the request stays unchanged
+                // until its response.
                 if (request_accepted)
                     next_state = decoded_memory
                         ? ACCESS_MEMORY
-                        : ACCESS_RESPONSE;
+                        : csr_access_now ? ACCESS_CAPTURE : ACCESS_RESPONSE;
             end
 
             ACCESS_MEMORY: begin
-                next_state = memory_write
-                    ? ACCESS_RESPONSE
-                    : ACCESS_CAPTURE;
+                // IMEM is a plain BRAM; DMEM goes through the memory
+                // subsystem, which may take more than one cycle to accept.
+                if (memory_imem || i_dmem_ready || !i_idle)
+                    next_state = memory_write
+                        ? ACCESS_RESPONSE
+                        : ACCESS_CAPTURE;
             end
 
             ACCESS_CAPTURE: begin
@@ -103,11 +112,15 @@ module MMIOController
 
     word_t decoded_rdata;
     rsp_status_t decoded_status;
+    // The status of a request answered right away (neither memory nor CSR)
+    rsp_status_t error_status;
+    logic csr_access_now, csr_access;
 
     always_comb begin
         decoded_rdata = '0;
         decoded_status = RSP_OK;
         decoded_memory = '0;
+        csr_access_now = '0;
 
         if (i_req_addr % word_t'(BYTES_PER_WORD) != '0) begin
             decoded_status = RSP_INVALID_ADDRESS;
@@ -127,9 +140,22 @@ module MMIOController
         end else if (csr_selected) begin
             decoded_rdata = i_csr_rdata;
             decoded_status = i_csr_status;
+            csr_access_now = 1'b1;
         end else begin
             decoded_status = RSP_INVALID_ADDRESS;
         end
+        error_status = csr_access_now ? RSP_OK : decoded_status;
+    end
+
+    // The CSR bank's answer, registered: captured in ACCESS_CAPTURE, it is
+    // the answer of the cycle the request was accepted, as before
+    word_t csr_rdata_q;
+    rsp_status_t csr_status_q;
+    always_ff @(posedge clk) begin
+        csr_rdata_q <= i_csr_rdata;
+        csr_status_q <= i_csr_status;
+        if (request_accepted)
+            csr_access <= csr_access_now;
     end
 
 
@@ -202,8 +228,12 @@ module MMIOController
             o_rsp_status <= RSP_OK;
 
         end else if (request_accepted) begin
-            o_rsp_rdata <= decoded_rdata;
-            o_rsp_status <= decoded_status;
+            o_rsp_rdata <= '0;
+            o_rsp_status <= error_status;
+
+        end else if (current_state == ACCESS_CAPTURE && csr_access) begin
+            o_rsp_rdata <= csr_rdata_q;
+            o_rsp_status <= csr_status_q;
 
         end else if (current_state == ACCESS_CAPTURE) begin
             o_rsp_rdata <= memory_imem ? imem.rdata : dmem.rdata;
