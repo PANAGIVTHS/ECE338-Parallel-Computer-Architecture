@@ -56,11 +56,10 @@ typedef struct {
 int gpgpu_perf_read(gpgpu_perf_t *perf);
 /* Add one run's counters into a total. */
 void gpgpu_perf_add(gpgpu_perf_t *total, const gpgpu_perf_t *run);
-/* Check the consistency rules (spec §6), printing each failure; returns
- * the number of failed rules. */
-u32 gpgpu_perf_check(const gpgpu_perf_t *perf);
-/* Print the breakdown of `runs` runs added into `perf`. */
-void gpgpu_perf_print(const gpgpu_perf_t *perf, u32 runs);
+/* Print the report of `runs` runs added into `perf` (warp groups and leaves,
+ * the global counters by group with their derived values), then check the
+ * consistency rules (spec §6); returns the number of rules that fail. */
+u32 gpgpu_perf_report(const gpgpu_perf_t *perf, u32 runs);
 
 /* Compatibility stubs: the AXI MMIO map has no SP regfile window. */
 int gpgpu_read_regfile(u32 index, u32 *data);

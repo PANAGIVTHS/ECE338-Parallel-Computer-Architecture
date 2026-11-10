@@ -9,6 +9,7 @@
 #define GPGPU_INTERFACE_VERSION            3U
 
 /* gpu_pkg */
+#define GPGPU_BYTES_PER_WORD               4U
 #define GPGPU_IMEM_ENTRIES                 2048U
 #define GPGPU_DMEM_ENTRIES                 2048U
 #define GPGPU_FB0_BASE                     402653184U
@@ -21,6 +22,9 @@
 
 /* warp_pkg */
 #define GPGPU_WARPS_PER_SM                 1U
+
+/* AXI4FullPkg */
+#define GPGPU_AXI_DATA_W                   64U
 
 /* MemorySubsystemPkg */
 #define GPGPU_ST_OK                        0U
@@ -126,6 +130,20 @@
 #define GPGPU_PERF_GROUP_MEMORY            2U
 #define GPGPU_PERF_GROUP_NAMES             { "PERF_GROUP_ISSUE", "PERF_GROUP_PIPELINE", "PERF_GROUP_MEMORY" }
 #define GPGPU_PERF_WARP_LEAF_GROUP         { 2U, 2U, 2U, 2U, 1U, 1U, 1U, 1U, 0U }
+#define GPGPU_PERF_KIND_TOTAL              0U
+#define GPGPU_PERF_KIND_LEAF               1U
+#define GPGPU_PERF_KIND_EVENT              2U
+#define GPGPU_PERF_KIND_ACCUMULATOR        3U
+#define GPGPU_PERF_KIND_NAMES              { "PERF_KIND_TOTAL", "PERF_KIND_LEAF", "PERF_KIND_EVENT", "PERF_KIND_ACCUMULATOR" }
+#define GPGPU_PERF_GLOBAL_GROUP_RUN        0U
+#define GPGPU_PERF_GLOBAL_GROUP_AW         1U
+#define GPGPU_PERF_GLOBAL_GROUP_W          2U
+#define GPGPU_PERF_GLOBAL_GROUP_WRITE_RING 3U
+#define GPGPU_PERF_GLOBAL_GROUP_COALESCING 4U
+#define GPGPU_PERF_GLOBAL_GROUP_BRAM       5U
+#define GPGPU_PERF_GLOBAL_GROUP_NAMES      { "PERF_GLOBAL_GROUP_RUN", "PERF_GLOBAL_GROUP_AW", "PERF_GLOBAL_GROUP_W", "PERF_GLOBAL_GROUP_WRITE_RING", "PERF_GLOBAL_GROUP_COALESCING", "PERF_GLOBAL_GROUP_BRAM" }
+#define GPGPU_PERF_GLOBAL_GROUP_OF         { 0U, 0U, 0U, 1U, 1U, 1U, 2U, 2U, 2U, 2U, 3U, 3U, 3U, 4U, 5U, 5U, 5U }
+#define GPGPU_PERF_GLOBAL_KIND             { 0U, 1U, 1U, 1U, 1U, 1U, 1U, 1U, 1U, 1U, 3U, 3U, 1U, 2U, 2U, 1U, 2U }
 
 /* Completion wait: PS interrupt or IRQ_STATUS polling (software.host). */
 #define GPGPU_USE_IRQ                      1

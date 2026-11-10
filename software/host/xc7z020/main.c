@@ -178,9 +178,7 @@ static int bench(u32 frames) {
                (u32)(rate_x100 / 100U), (u32)(rate_x100 % 100U),
                (u32)((elapsed * 1000000U) / counts_per_second / frames));
 
-    gpgpu_perf_print(&total, frames);
-    if (gpgpu_perf_check(&total) == 0U)
-        xil_printf("  Perf checks: all passed\r\n");
+    gpgpu_perf_report(&total, frames);
     return 0;
 }
 
@@ -479,6 +477,7 @@ static void print_help(void) {
     xil_printf("  --------- CONTROL ---------\r\n");
     xil_printf("  run\r\n");
     xil_printf("  bench <frames>   (run the kernel back to back, report frames/s and the perf counters)\r\n");
+    xil_printf("  perf   (report the perf counters of the last run)\r\n");
     xil_printf("  clear   (acknowledge STOPPED/FAULTED)\r\n");
     xil_printf("  reset   (PL reset; needed after a fatal fault)\r\n");
     xil_printf("  --------- DISPLAY ---------\r\n");
@@ -674,6 +673,13 @@ int main(void) {
             }
 
             bench(frames);
+
+        } else if (strcmp(cmd, "perf") == 0) {
+            static gpgpu_perf_t last;
+
+            /* The GPU clears the counters at START: these are the last run's. */
+            if (gpgpu_perf_read(&last) == GPGPU_OK)
+                gpgpu_perf_report(&last, 1U);
 
         } else if (strcmp(cmd, "clear") == 0) {
             gpgpu_clear();

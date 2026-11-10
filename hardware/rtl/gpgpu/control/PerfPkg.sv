@@ -83,4 +83,65 @@ package PerfPkg;
         PERF_WARP_ISSUED:       PERF_GROUP_ISSUE
     };
 
+    //! What a counter adds each cycle (docs/perf-counters-spec.md §3.1)
+    (* host *) typedef enum logic [1:0] {
+        PERF_KIND_TOTAL,       // 1 every cycle of the run
+        PERF_KIND_LEAF,        // 1 in each cycle its condition holds
+        PERF_KIND_EVENT,       // the number of events in the cycle
+        PERF_KIND_ACCUMULATOR  // a quantity's current value
+    } perf_kind_t;
+
+    //! The groups the host reports the global counters in
+    (* host *) typedef enum logic [2:0] {
+        PERF_GLOBAL_GROUP_RUN,
+        PERF_GLOBAL_GROUP_AW,
+        PERF_GLOBAL_GROUP_W,
+        PERF_GLOBAL_GROUP_WRITE_RING,
+        PERF_GLOBAL_GROUP_COALESCING,
+        PERF_GLOBAL_GROUP_BRAM
+    } perf_global_group_t;
+
+    //! The group of every global counter, indexed by counter
+    (* host *) localparam perf_global_group_t PERF_GLOBAL_GROUP_OF [PERF_GLOBAL_COUNT] = '{
+        PERF_KERNEL_CYCLES:   PERF_GLOBAL_GROUP_RUN,
+        PERF_RUN_RESET:       PERF_GLOBAL_GROUP_RUN,
+        PERF_RUN_DRAIN:       PERF_GLOBAL_GROUP_RUN,
+        PERF_AW_TRANSFER:     PERF_GLOBAL_GROUP_AW,
+        PERF_AW_BLOCKED:      PERF_GLOBAL_GROUP_AW,
+        PERF_AW_IDLE:         PERF_GLOBAL_GROUP_AW,
+        PERF_W_TRANSFER:      PERF_GLOBAL_GROUP_W,
+        PERF_W_BLOCKED:       PERF_GLOBAL_GROUP_W,
+        PERF_W_WAIT_AW:       PERF_GLOBAL_GROUP_W,
+        PERF_W_IDLE:          PERF_GLOBAL_GROUP_W,
+        PERF_WR_INFLIGHT_SUM: PERF_GLOBAL_GROUP_WRITE_RING,
+        PERF_WR_OWED_SUM:     PERF_GLOBAL_GROUP_WRITE_RING,
+        PERF_WR_RING_FULL:    PERF_GLOBAL_GROUP_WRITE_RING,
+        PERF_WR_LANE_STORES:  PERF_GLOBAL_GROUP_COALESCING,
+        PERF_BRAM_ACCESSES:   PERF_GLOBAL_GROUP_BRAM,
+        PERF_BRAM_BUSY:       PERF_GLOBAL_GROUP_BRAM,
+        PERF_BRAM_DEFERRED:   PERF_GLOBAL_GROUP_BRAM
+    };
+
+    //! The kind of every global counter, indexed by counter (warp leaves are
+    //! all PERF_KIND_LEAF)
+    (* host *) localparam perf_kind_t PERF_GLOBAL_KIND [PERF_GLOBAL_COUNT] = '{
+        PERF_KERNEL_CYCLES:   PERF_KIND_TOTAL,
+        PERF_RUN_RESET:       PERF_KIND_LEAF,
+        PERF_RUN_DRAIN:       PERF_KIND_LEAF,
+        PERF_AW_TRANSFER:     PERF_KIND_LEAF,
+        PERF_AW_BLOCKED:      PERF_KIND_LEAF,
+        PERF_AW_IDLE:         PERF_KIND_LEAF,
+        PERF_W_TRANSFER:      PERF_KIND_LEAF,
+        PERF_W_BLOCKED:       PERF_KIND_LEAF,
+        PERF_W_WAIT_AW:       PERF_KIND_LEAF,
+        PERF_W_IDLE:          PERF_KIND_LEAF,
+        PERF_WR_INFLIGHT_SUM: PERF_KIND_ACCUMULATOR,
+        PERF_WR_OWED_SUM:     PERF_KIND_ACCUMULATOR,
+        PERF_WR_RING_FULL:    PERF_KIND_LEAF,
+        PERF_WR_LANE_STORES:  PERF_KIND_EVENT,
+        PERF_BRAM_ACCESSES:   PERF_KIND_EVENT,
+        PERF_BRAM_BUSY:       PERF_KIND_LEAF,
+        PERF_BRAM_DEFERRED:   PERF_KIND_EVENT
+    };
+
 endpackage
