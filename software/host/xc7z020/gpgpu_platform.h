@@ -45,6 +45,16 @@
 #define GPGPU_REG_FAULT_INFO               0x00000040U
 #define GPGPU_REG_FAULT_LANES              0x00000044U
 #define GPGPU_REG_FAULT_PC                 0x00000048U
+#define GPGPU_PERF_BASE                    0x00001000U
+#define GPGPU_PERF_SIZE                    0x00001000U
+#define GPGPU_PERF_COUNTER_BYTES           0x00000008U
+#define GPGPU_PERF_HI_OFFSET               0x00000004U
+#define GPGPU_PERF_GLOBAL_BASE             0x00001000U
+#define GPGPU_PERF_WARP_BASE               0x00001800U
+#define GPGPU_PERF_WARP_STRIDE             0x00000100U
+#define GPGPU_PERF_GLOBAL_SLOTS            256U
+#define GPGPU_PERF_WARP_SLOTS              32U
+#define GPGPU_PERF_MAX_WARPS               8U
 #define GPGPU_IMEM_BASE                    0x00002000U
 #define GPGPU_DMEM_BASE                    0x00004000U
 #define GPGPU_CONTROL_START_MASK           0x00000001U
@@ -72,6 +82,39 @@
 #define GPGPU_FAULT_CAUSE_MASK             0x0000000FU
 #define GPGPU_FAULT_KINDS_MASK             0x000007F0U
 #define GPGPU_FAULT_FATAL_MASK             0x00070000U
+
+/* PerfPkg */
+#define GPGPU_PERF_KERNEL_CYCLES           0U
+#define GPGPU_PERF_RUN_RESET               1U
+#define GPGPU_PERF_RUN_DRAIN               2U
+#define GPGPU_PERF_AW_TRANSFER             3U
+#define GPGPU_PERF_AW_BLOCKED              4U
+#define GPGPU_PERF_AW_IDLE                 5U
+#define GPGPU_PERF_W_TRANSFER              6U
+#define GPGPU_PERF_W_BLOCKED               7U
+#define GPGPU_PERF_W_WAIT_AW               8U
+#define GPGPU_PERF_W_IDLE                  9U
+#define GPGPU_PERF_WR_INFLIGHT_SUM         10U
+#define GPGPU_PERF_WR_OWED_SUM             11U
+#define GPGPU_PERF_WR_RING_FULL            12U
+#define GPGPU_PERF_WR_LANE_STORES          13U
+#define GPGPU_PERF_BRAM_ACCESSES           14U
+#define GPGPU_PERF_BRAM_BUSY               15U
+#define GPGPU_PERF_BRAM_DEFERRED           16U
+#define GPGPU_PERF_GLOBAL_COUNT            17U
+#define GPGPU_PERF_WARP_ST_RING_FULL       0U
+#define GPGPU_PERF_WARP_ST_ADMIT           1U
+#define GPGPU_PERF_WARP_ST_DATA            2U
+#define GPGPU_PERF_WARP_BRAM               3U
+#define GPGPU_PERF_WARP_PIPE_FILL          4U
+#define GPGPU_PERF_WARP_BRANCH             5U
+#define GPGPU_PERF_WARP_LOAD_USE           6U
+#define GPGPU_PERF_WARP_MUL                7U
+#define GPGPU_PERF_WARP_ISSUED             8U
+#define GPGPU_PERF_WARP_LEAF_COUNT         9U
+#define GPGPU_PERF_GROUP_ISSUE             0U
+#define GPGPU_PERF_GROUP_PIPELINE          1U
+#define GPGPU_PERF_GROUP_MEMORY            2U
 
 /* Completion wait: PS interrupt or IRQ_STATUS polling (software.host). */
 #define GPGPU_USE_IRQ                      1

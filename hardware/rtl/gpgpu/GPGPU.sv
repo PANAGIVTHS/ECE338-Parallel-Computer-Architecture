@@ -5,6 +5,8 @@ module GPGPU
     import ControlPkg::*;
     import MemorySubsystemPkg::*;
     import AXI4FullPkg::*;
+    import warp_pkg::*;
+    import PerfPkg::*;
 #(
     parameter int unsigned SP_PER_SM = 32,
     parameter string MEMORY_INIT = "empty.mem",
@@ -98,6 +100,11 @@ module GPGPU
     assign o_core_idle = core_state == CORE_IDLE;
     assign o_core_running = core_state == CORE_RUNNING;
 
+    // Performance counters: the SM's warp leaves and the memory state they need
+    perf_warp_leaf_t warp_leaf [WARPS_PER_SM];
+    logic [SP_PER_SM-1:0] perf_st_waiting, perf_st_admitted;
+    logic perf_wr_slot_free;
+
     // CSR access description/commit. Register actions go directly to State.
     logic csr_write_fire;
     word_t csr_rdata;
@@ -174,7 +181,12 @@ module GPGPU
         .o_fault(core_fault),
         .o_fault_lanes(fault_lanes),
         .o_fault_kinds(fault_kinds),
-        .o_fault_pc(fault_pc)
+        .o_fault_pc(fault_pc),
+
+        .i_perf_st_waiting(perf_st_waiting),
+        .i_perf_st_admitted(perf_st_admitted),
+        .i_perf_wr_slot_free(perf_wr_slot_free),
+        .o_perf_leaf(warp_leaf)
     );
 
     //! Instruction memory (BRAM)
@@ -285,7 +297,39 @@ module GPGPU
         .axi_if(axi_if),
         .o_idle(memory_quiet),
         .o_fatal(memory_fatal),
-        .o_fatal_code(memory_fatal_code)
+        .o_fatal_code(memory_fatal_code),
+        .o_perf_st_waiting(perf_st_waiting),
+        .o_perf_st_admitted(perf_st_admitted),
+        .o_perf_wr_slot_free(perf_wr_slot_free)
+    );
+
+    //! Performance counters. The memory-side taps the warp leaves do not
+    //! need (W pending, ring occupancy, lane stores, BRAM) are connected with
+    //! the memory counters; until then they count nothing.
+    PerfCounters #(
+        .NUM_WARPS(WARPS_PER_SM),
+        .SP_PER_SM(SP_PER_SM),
+        .WR_SLOTS(AXI_MAX_OUTSTANDING_WRITES),
+        .BRAM_PORTS(BRAM_PORTS)
+    ) perf (
+        .clk(clk),
+        .rst_n(rst_n),
+        .i_core_state(core_state),
+        .i_warp_leaf(warp_leaf),
+        .i_aw_valid(axi_if.aw_valid),
+        .i_aw_ready(axi_if.aw_ready),
+        .i_w_valid(axi_if.w_valid),
+        .i_w_ready(axi_if.w_ready),
+        .i_w_pending(1'b0),
+        .i_wr_inflight('0),
+        .i_wr_owed('0),
+        .i_wr_ring_full(!perf_wr_slot_free),
+        .i_wr_lane_stores('0),
+        .i_bram_accesses('0),
+        .i_bram_deferred('0),
+        .i_addr(i_req_addr),
+        .o_hit(),
+        .o_rdata()
     );
 
 endmodule

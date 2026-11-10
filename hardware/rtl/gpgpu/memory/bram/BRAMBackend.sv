@@ -14,6 +14,10 @@ module BRAMBackend
 
     output logic o_busy
 );
+    // This backend drives the two ports A and B
+    if (BRAM_PORTS != 2) begin : g_ports_check
+        $fatal(1, "BRAMBackend drives two BRAM ports; BRAM_PORTS is %0d", BRAM_PORTS);
+    end
 
     //& =============================================
     //& PORT EXPANSION

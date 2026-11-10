@@ -35,7 +35,7 @@ module tb_GPGPU_smx_only
     integer test_end;
     integer has_test_end;
     integer fd;
-    integer data_errors, reg_errors;
+    integer data_errors, reg_errors, perf_errors;
     integer cycle_count;
     integer fd_trace;
 
@@ -233,6 +233,30 @@ module tb_GPGPU_smx_only
 
             repeat (10) @(posedge uut_clk);
 
+            // Performance counters, read directly (this bench drives the run
+            // state itself): every RUNNING cycle is in exactly one warp leaf
+            perf_errors = 0;
+            begin
+                longint unsigned leaf_sum, running;
+                PerfPkg::perf_warp_leaf_t leaf;
+                leaf_sum = 0;
+                running = UUT.perf.global_count[PerfPkg::PERF_KERNEL_CYCLES]
+                        - UUT.perf.global_count[PerfPkg::PERF_RUN_RESET]
+                        - UUT.perf.global_count[PerfPkg::PERF_RUN_DRAIN];
+                $write("  [PERF] RUNNING %0d:", running);
+                for (int unsigned l = 0; l < PerfPkg::PERF_WARP_LEAF_COUNT; l++) begin
+                    leaf_sum += UUT.perf.warp_count[0][l];
+                    leaf = PerfPkg::perf_warp_leaf_t'(l);
+                    if (UUT.perf.warp_count[0][l] != 0)
+                        $write(" %s=%0d", leaf.name(), UUT.perf.warp_count[0][l]);
+                end
+                $write("\n");
+                if (leaf_sum != running) begin
+                    $display("  [ERROR] Warp leaves sum to %0d, not the %0d RUNNING cycles", leaf_sum, running);
+                    perf_errors++;
+                end
+            end
+
             // Compare regfiles
             reg_errors = 0;
 
@@ -274,12 +298,12 @@ module tb_GPGPU_smx_only
                 data_errors = data_errors + ddr_errors;
             end
 
-            if (reg_errors == 0 && data_errors == 0) begin
+            if (reg_errors == 0 && data_errors == 0 && perf_errors == 0) begin
                 $display("  [SUCCESS] Test %0d is correct across all %0d cores!",
                          test_idx, NUM_CORES, cycle_count);
             end else begin
-                $display("  [WARNING] Test %0d failed. Reg errors: %0d, Data errors: %0d",
-                         test_idx, reg_errors, data_errors);
+                $display("  [WARNING] Test %0d failed. Reg errors: %0d, Data errors: %0d, Perf errors: %0d",
+                         test_idx, reg_errors, data_errors, perf_errors);
                 $fatal(1, "  [WARNING] Halting simulation due to SMX-only GPGPU test failure.");
                 
             end

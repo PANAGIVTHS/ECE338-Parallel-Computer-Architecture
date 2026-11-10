@@ -20,6 +20,7 @@ module DDRWriteRing
 
     // For accepting groups
     output logic free, // AW command register free and a slot is free
+    output logic slot_free, // A slot is free (the AW register aside)
     output ring_index_t wr_alloc, // Next free slot
     
     // Formed group
@@ -214,6 +215,7 @@ module DDRWriteRing
 
     assign busy = ~empty;
     assign free = ~full & (~aw_cmd.valid | aw_ready);
+    assign slot_free = ~full;
 
     // Fatal faults
     logic stray_b, cmd_overrun, push_full;

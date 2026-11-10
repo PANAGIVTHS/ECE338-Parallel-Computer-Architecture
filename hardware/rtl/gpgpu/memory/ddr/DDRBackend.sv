@@ -19,6 +19,7 @@ module DDRBackend
     output ring_index_t o_alloc,
 
     output logic o_busy,
+    output logic o_wr_slot_free, // performance counters: the write ring has a free slot
     output logic o_fatal,
     output mem_fatal_t o_fatal_code
 );
@@ -109,6 +110,7 @@ module DDRBackend
         .aw_cmd       (aw_cmd),
         // Group formation
         .free         (wr_ring_free),
+        .slot_free    (o_wr_slot_free),
         .wr_alloc     (wr_alloc),
         .push_wr      (push_wr),
         .group_address(group_address),

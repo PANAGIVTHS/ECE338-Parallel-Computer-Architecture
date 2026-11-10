@@ -17,7 +17,13 @@ module MemorySubsystem
 
     output logic o_idle,
     output logic o_fatal,
-    output mem_fatal_t o_fatal_code
+    output mem_fatal_t o_fatal_code,
+
+    // Performance counters, per port: a DDR store not yet admitted to the
+    // write path, and one admitted and waiting; and a free write ring slot
+    output logic [NUM_REQ-1:0] o_perf_st_waiting,
+    output logic [NUM_REQ-1:0] o_perf_st_admitted,
+    output logic o_perf_wr_slot_free
 );
     // Elaboration-time checks
     if (ARB_RR != 1'b0) begin : g_arb_rr_check
@@ -70,7 +76,9 @@ module MemorySubsystem
             .i_ddr_rd_beat(ddr_rd_beat),
             .i_ddr_rd_resp(ddr_rd_resp),
             .i_ddr_alloc(ddr_alloc),
-            .o_idle(port_idle[i])
+            .o_idle(port_idle[i]),
+            .o_perf_st_waiting(o_perf_st_waiting[i]),
+            .o_perf_st_admitted(o_perf_st_admitted[i])
         );
     end
 
@@ -97,6 +105,7 @@ module MemorySubsystem
         .o_rd_resp(ddr_rd_resp),
         .o_alloc(ddr_alloc),
         .o_busy(ddr_busy),
+        .o_wr_slot_free(o_perf_wr_slot_free),
         .o_fatal(o_fatal),
         .o_fatal_code(o_fatal_code)
     );
