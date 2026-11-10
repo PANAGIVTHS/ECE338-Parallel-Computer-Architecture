@@ -254,7 +254,7 @@ def main():
                 return 1
             
             # 3. Run the Verilog simulation only
-            # The tests:rtl:smx:build dependency compiles the simulator once.
+            # The rtl:smx:build dependency compiles the simulator once.
             returncode, simulation_output = run_simulation(
                 [
                     str(args.simulator.resolve()),

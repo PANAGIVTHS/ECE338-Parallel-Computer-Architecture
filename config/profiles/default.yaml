@@ -76,7 +76,7 @@ hardware:
     # processor. `memory_init` (repo-relative) is staged before all HDL; its
     # file name must match the RTL's default $readmemh name.
     exclude_sources: [experimental, HostControllerProcessor.sv]
-    memory_init: tools/hardware/vivado/ip/empty.mem
+    memory_init: tools/gpgpu/adapters/vivado/tcl/ip/empty.mem
     # Other IP published beside the packaged GPGPU in the IP repository
     # (<paths.build.root>/hardware/vivado/ip_repo): every directory under
     # `root` except those named in `exclude`, copied as is. The block design
@@ -92,7 +92,7 @@ hardware:
     domain: standalone_ps7_cortexa9_0
     os: standalone
     template: empty_application
-    default_archive: tools/hardware/vitis/default-project.zip
+    default_archive: tools/gpgpu/adapters/vitis/default-project.zip
     host_sources:
       - software/host/xc7z020/gpgpu_driver.c
       - software/host/xc7z020/main.c

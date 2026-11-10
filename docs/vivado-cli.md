@@ -7,12 +7,12 @@ reference IP repository or prebuilt XSA is a clean-build prerequisite.
 ## Public stages
 
 ```text
-vivado:ip:create
-  -> vivado:ip:build
-  -> vivado:system:create
-  -> vivado:system:build
-  -> vitis:project -> vitis:build:platform -> vitis:build:host -> vitis:build:all
+vivado ip:create -> ip:build -> system:create
+  -> system:synthesis -> system:implementation -> system:bitstream -> system:build
 ```
+
+Each command runs whatever before it is stale, and stops there. The Vitis flow only
+reads the XSA that `system:build` exports, and never starts Vivado.
 
 - **ip:create** recreates the managed `gpgpu_ip_dev` project with top
   `gpgpu_axi`. It does not package or synthesize a system. Portable registration
@@ -31,16 +31,19 @@ vivado:ip:create
 - **system:create** registers that repository before catalog/BD creation,
   creates or reuses `gpgpu_system/design_1`, applies config-owned parameters,
   validates, generates products and registers `design_1_wrapper`.
-- **system:build** executes separately cached synthesis, implementation,
-  bitstream and fixed, bitstream-inclusive XSA export. Internal staged tasks
-  retain checkpoints, jobs and stage diagnostics; a failed bitstream retry does
-  not delete routed state. Required OOC IP synthesis belongs here.
+- **system:synthesis**, **system:implementation**, **system:bitstream** and
+  **system:build** are separately cached: synthesis, implementation, bitstream,
+  and the fixed, bitstream-inclusive XSA export. They retain checkpoints, jobs and
+  stage diagnostics; a failed bitstream retry does not delete routed state.
+  Required OOC IP synthesis belongs to synthesis.
   `hardware.vivado.post_route_phys_opt.{enabled,directive}` (passed as
   `-post-route-phys-opt` / `-post-route-phys-opt-directive`) set `impl_1`'s
   post-route `phys_opt_design` step and its `-directive` on every
   implementation run. The run is launched without `-to_step` (which has no name
   for that step), so it executes every enabled step before `write_bitstream`;
-  bitstream and XSA use its result.
+  bitstream and XSA use its result. The stage ends by printing the timing it
+  closed (setup WNS/TNS, hold WHS/THS) from `impl_1`'s last timing summary, and
+  a warning when the design misses timing; it still succeeds, so check the line.
 
 The former GPIO/module-reference tasks are not part of this pipeline.
 
@@ -98,7 +101,7 @@ passes only that file as `-sources-manifest`: long or brace-quoted list
 arguments do not survive Vivado's `-tclargs` handling. `production_sources.tcl`
 reads and validates it (all files exist, unique file names, headers among the
 sources). The default `hardware.vivado.memory_init`,
-`tools/hardware/vivado/ip/empty.mem`, provides explicit 2048-word zero
+`tools/gpgpu/adapters/vivado/tcl/ip/empty.mem`, provides explicit 2048-word zero
 initialization for IMEM/DMEM; its file name must match the RTL's default
 `$readmemh` name. Project and package copy it beside the flattened
 production files; their stage cwd is owned, never a random repository cwd.
@@ -141,7 +144,7 @@ clock), so the serializer clocks stay off the global clock network; see
 `docs/hdmi-blanking-investigation.md`. No PS clock feeds the HDMI
 output; the video out's asynchronous FIFO crosses from FCLK1 to the pixel
 clock. All three resets follow
-`FCLK_RESET0_N`. The bootstrap is `create_block_design.tcl`;
+`FCLK_RESET0_N`. A new project starts from `hardware/bd/design_1.tcl`;
 `create_system.tcl` refuses a saved design that lacks the GPGPU's host,
 interrupt or DDR cells. `smart_zynq.xdc` places the TMDS pairs (TMDS_33).
 
@@ -157,23 +160,82 @@ adopted**. A nonempty output directory without the matching managed marker is
 rejected before mutation. Use a new, disposable build root:
 
 ```bash
-./gpgpu --set paths.build.root=build-axi-2025-2 run vivado:ip:create
-./gpgpu --set paths.build.root=build-axi-2025-2 run vivado:ip:build
-./gpgpu --set paths.build.root=build-axi-2025-2 run vivado:system:create
-./gpgpu --set paths.build.root=build-axi-2025-2 run vivado:system:build
-./gpgpu --set paths.build.root=build-axi-2025-2 run vitis:build:all
+./gpgpu --set paths.build.root=build-axi-2025-2 vivado ip:create
+./gpgpu --set paths.build.root=build-axi-2025-2 vivado ip:build
+./gpgpu --set paths.build.root=build-axi-2025-2 vivado system:create
+./gpgpu --set paths.build.root=build-axi-2025-2 vivado system:build
+./gpgpu --set paths.build.root=build-axi-2025-2 vitis build:all
 ```
 
-Each later command resolves its prerequisites. No board upload/programming is
-performed. Close the GUI before running automation.
+Each later command in a category resolves its prerequisites there. No board
+upload/programming is performed.
 
 Managed IP recreation retains the previous complete project in a sibling
 `.snapshots/` directory; previous published repositories are also retained.
 A valid saved managed system BD is snapshot before refresh and is opened, not
 recreated. Incompatible/renamed/GPIO BDs are rejected. Core/address settings
-remain config-owned. Builds never automatically export references or overwrite
-tracked BD templates; the explicit raw export helper is guarded and is not a
-build dependency or automatic GUI-to-source synchronization feature.
+remain config-owned. Builds never overwrite committed files.
+
+## Editing in the GUI
+
+`gpgpu project` keeps a project and its committed files in sync.
+
+```bash
+./gpgpu project open system     # or ip; creates the project first if needed
+./gpgpu project status system   # which side changed since the last sync
+./gpgpu project pull system     # project -> committed files
+./gpgpu project push system     # committed files -> project; the old state is kept as a snapshot
+```
+
+| Status | Meaning | A build |
+| --- | --- | --- |
+| `in sync` | Nothing changed since the last sync | Runs |
+| `project ahead` | Edited in the GUI | `system` builds the edit; `ip` refuses, it would ignore it |
+| `source ahead` | Committed files changed | `system` refuses, it would ignore them; `ip` recreates the project |
+| `diverged` | Both changed | Refuses. `pull` and `push` also refuse without `--force` |
+| `untracked` | Made before sync existed. `pull` or `push` starts tracking it | Runs |
+
+**system** maps to `hardware/bd/design_1.tcl`. `pull` brings the saved design up to
+date as a build does, so you need not validate it first, and refuses it with Vivado's
+reason if it is invalid. It then exports the design with `write_bd_tcl`, rebuilds that
+script in a throwaway project and compares the result with `diffbd`. If they differ,
+it refuses and leaves the script unchanged.
+Settings the configuration owns (cores, aperture, clock) are overwritten on every
+build; `status` reports any that differ. See [the block design](../hardware/bd/README.md).
+
+**ip** maps to the RTL under `hardware/rtl/gpgpu/`. The project holds flat copies
+in `src/`, and `pull` copies edited ones back.
+
+`status` also detects edits made in the IP Packager, but `pull` refuses them. Their
+source of truth is `tools/gpgpu/adapters/vivado/tcl/package_ip.tcl`, because most of
+that metadata follows from the RTL, and Vivado cannot turn a packaged IP back into a
+script: `write_project_tcl` only recreates the project, `write_ip_tcl` only covers IP
+instances, and `ipx::dump_tcl_commands` (undocumented) writes commands that 2025.2
+itself rejects. Vivado does journal what you do, so copy your edit's commands from
+the project's `vivado.jou` into `package_ip.tcl`.
+
+### Building after an edit
+
+Every stage is its own command, so you can stop where you want, for example with
+`./gpgpu vivado system:bitstream`. A build reruns only what your change affects:
+
+| Changed in Vivado | What reruns |
+| --- | --- |
+| Block design, saved | `system:create` (validates it, applies the configuration, regenerates the wrapper), then synthesis onwards |
+| Synthesis settings | Synthesis onwards |
+| Implementation settings | Implementation onwards |
+| Nothing since a `project pull` | Only `system:create`, in seconds |
+
+Run settings live in the `.xpr`, not in `design_1.tcl`. Builds honour them, but
+`pull` does not save them, so a recreated project loses them. If the design changed,
+a build reruns synthesis even when you already ran it in the GUI.
+
+You can leave the GUI open while the CLI builds. The build uses what is saved on
+disk, and the GUI does not reload: it keeps showing its runs as out of date until
+you reopen the project. Do not launch runs from both at once, and close the GUI
+before `push`, because its next save would overwrite the pushed design.
+
+### What a stage checks
 
 Freshness includes production sources/headers/init files, Tcl/metadata, tools
 and version checks, part/core/address command fingerprints, package contents,
@@ -204,7 +266,3 @@ execution, also when Vivado fails; reused out-of-context runs keep the logs from
 when they ran. The FPGA artifact contract is unchanged:
 published bitstream, Vitis `ps7_init.tcl`, and host ELF. No reference artifact is
 accepted as evidence of a newly completed vendor build.
-
-Tests using Tcl recorders/fake vendor processes validate contracts and
-orchestration, **not synthesis, implementation, SDK compatibility or hardware
-operation**. A real 2025.2 run remains necessary before claiming those results.

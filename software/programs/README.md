@@ -25,8 +25,8 @@ int main(void) {
 Use the task runner so compiler settings, `architecture.num_cores`, and `paths.build.root` come from the resolved configuration:
 
 ```bash
-./gpgpu run software:programs:<program>:all
-./gpgpu run software:programs:<program>:mem
+./gpgpu software programs:<program>:all
+./gpgpu software programs:<program>:mem
 ```
 
 Generated files are written to:
@@ -46,7 +46,7 @@ The source directory is not used for generated artifacts. To select an external 
 ```bash
 ./gpgpu \
   --set paths.build.root=/workspace/gpgpu-build \
-  run software:programs:<program>:all
+  software programs:<program>:all
 ```
 
 The build root must not overlap the repository root or any source/config/tool
@@ -55,10 +55,10 @@ directory; unsafe values are rejected before task dispatch.
 ## FPGA execution through the VM
 
 ```bash
-./gpgpu run fpga:programs:<program>:upload
-./gpgpu run fpga:programs:<program>:load-imem
-./gpgpu run fpga:programs:<program>:run
-./gpgpu run fpga:programs:<program>:all
+./gpgpu fpga programs:<program>:upload
+./gpgpu fpga programs:<program>:load-imem
+./gpgpu fpga programs:<program>:run
+./gpgpu fpga programs:<program>:all
 ```
 
 Each command includes its prerequisites: RISC-V build and IMEM generation →
