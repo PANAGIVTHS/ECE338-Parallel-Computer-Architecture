@@ -293,6 +293,34 @@ def _run_stage(command: list[str], repo: Path, directory: Path, target: Path, xs
             raise RuntimeError(f"XSA lacks bitstream/handoff/PS init: {files}")
 
 
+def timing_summary(run_dir: Path) -> tuple[str, dict[str, float]] | None:
+    """The design timing summary impl_1 reported last: after post-route phys_opt when it ran,
+    else after routing. None when neither report exists."""
+    for suffix in ("_timing_summary_postroute_physopted.rpt", "_timing_summary_routed.rpt"):
+        for report in sorted(run_dir.glob(f"*{suffix}")):
+            lines = report.read_text(errors="replace").splitlines()
+            for index, line in enumerate(lines[:-2]):
+                if line.split()[:2] == ["WNS(ns)", "TNS(ns)"]:
+                    v = lines[index + 2].split()
+                    return report.name, {"wns": float(v[0]), "tns": float(v[1]), "failing": int(v[2]),
+                                         "whs": float(v[4]), "ths": float(v[5]), "hold_failing": int(v[6])}
+    return None
+
+
+def _implement(command: list[str], repo: Path, directory: Path, target: Path) -> None:
+    """Implementation, then the timing it closed: a design that misses timing still builds."""
+    _run_stage(command, repo, directory, target, runs=("impl_1",))
+    found = timing_summary(target.parent)
+    if found is None:
+        print(f"WARNING: impl_1 wrote no timing summary in {target.parent}", flush=True)
+        return
+    report, t = found
+    print(f"Timing ({report}): setup WNS {t['wns']:.3f} ns, TNS {t['tns']:.3f} ns over {t['failing']:.0f} endpoints;"
+          f" hold WHS {t['whs']:.3f} ns, THS {t['ths']:.3f} ns over {t['hold_failing']:.0f} endpoints", flush=True)
+    if t["wns"] < 0 or t["whs"] < 0:
+        print("WARNING: the design does not meet timing, so the bitstream may misbehave on the board", flush=True)
+
+
 class _Probe(NamedTuple):
     """StateProbe for files a stage cannot declare as inputs: they do not exist at first
     discovery, or the stage rewrites them. Saved after the stage, so its own writes do not count."""
@@ -422,7 +450,7 @@ class VivadoFlow:
 
     def implement(self) -> Step:
         command = self._command("implementation.tcl")
-        return self._stage("implementation.tcl", partial(_run_stage, command, self._repo, self._system, self._route, runs=("impl_1",)),
+        return self._stage("implementation.tcl", partial(_implement, command, self._repo, self._system, self._route),
                            (self._synth, self._bd, self._xdc), (self._route,), command=command,
                            checks=(_Probe("run_settings", partial(_run_settings, self._xpr, "impl_1")),))
 

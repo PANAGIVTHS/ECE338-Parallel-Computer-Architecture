@@ -10,6 +10,7 @@ import pytest
 
 from gpgpu.adapters.doit_engine import DoitEngine, _StateCheck
 from gpgpu.adapters.tools import Machine
+from gpgpu.adapters.vivado.flow import timing_summary
 from gpgpu.adapters.vivado.system_project import canonicalize
 from gpgpu.api import GpgpuError, Step, SyncRefused, SyncReport, SyncState, Task, classify
 from gpgpu.app.registry import Registry
@@ -232,3 +233,18 @@ def test_build_refuses_to_ignore_edits_to_its_project(state, refused, monkeypatc
     else:
         assert workspace.run("good:all") == 0
         assert engine.ran == ["good:all"]
+
+
+def test_timing_summary_reads_the_last_report_of_implementation(tmp_path):
+    header = ("    WNS(ns)      TNS(ns)  TNS Failing Endpoints  TNS Total Endpoints      WHS(ns)      THS(ns)  THS Failing Endpoints"
+              "  THS Total Endpoints     WPWS(ns)     TPWS(ns)  TPWS Failing Endpoints  TPWS Total Endpoints\n"
+              "    -------      -------  ---------------------  -------------------      -------      -------\n")
+    assert timing_summary(tmp_path) is None
+    (tmp_path / "top_timing_summary_routed.rpt").write_text(
+        header + "     -0.549       -5.417     24     71333      0.029      0.000     0     71283     1.043     0.000     0     19168\n")
+    assert timing_summary(tmp_path)[1]["wns"] == -0.549
+    (tmp_path / "top_timing_summary_postroute_physopted.rpt").write_text(
+        header + "      0.012        0.000      0     71333      0.029      0.000     0     71283     1.043     0.000     0     19168\n")
+    report, timing = timing_summary(tmp_path)
+    assert report == "top_timing_summary_postroute_physopted.rpt"
+    assert timing == {"wns": 0.012, "tns": 0.0, "failing": 0, "whs": 0.029, "ths": 0.0, "hold_failing": 0}

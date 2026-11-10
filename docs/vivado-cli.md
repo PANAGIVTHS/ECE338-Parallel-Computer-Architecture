@@ -41,7 +41,9 @@ reads the XSA that `system:build` exports, and never starts Vivado.
   post-route `phys_opt_design` step and its `-directive` on every
   implementation run. The run is launched without `-to_step` (which has no name
   for that step), so it executes every enabled step before `write_bitstream`;
-  bitstream and XSA use its result.
+  bitstream and XSA use its result. The stage ends by printing the timing it
+  closed (setup WNS/TNS, hold WHS/THS) from `impl_1`'s last timing summary, and
+  a warning when the design misses timing; it still succeeds, so check the line.
 
 The former GPIO/module-reference tasks are not part of this pipeline.
 
