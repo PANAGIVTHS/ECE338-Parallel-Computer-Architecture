@@ -48,6 +48,7 @@ hardware:
       - memory/MemorySubsystemPkg.sv
       - memory/MemorySubsystemInterface.sv
       - control/ControlPkg.sv
+      - control/PerfPkg.sv
   vivado:
     ip_project_name: gpgpu_ip_dev
     project_name: gpgpu_system
