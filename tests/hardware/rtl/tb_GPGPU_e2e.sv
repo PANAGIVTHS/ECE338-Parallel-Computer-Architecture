@@ -74,6 +74,18 @@ module tb_GPGPU_e2e
         expect_read_resp(unmapped_addr, AXI_DECERR);
         expect_read_resp(IMEM_BASE + 2, AXI_DECERR);               // misaligned
 
+        // Performance counter block: read-only, zero before any run, and a
+        // slot with no counter (or a misaligned word) is not mapped
+        expect_csr(PERF_GLOBAL_BASE + PERF_COUNTER_BYTES * PerfPkg::PERF_KERNEL_CYCLES, 32'd0, "PERF_KERNEL_CYCLES");
+        expect_csr(PERF_GLOBAL_BASE + PERF_COUNTER_BYTES * PerfPkg::PERF_KERNEL_CYCLES + PERF_HI_OFFSET, 32'd0,
+                   "PERF_KERNEL_CYCLES high word");
+        expect_write_resp(PERF_GLOBAL_BASE, 32'd0, AXI_SLVERR);
+        expect_write_resp(PERF_WARP_BASE, 32'd0, AXI_SLVERR);
+        expect_read_resp(PERF_GLOBAL_BASE + PERF_COUNTER_BYTES * PerfPkg::PERF_GLOBAL_COUNT, AXI_DECERR);
+        expect_read_resp(PERF_WARP_BASE + PERF_COUNTER_BYTES * PerfPkg::PERF_WARP_LEAF_COUNT, AXI_DECERR);
+        expect_read_resp(PERF_WARP_BASE + PERF_WARP_STRIDE * warp_pkg::WARPS_PER_SM, AXI_DECERR);
+        expect_read_resp(PERF_GLOBAL_BASE + 2, AXI_DECERR);
+
         if (irq !== 1'b0) begin
             $display("  [ERROR] IRQ asserted after reset");
             csr_errors = csr_errors + 1;

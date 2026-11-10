@@ -14,7 +14,7 @@ package MemorySubsystemPkg;
     } mem_status_t;
 
     // Accesses the BRAM data memory issues per cycle at most: its two ports
-    localparam int unsigned BRAM_PORTS = 2;
+    (* host *) localparam int unsigned BRAM_PORTS = 2;
 
     // One bit per non-OK status code: bit k-1 is ST code k (fault reporting).
     localparam int unsigned MEM_STATUS_KINDS = (1 << $bits(mem_status_t)) - 1;

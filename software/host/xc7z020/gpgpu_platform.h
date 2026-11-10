@@ -6,7 +6,7 @@
 #define GPGPU_PLATFORM_H
 
 /* Interface version reported in INFO[31:16] (architecture.interface_version). */
-#define GPGPU_INTERFACE_VERSION            2U
+#define GPGPU_INTERFACE_VERSION            3U
 
 /* gpu_pkg */
 #define GPGPU_IMEM_ENTRIES                 2048U
@@ -19,6 +19,9 @@
 #define GPGPU_FB_SIZE                      3686400U
 #define GPGPU_TEX_SIZE                     8388608U
 
+/* warp_pkg */
+#define GPGPU_WARPS_PER_SM                 1U
+
 /* MemorySubsystemPkg */
 #define GPGPU_ST_OK                        0U
 #define GPGPU_ST_UNMAPPED                  1U
@@ -26,11 +29,14 @@
 #define GPGPU_ST_MISALIGNED                3U
 #define GPGPU_ST_SLVERR                    4U
 #define GPGPU_ST_DECERR                    5U
+#define GPGPU_MEM_STATUS_NAMES             { "ST_OK", "ST_UNMAPPED", "ST_PERMISSION", "ST_MISALIGNED", "ST_SLVERR", "ST_DECERR" }
+#define GPGPU_BRAM_PORTS                   2U
 #define GPGPU_FATAL_NONE                   0U
 #define GPGPU_FATAL_RLAST                  1U
 #define GPGPU_FATAL_UNEXPECTED             2U
 #define GPGPU_FATAL_TIMEOUT                3U
 #define GPGPU_FATAL_INTERNAL               4U
+#define GPGPU_MEM_FATAL_NAMES              { "FATAL_NONE", "FATAL_RLAST", "FATAL_UNEXPECTED", "FATAL_TIMEOUT", "FATAL_INTERNAL" }
 
 /* ControlPkg */
 #define GPGPU_REG_INFO                     0x00000000U
@@ -77,6 +83,7 @@
 #define GPGPU_FAULT_MEMORY                 1U
 #define GPGPU_FAULT_POSTED_WRITE           2U
 #define GPGPU_FAULT_FATAL                  3U
+#define GPGPU_FAULT_CAUSE_NAMES            { "FAULT_NONE", "FAULT_MEMORY", "FAULT_POSTED_WRITE", "FAULT_FATAL" }
 #define GPGPU_FAULT_KINDS_LSB              4U
 #define GPGPU_FAULT_FATAL_LSB              16U
 #define GPGPU_FAULT_CAUSE_MASK             0x0000000FU
@@ -102,6 +109,7 @@
 #define GPGPU_PERF_BRAM_BUSY               15U
 #define GPGPU_PERF_BRAM_DEFERRED           16U
 #define GPGPU_PERF_GLOBAL_COUNT            17U
+#define GPGPU_PERF_GLOBAL_NAMES            { "PERF_KERNEL_CYCLES", "PERF_RUN_RESET", "PERF_RUN_DRAIN", "PERF_AW_TRANSFER", "PERF_AW_BLOCKED", "PERF_AW_IDLE", "PERF_W_TRANSFER", "PERF_W_BLOCKED", "PERF_W_WAIT_AW", "PERF_W_IDLE", "PERF_WR_INFLIGHT_SUM", "PERF_WR_OWED_SUM", "PERF_WR_RING_FULL", "PERF_WR_LANE_STORES", "PERF_BRAM_ACCESSES", "PERF_BRAM_BUSY", "PERF_BRAM_DEFERRED", "PERF_GLOBAL_COUNT" }
 #define GPGPU_PERF_WARP_ST_RING_FULL       0U
 #define GPGPU_PERF_WARP_ST_ADMIT           1U
 #define GPGPU_PERF_WARP_ST_DATA            2U
@@ -112,9 +120,12 @@
 #define GPGPU_PERF_WARP_MUL                7U
 #define GPGPU_PERF_WARP_ISSUED             8U
 #define GPGPU_PERF_WARP_LEAF_COUNT         9U
+#define GPGPU_PERF_WARP_LEAF_NAMES         { "PERF_WARP_ST_RING_FULL", "PERF_WARP_ST_ADMIT", "PERF_WARP_ST_DATA", "PERF_WARP_BRAM", "PERF_WARP_PIPE_FILL", "PERF_WARP_BRANCH", "PERF_WARP_LOAD_USE", "PERF_WARP_MUL", "PERF_WARP_ISSUED", "PERF_WARP_LEAF_COUNT" }
 #define GPGPU_PERF_GROUP_ISSUE             0U
 #define GPGPU_PERF_GROUP_PIPELINE          1U
 #define GPGPU_PERF_GROUP_MEMORY            2U
+#define GPGPU_PERF_GROUP_NAMES             { "PERF_GROUP_ISSUE", "PERF_GROUP_PIPELINE", "PERF_GROUP_MEMORY" }
+#define GPGPU_PERF_WARP_LEAF_GROUP         { 2U, 2U, 2U, 2U, 1U, 1U, 1U, 1U, 0U }
 
 /* Completion wait: PS interrupt or IRQ_STATUS polling (software.host). */
 #define GPGPU_USE_IRQ                      1

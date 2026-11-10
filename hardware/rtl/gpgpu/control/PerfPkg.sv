@@ -70,9 +70,8 @@ package PerfPkg;
         PERF_GROUP_MEMORY
     } perf_group_t;
 
-    //! The group of every warp leaf. Exported to the host once the platform
-    //! header generator emits tables.
-    localparam perf_group_t PERF_WARP_LEAF_GROUP [PERF_WARP_LEAF_COUNT] = '{
+    //! The group of every warp leaf, indexed by leaf
+    (* host *) localparam perf_group_t PERF_WARP_LEAF_GROUP [PERF_WARP_LEAF_COUNT] = '{
         PERF_WARP_ST_RING_FULL: PERF_GROUP_MEMORY,
         PERF_WARP_ST_ADMIT:     PERF_GROUP_MEMORY,
         PERF_WARP_ST_DATA:      PERF_GROUP_MEMORY,

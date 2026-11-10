@@ -237,12 +237,16 @@ module tb_GPGPU_smx_only
             // state itself): every RUNNING cycle is in exactly one warp leaf
             perf_errors = 0;
             begin
+                // Sized by the register map's slots, so the counter enums index them
+                longint unsigned global_count [PERF_GLOBAL_SLOTS];
                 longint unsigned leaf_sum, running;
                 PerfPkg::perf_warp_leaf_t leaf;
+                for (int unsigned c = 0; c < PerfPkg::PERF_GLOBAL_COUNT; c++)
+                    global_count[c] = UUT.perf.global_count[c];
                 leaf_sum = 0;
-                running = UUT.perf.global_count[PerfPkg::PERF_KERNEL_CYCLES]
-                        - UUT.perf.global_count[PerfPkg::PERF_RUN_RESET]
-                        - UUT.perf.global_count[PerfPkg::PERF_RUN_DRAIN];
+                running = global_count[PerfPkg::PERF_KERNEL_CYCLES]
+                        - global_count[PerfPkg::PERF_RUN_RESET]
+                        - global_count[PerfPkg::PERF_RUN_DRAIN];
                 $write("  [PERF] RUNNING %0d:", running);
                 for (int unsigned l = 0; l < PerfPkg::PERF_WARP_LEAF_COUNT; l++) begin
                     leaf_sum += UUT.perf.warp_count[0][l];

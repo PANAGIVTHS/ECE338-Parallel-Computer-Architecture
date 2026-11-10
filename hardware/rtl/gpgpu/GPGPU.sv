@@ -104,6 +104,8 @@ module GPGPU
     perf_warp_leaf_t warp_leaf [WARPS_PER_SM];
     logic [SP_PER_SM-1:0] perf_st_waiting, perf_st_admitted;
     logic perf_wr_slot_free;
+    logic perf_hit;
+    word_t perf_rdata;
 
     // CSR access description/commit. Register actions go directly to State.
     logic csr_write_fire;
@@ -150,6 +152,7 @@ module GPGPU
         .i_faulted(faulted), .i_complete_pulse(complete_pulse),
         .i_fault(core_fault), .i_fault_lanes(fault_lanes), .i_fault_kinds(fault_kinds),
         .i_fault_pc(fault_pc), .i_fatal(memory_fatal), .i_fatal_code(memory_fatal_code),
+        .i_perf_hit(perf_hit), .i_perf_rdata(perf_rdata),
         .o_start(control_start), .o_stop(control_stop),
         .o_clear_stopped(clear_stopped), .o_clear_faulted(clear_faulted), .o_irq(o_irq)
     );
@@ -328,8 +331,8 @@ module GPGPU
         .i_bram_accesses('0),
         .i_bram_deferred('0),
         .i_addr(i_req_addr),
-        .o_hit(),
-        .o_rdata()
+        .o_hit(perf_hit),
+        .o_rdata(perf_rdata)
     );
 
 endmodule

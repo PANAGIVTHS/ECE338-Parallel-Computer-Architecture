@@ -1,6 +1,6 @@
 architecture:
   num_cores: 32
-  interface_version: 2
+  interface_version: 3
   # DDR backend of the memory subsystem (reported in INFO_FEATURES). Without
   # it, framebuffer and texture accesses complete as ST_UNMAPPED. The DDR read
   # path is not implemented yet: a texture load never completes.
@@ -196,6 +196,7 @@ tests:
           DATA_FILE: data.mem
           DDR_SEED_FILE: ddr_seed.mem # optional per case: loaded into the DDR model
           DDR_FILE: ddr.mem           # per DDR case: expected DDR words and bursts
+          PERF_FILE: perf.mem         # per case: the model's counts for the perf counters
     ddr:
       testbench: tests/hardware/rtl/tb_GPGPU_ddr.sv
       top: tb_GPGPU_ddr

@@ -604,3 +604,173 @@ int gpgpu_dump_regfile_ascii(void)
     xil_printf("ERROR: SP regfile has no MMIO read window\r\n");
     return GPGPU_ERR_STATE;
 }
+
+/* ------------------------------------------------------------------------
+ * Performance counters
+ * ------------------------------------------------------------------------ */
+
+/* Names and groups come from PerfPkg; the name tables end with the count. */
+static const char *const perf_global_names[] = GPGPU_PERF_GLOBAL_NAMES;
+static const char *const perf_leaf_names[] = GPGPU_PERF_WARP_LEAF_NAMES;
+static const char *const perf_group_names[] = GPGPU_PERF_GROUP_NAMES;
+static const u32 perf_leaf_group[] = GPGPU_PERF_WARP_LEAF_GROUP;
+#define PERF_GROUP_COUNT (sizeof(perf_group_names) / sizeof(perf_group_names[0]))
+
+_Static_assert(sizeof(perf_global_names) / sizeof(perf_global_names[0]) == GPGPU_PERF_GLOBAL_COUNT + 1U,
+               "PERF_GLOBAL_NAMES must list every global counter, then the count");
+_Static_assert(sizeof(perf_leaf_names) / sizeof(perf_leaf_names[0]) == GPGPU_PERF_WARP_LEAF_COUNT + 1U,
+               "PERF_WARP_LEAF_NAMES must list every warp leaf, then the count");
+_Static_assert(sizeof(perf_leaf_group) / sizeof(perf_leaf_group[0]) == GPGPU_PERF_WARP_LEAF_COUNT,
+               "PERF_WARP_LEAF_GROUP must give every warp leaf a group");
+
+static u64 perf_read_counter(u32 byte_offset)
+{
+    /* Stable while idle: the low and high words cannot tear. */
+    const u32 lo = gpu_read(byte_offset);
+    const u32 hi = gpu_read(byte_offset + GPGPU_PERF_HI_OFFSET);
+    return ((u64)hi << 32) | lo;
+}
+
+int gpgpu_perf_read(gpgpu_perf_t *perf)
+{
+    if (require_idle("perf read") != 0)
+        return GPGPU_ERR_STATE;
+    for (u32 c = 0U; c < GPGPU_PERF_GLOBAL_COUNT; c++)
+        perf->global[c] = perf_read_counter(GPGPU_PERF_GLOBAL_BASE + GPGPU_PERF_COUNTER_BYTES * c);
+    for (u32 w = 0U; w < GPGPU_WARPS_PER_SM; w++)
+        for (u32 l = 0U; l < GPGPU_PERF_WARP_LEAF_COUNT; l++)
+            perf->warp[w][l] = perf_read_counter(GPGPU_PERF_WARP_BASE + GPGPU_PERF_WARP_STRIDE * w +
+                                                 GPGPU_PERF_COUNTER_BYTES * l);
+    return GPGPU_OK;
+}
+
+void gpgpu_perf_add(gpgpu_perf_t *total, const gpgpu_perf_t *run)
+{
+    for (u32 c = 0U; c < GPGPU_PERF_GLOBAL_COUNT; c++)
+        total->global[c] += run->global[c];
+    for (u32 w = 0U; w < GPGPU_WARPS_PER_SM; w++)
+        for (u32 l = 0U; l < GPGPU_PERF_WARP_LEAF_COUNT; l++)
+            total->warp[w][l] += run->warp[w][l];
+}
+
+static u64 perf_leaf_sum(const gpgpu_perf_t *perf, u32 warp)
+{
+    u64 sum = 0U;
+    for (u32 l = 0U; l < GPGPU_PERF_WARP_LEAF_COUNT; l++)
+        sum += perf->warp[warp][l];
+    return sum;
+}
+
+/* xil_printf has no 64-bit integers: format a u64 in decimal. */
+static const char *perf_u64(u64 value, char buffer[21])
+{
+    char *p = &buffer[20];
+    *p = '\0';
+    do {
+        *--p = (char)('0' + (value % 10U));
+        value /= 10U;
+    } while (value != 0U);
+    return p;
+}
+
+/* "  NAME  12.34%  count" with the name padded to `width`. */
+static void perf_line(const char *name, size_t width, u64 part, u64 whole)
+{
+    char digits[21];
+    const u64 x100 = whole == 0U ? 0U : (part * 10000U) / whole;
+
+    xil_printf("    %s", name);
+    for (size_t i = strlen(name); i < width; i++)
+        xil_printf(" ");
+    xil_printf(" %3u.%02u%%  %s\r\n", (unsigned int)(x100 / 100U), (unsigned int)(x100 % 100U),
+               perf_u64(part, digits));
+}
+
+/* `numerator / denominator` with three decimals, or "-" for no denominator. */
+static void perf_ratio(const char *name, u64 numerator, u64 denominator)
+{
+    if (denominator == 0U) {
+        xil_printf("    %s: -\r\n", name);
+        return;
+    }
+    const u64 x1000 = (numerator * 1000U) / denominator;
+    xil_printf("    %s: %u.%03u\r\n", name, (unsigned int)(x1000 / 1000U), (unsigned int)(x1000 % 1000U));
+}
+
+static u32 perf_rule(int holds, const char *rule)
+{
+    if (holds)
+        return 0U;
+    xil_printf("  PERF CHECK FAILED: %s\r\n", rule);
+    return 1U;
+}
+
+u32 gpgpu_perf_check(const gpgpu_perf_t *perf)
+{
+    const u64 *g = perf->global;
+    const u64 kernel = g[GPGPU_PERF_KERNEL_CYCLES];
+    u64 ring_full_leaves = 0U;
+    u32 failed = 0U;
+
+    for (u32 w = 0U; w < GPGPU_WARPS_PER_SM; w++) {
+        failed += perf_rule(g[GPGPU_PERF_RUN_RESET] + g[GPGPU_PERF_RUN_DRAIN] + perf_leaf_sum(perf, w) == kernel,
+                            "reset + drain + a warp's leaves = KERNEL_CYCLES");
+        ring_full_leaves += perf->warp[w][GPGPU_PERF_WARP_ST_RING_FULL];
+    }
+    failed += perf_rule(g[GPGPU_PERF_AW_TRANSFER] + g[GPGPU_PERF_AW_BLOCKED] + g[GPGPU_PERF_AW_IDLE] == kernel,
+                        "the AW partition sums to KERNEL_CYCLES");
+    failed += perf_rule(g[GPGPU_PERF_W_TRANSFER] + g[GPGPU_PERF_W_BLOCKED] + g[GPGPU_PERF_W_WAIT_AW] +
+                        g[GPGPU_PERF_W_IDLE] == kernel,
+                        "the W partition sums to KERNEL_CYCLES");
+    failed += perf_rule(ring_full_leaves <= g[GPGPU_PERF_WR_RING_FULL], "WARP_ST_RING_FULL <= WR_RING_FULL");
+    failed += perf_rule(g[GPGPU_PERF_BRAM_BUSY] <= g[GPGPU_PERF_BRAM_ACCESSES] &&
+                        g[GPGPU_PERF_BRAM_ACCESSES] <= GPGPU_BRAM_PORTS * g[GPGPU_PERF_BRAM_BUSY],
+                        "BRAM_BUSY <= BRAM_ACCESSES <= BRAM_PORTS x BRAM_BUSY");
+    return failed;
+}
+
+void gpgpu_perf_print(const gpgpu_perf_t *perf, u32 runs)
+{
+    static const size_t width = sizeof("PERF_WR_INFLIGHT_SUM") - 1U; /* longest name */
+    const u64 *g = perf->global;
+    const u64 kernel = g[GPGPU_PERF_KERNEL_CYCLES];
+    const u32 khz = gpu_read(GPGPU_REG_INFO_CLOCK);
+    char digits[21];
+
+    xil_printf("%u runs, %s cycles", (unsigned int)runs, perf_u64(kernel, digits));
+    if (runs != 0U && khz != 0U)
+        xil_printf(", %s us of GPU time per run", perf_u64((kernel * 1000U) / ((u64)khz * runs), digits));
+    xil_printf("\r\n");
+
+    for (u32 w = 0U; w < GPGPU_WARPS_PER_SM; w++) {
+        const u64 running = perf_leaf_sum(perf, w);
+        u64 groups[PERF_GROUP_COUNT] = { 0U };
+
+        for (u32 l = 0U; l < GPGPU_PERF_WARP_LEAF_COUNT; l++)
+            groups[perf_leaf_group[l]] += perf->warp[w][l];
+        xil_printf("  Warp %u, groups (of %s RUNNING cycles):\r\n", (unsigned int)w, perf_u64(running, digits));
+        for (u32 group = 0U; group < PERF_GROUP_COUNT; group++)
+            perf_line(perf_group_names[group], width, groups[group], running);
+        xil_printf("  Warp %u, leaves:\r\n", (unsigned int)w);
+        for (u32 l = 0U; l < GPGPU_PERF_WARP_LEAF_COUNT; l++)
+            perf_line(perf_leaf_names[l], width, perf->warp[w][l], running);
+        perf_ratio("IPC (WARP_ISSUED / RUNNING)", perf->warp[w][GPGPU_PERF_WARP_ISSUED], running);
+    }
+
+    xil_printf("  Global counters (of KERNEL_CYCLES):\r\n");
+    for (u32 c = 0U; c < GPGPU_PERF_GLOBAL_COUNT; c++)
+        perf_line(perf_global_names[c], width, g[c], kernel);
+
+    xil_printf("  Derived:\r\n");
+    if (kernel != 0U && khz != 0U)
+        /* 8-byte W beats: bytes per cycle x cycles per second */
+        xil_printf("    DDR write bandwidth: %s MB/s\r\n",
+                   perf_u64((g[GPGPU_PERF_W_TRANSFER] * 8U * khz) / (kernel * 1000U), digits));
+    perf_ratio("Lane stores per burst (WR_LANE_STORES / AW_TRANSFER)", g[GPGPU_PERF_WR_LANE_STORES],
+               g[GPGPU_PERF_AW_TRANSFER]);
+    perf_ratio("Average B latency, cycles (WR_OWED_SUM / AW_TRANSFER)", g[GPGPU_PERF_WR_OWED_SUM],
+               g[GPGPU_PERF_AW_TRANSFER]);
+    perf_ratio("Average write slots in use (WR_INFLIGHT_SUM / KERNEL_CYCLES)", g[GPGPU_PERF_WR_INFLIGHT_SUM], kernel);
+    perf_ratio("BRAM ports used per busy cycle (BRAM_ACCESSES / BRAM_BUSY)", g[GPGPU_PERF_BRAM_ACCESSES],
+               g[GPGPU_PERF_BRAM_BUSY]);
+}

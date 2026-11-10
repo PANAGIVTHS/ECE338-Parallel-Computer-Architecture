@@ -230,8 +230,9 @@ class Result:
     dmem: list[int]
     ddr: dict[int, int]
     fault: Fault | None
-    instructions: int
+    instructions: int  # warp instructions executed, RET included
     ddr_bursts: int
+    ddr_lane_stores: int  # lane stores to DDR
     divergent_pcs: list[int] = field(default_factory=list)
 
 
@@ -265,7 +266,7 @@ class Warp:
         imem = self.c["gpu_pkg::IMEM_ENTRIES"]
         group_bytes = self.c["DDRBackendPkg::GROUP_BYTES"]
         lanes = range(self.num_lanes)
-        executed = bursts = 0
+        executed = bursts = ddr_lane_stores = 0
         divergent: list[int] = []
         fault = None
         while True:
@@ -327,6 +328,7 @@ class Warp:
                             f"PC {pc_bytes:#x}: lanes store different values to DDR word {addr:#010x} "
                             f"in one instruction; which one lands is unspecified")
                     bursts += len({addr // group_bytes for addr in ddr_words})
+                    ddr_lane_stores += sum(1 for lane in lanes if decoded[lane][0] == "ddr")
                 else:
                     values = [self.memory.read(decoded[lane][0], addrs[lane]) for lane in lanes]
                     for lane in lanes:
@@ -345,5 +347,6 @@ class Warp:
             fault=fault,
             instructions=executed,
             ddr_bursts=bursts,
+            ddr_lane_stores=ddr_lane_stores,
             divergent_pcs=divergent,
         )

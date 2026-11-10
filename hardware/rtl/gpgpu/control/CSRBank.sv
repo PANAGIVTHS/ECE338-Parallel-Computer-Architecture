@@ -39,6 +39,10 @@ module CSRBank
     input logic i_fatal,
     input mem_fatal_t i_fatal_code,
 
+    // Performance counter block (PerfCounters): its word at i_addr
+    input logic i_perf_hit,
+    input word_t i_perf_rdata,
+
     // GPU control
     output logic o_start,
     output logic o_stop,
@@ -307,8 +311,17 @@ module CSRBank
                 end
             end
 
+            // ---------------- Performance counter block ----------------
+            // Read-only; a slot with no counter is not mapped
+
             default: begin
-                o_status = RSP_INVALID_ADDRESS;
+                if (i_addr >= PERF_BASE && i_addr < PERF_BASE + PERF_SIZE && i_write) begin
+                    o_status = RSP_ACCESS_DENIED;
+                end else if (i_addr >= PERF_BASE && i_addr < PERF_BASE + PERF_SIZE && i_perf_hit) begin
+                    o_rdata = i_perf_rdata;
+                end else begin
+                    o_status = RSP_INVALID_ADDRESS;
+                end
             end
 
         endcase
