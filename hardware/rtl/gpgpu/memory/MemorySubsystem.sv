@@ -20,9 +20,11 @@ module MemorySubsystem
     output mem_fatal_t o_fatal_code,
 
     // Performance counters, per port: a DDR store not yet admitted to the
-    // write path, and one admitted and waiting; and a free write ring slot
+    // write path, one admitted and waiting, and a DDR load not yet answered;
+    // and a free write ring slot
     output logic [NUM_REQ-1:0] o_perf_st_waiting,
     output logic [NUM_REQ-1:0] o_perf_st_admitted,
+    output logic [NUM_REQ-1:0] o_perf_ld_ddr,
     output logic o_perf_wr_slot_free,
     // The write ring (a slot's beats wait for W, slots occupied, bursts sent
     // whose B has not arrived), lane stores admitted to the DDR write path
@@ -90,7 +92,8 @@ module MemorySubsystem
             .o_idle(port_idle[i]),
             .o_perf_st_waiting(o_perf_st_waiting[i]),
             .o_perf_st_admitted(o_perf_st_admitted[i]),
-            .o_perf_st_admit(st_admit[i])
+            .o_perf_st_admit(st_admit[i]),
+            .o_perf_ld_ddr(o_perf_ld_ddr[i])
         );
     end
 

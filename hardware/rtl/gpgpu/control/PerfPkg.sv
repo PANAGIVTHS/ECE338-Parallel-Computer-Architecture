@@ -52,6 +52,7 @@ package PerfPkg;
         PERF_WARP_ST_RING_FULL, // store stall: a lane not admitted, no free slot
         PERF_WARP_ST_ADMIT,     // store stall: a lane not admitted, a slot free
         PERF_WARP_ST_DATA,      // store stall: all admitted, data not yet sent
+        PERF_WARP_LD_DDR,       // load stall: a DDR load not yet answered
         PERF_WARP_BRAM,         // memory stall on BRAM lanes only
         PERF_WARP_PIPE_FILL,    // not enabled, or decode not yet enabled
         PERF_WARP_BRANCH,       // taken-branch flush
@@ -75,6 +76,7 @@ package PerfPkg;
         PERF_WARP_ST_RING_FULL: PERF_GROUP_MEMORY,
         PERF_WARP_ST_ADMIT:     PERF_GROUP_MEMORY,
         PERF_WARP_ST_DATA:      PERF_GROUP_MEMORY,
+        PERF_WARP_LD_DDR:       PERF_GROUP_MEMORY,
         PERF_WARP_BRAM:         PERF_GROUP_MEMORY,
         PERF_WARP_PIPE_FILL:    PERF_GROUP_PIPELINE,
         PERF_WARP_BRANCH:       PERF_GROUP_PIPELINE,

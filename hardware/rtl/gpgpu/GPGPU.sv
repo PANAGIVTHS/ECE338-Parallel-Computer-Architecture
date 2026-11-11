@@ -102,7 +102,7 @@ module GPGPU
 
     // Performance counters: the SM's warp leaves and the memory state they need
     perf_warp_leaf_t warp_leaf [WARPS_PER_SM];
-    logic [SP_PER_SM-1:0] perf_st_waiting, perf_st_admitted;
+    logic [SP_PER_SM-1:0] perf_st_waiting, perf_st_admitted, perf_ld_ddr;
     logic perf_wr_slot_free;
     logic perf_w_pending;
     logic [$clog2(AXI_MAX_OUTSTANDING_WRITES):0] perf_wr_inflight, perf_wr_owed;
@@ -192,6 +192,7 @@ module GPGPU
 
         .i_perf_st_waiting(perf_st_waiting),
         .i_perf_st_admitted(perf_st_admitted),
+        .i_perf_ld_ddr(perf_ld_ddr),
         .i_perf_wr_slot_free(perf_wr_slot_free),
         .o_perf_leaf(warp_leaf)
     );
@@ -307,6 +308,7 @@ module GPGPU
         .o_fatal_code(memory_fatal_code),
         .o_perf_st_waiting(perf_st_waiting),
         .o_perf_st_admitted(perf_st_admitted),
+        .o_perf_ld_ddr(perf_ld_ddr),
         .o_perf_wr_slot_free(perf_wr_slot_free),
         .o_perf_w_pending(perf_w_pending),
         .o_perf_wr_inflight(perf_wr_inflight),

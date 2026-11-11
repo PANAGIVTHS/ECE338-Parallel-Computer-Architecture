@@ -28,10 +28,12 @@ module StreamingMultiprocessor
     output pc_t o_fault_pc,
 
     // Performance counters: per lane, a DDR store not yet admitted to the
-    // write path and one admitted and waiting (MemorySubsystem), and whether
+    // write path, one admitted and waiting, and a DDR load not yet answered
+    // (MemorySubsystem), and whether
     // the write ring has a free slot; out, each warp's leaf this cycle
     input logic [NUM_CORES-1:0] i_perf_st_waiting,
     input logic [NUM_CORES-1:0] i_perf_st_admitted,
+    input logic [NUM_CORES-1:0] i_perf_ld_ddr,
     input logic i_perf_wr_slot_free,
     output perf_warp_leaf_t o_perf_leaf [WARPS_PER_SM]
 );
@@ -214,10 +216,11 @@ module StreamingMultiprocessor
     // that applies. Only RUNNING cycles are counted, where i_enable is high
     // and fault_q low (a fault ends RUNNING in the cycle its response
     // arrives), so a stall there is a memory wait.
-    logic mem_wait, st_waiting, st_admitted;
+    logic mem_wait, st_waiting, st_admitted, ld_ddr;
     assign mem_wait = i_enable && !fault_q && mem_is_mem_vec[0] && !(&mem_response_received);
     assign st_waiting = |(i_perf_st_waiting & ~mem_response_received);
     assign st_admitted = |(i_perf_st_admitted & ~mem_response_received);
+    assign ld_ddr = |(i_perf_ld_ddr & ~mem_response_received);
 
     always_comb begin
         if (mem_wait && st_waiting && !i_perf_wr_slot_free) begin
@@ -226,9 +229,10 @@ module StreamingMultiprocessor
             o_perf_leaf[0] = PERF_WARP_ST_ADMIT;
         end else if (mem_wait && st_admitted) begin
             o_perf_leaf[0] = PERF_WARP_ST_DATA;
+        end else if (mem_wait && ld_ddr) begin
+            o_perf_leaf[0] = PERF_WARP_LD_DDR;
         end else if (mem_wait) begin
-            // Only BRAM lanes are left: a DDR load cannot complete until the
-            // read path exists, and gets its own leaf with it
+            // Only BRAM lanes are left
             o_perf_leaf[0] = PERF_WARP_BRAM;
         end else if (stall || !decode_enabled) begin
             o_perf_leaf[0] = PERF_WARP_PIPE_FILL;
