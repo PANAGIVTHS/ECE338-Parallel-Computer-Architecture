@@ -1,6 +1,7 @@
 #include "gpgpu_driver.h"
 
 #include "xparameters.h"
+#include "xil_cache.h"
 #include "xil_io.h"
 #include "xil_printf.h"
 #include "xil_types.h"
@@ -180,6 +181,61 @@ static int bench(u32 frames) {
 
     gpgpu_perf_report(&total, frames);
     return 0;
+}
+
+/* DDR read test (software/programs/texcopy, run by its fpga.py): `texfill`
+ * writes a picture into the texture region and clears a framebuffer, the
+ * texcopy kernel copies texture -> framebuffer, and `texcheck` compares the
+ * two word by word. The GPU reaches DDR through an HP port that does not snoop
+ * the A9 caches: the A9 flushes what it writes before the GPU reads it, and
+ * invalidates what the GPU wrote before reading it. */
+#define TEXTEST_WORDS            (GPGPU_FB_WIDTH * GPGPU_FB_HEIGHT)
+#define TEXTEST_BYTES            (TEXTEST_WORDS * 4U)
+#define TEXTEST_REPORT_MAX       8U
+
+_Static_assert(TEXTEST_BYTES <= GPGPU_TEX_SIZE, "the test picture does not fit the texture region");
+
+/* Pixel (x, y) of the test picture: a red/green gradient whose low bits sit
+ * in blue, so every pixel of the frame has its own value and a word that
+ * lands in the wrong place cannot match by accident. */
+static inline u32 textest_pixel(u32 x, u32 y) {
+    return ((x >> 3) << 16) | ((y >> 2) << 8) | ((x & 7U) << 5) | ((y & 3U) << 3);
+}
+
+static void texfill(u32 fb) {
+    u32 *tex = (u32 *)(UINTPTR)GPGPU_TEX_BASE;
+    u32 *dst = (u32 *)(UINTPTR)framebuffers[fb];
+
+    for (u32 y = 0U; y < GPGPU_FB_HEIGHT; y++)
+        for (u32 x = 0U; x < GPGPU_FB_WIDTH; x++)
+            tex[y * GPGPU_FB_WIDTH + x] = textest_pixel(x, y);
+    memset(dst, 0, TEXTEST_BYTES);
+
+    Xil_DCacheFlushRange((INTPTR)tex, TEXTEST_BYTES);
+    Xil_DCacheFlushRange((INTPTR)dst, TEXTEST_BYTES);
+    xil_printf("TEXFILL_DONE %u words at 0x%08x, FB%u cleared\r\n",
+               (u32)TEXTEST_WORDS, (u32)GPGPU_TEX_BASE, fb);
+}
+
+static void texcheck(u32 fb) {
+    const u32 *tex = (const u32 *)(UINTPTR)GPGPU_TEX_BASE;
+    const u32 *dst = (const u32 *)(UINTPTR)framebuffers[fb];
+    u32 mismatches = 0U;
+
+    Xil_DCacheInvalidateRange((INTPTR)dst, TEXTEST_BYTES);
+    for (u32 i = 0U; i < TEXTEST_WORDS; i++) {
+        if (dst[i] == tex[i])
+            continue;
+        if (mismatches < TEXTEST_REPORT_MAX)
+            xil_printf("  word %u (x %u, y %u): FB%u 0x%08x, texture 0x%08x\r\n", i,
+                       i % GPGPU_FB_WIDTH, i / GPGPU_FB_WIDTH, fb, dst[i], tex[i]);
+        mismatches++;
+    }
+
+    if (mismatches == 0U)
+        xil_printf("TEXCHECK_PASS %u words\r\n", (u32)TEXTEST_WORDS);
+    else
+        xil_printf("TEXCHECK_FAIL %u of %u words differ\r\n", mismatches, (u32)TEXTEST_WORDS);
 }
 
 #if GPGPU_AUTORUN
@@ -482,6 +538,9 @@ static void print_help(void) {
     xil_printf("  reset   (PL reset; needed after a fatal fault)\r\n");
     xil_printf("  --------- DISPLAY ---------\r\n");
     xil_printf("  display <fb>   (show framebuffer 0 or 1 on HDMI)\r\n");
+    xil_printf("  --------- DDR READ TEST (texcopy) ---------\r\n");
+    xil_printf("  texfill <fb>    (write the test picture to the texture, clear framebuffer fb)\r\n");
+    xil_printf("  texcheck <fb>   (compare framebuffer fb with the texture)\r\n");
     xil_printf("\r\n");
 }
 
@@ -704,6 +763,20 @@ int main(void) {
             }
 
             display_show(fb);
+
+        } else if (strcmp(cmd, "texfill") == 0 || strcmp(cmd, "texcheck") == 0) {
+            u32 fb;
+
+            arg1 = strtok(NULL, " \t");
+            if (parse_count(arg1, &fb) != 0 || fb >= FB_COUNT) {
+                xil_printf("ERROR: usage: %s <fb>, fb 0..%u\r\n", cmd, (u32)FB_COUNT - 1U);
+                continue;
+            }
+
+            if (strcmp(cmd, "texfill") == 0)
+                texfill(fb);
+            else
+                texcheck(fb);
 
         } else {
             xil_printf("Unknown command: %s\r\n", cmd);
