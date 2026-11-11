@@ -5,11 +5,10 @@
 // tb_GPGPU_e2e) with DDR_ENABLE = 1 and the AXI4SlaveMemory model behind the
 // AXI4 master. Directed kernels store to the framebuffers; the bench checks
 // memory through the model's backdoor, the burst count, the handshake idle
-// state and the fault report for injected AXI errors. Then it runs every
-// directed case (run_cases), DDR cases included.
-//
-// Stores only: the DDR read ring does not exist yet, so a DDR load would
-// never be accepted.
+// state and the fault report for injected AXI errors. Directed load kernels
+// read seeded words and store what they read, so the same backdoor checks
+// the read path. Then it runs every directed case (run_cases), DDR cases
+// included.
 module tb_GPGPU_ddr
     import ControlPkg::*;
     import gpu_pkg::*;
@@ -62,6 +61,13 @@ module tb_GPGPU_ddr
         end
     endfunction
 
+    function automatic void expect_reads(input string name, input int unsigned want);
+        if (ddr_mem.ar_count != want) begin
+            $display("  [ERROR] %0s: %0d read bursts, expected %0d", name, ddr_mem.ar_count, want);
+            errors = errors + 1;
+        end
+    endfunction
+
     // A kernel that completed without a fault leaves the device idle and the
     // AXI4 master with nothing open.
     task automatic expect_clean(input string name);
@@ -82,7 +88,7 @@ module tb_GPGPU_ddr
     // ============================================================
 
     initial begin
-        logic [31:0] base;
+        logic [31:0] base, src, dst;
         logic [31:0] lanes;
         int unsigned error_lane;
 
@@ -211,6 +217,136 @@ module tb_GPGPU_ddr
         expect_bursts("store loop", LOOP_ITERATIONS * groups(LANE_BYTES));
 
         // --------------------------------------------------------
+        // Loads from the texture (the GPU's read-only DDR region): each
+        // lane reads a seeded word and stores it plus one to its own word
+        // of a framebuffer, so the backdoor checks what it read.
+        // x5: source word, x10: destination word, x6: lane * 4.
+        // --------------------------------------------------------
+        $display("\n[INFO] ---> Consecutive loads");
+        ddr_mem.clear();
+        src = TEX_BASE + 'h10000;
+        dst = FB1_BASE + 'h20000;
+        for (int lane = 0; lane < NUM_CORES; lane++)
+            ddr_mem.write_word(src + 4 * lane, 32'hA000_0000 | 32'(lane));
+        run_kernel('{
+            rv_lui(5, src),
+            rv_slli(6, 31, 2),
+            rv_add(5, 5, 6),
+            rv_lw(7, 5, 0),
+            rv_addi(7, 7, 1),
+            rv_lui(10, dst),
+            rv_add(10, 10, 6),
+            rv_sw(7, 10, 0),
+            ret_instr
+        });
+        expect_clean("consecutive loads");
+        for (int lane = 0; lane < NUM_CORES; lane++)
+            expect_mem("consecutive loads", dst + 4 * lane, (32'hA000_0000 | 32'(lane)) + 1);
+        expect_reads("consecutive loads", groups(LANE_BYTES));
+
+        $display("\n[INFO] ---> Same word loaded by every lane");
+        ddr_mem.clear();
+        src = TEX_BASE + 'h11000;
+        dst = FB1_BASE + 'h21000;
+        ddr_mem.write_word(src, 32'h5EED_0000);
+        run_kernel('{
+            rv_lui(5, src),
+            rv_lw(7, 5, 0),
+            rv_add(7, 7, 31),
+            rv_slli(6, 31, 2),
+            rv_lui(10, dst),
+            rv_add(10, 10, 6),
+            rv_sw(7, 10, 0),
+            ret_instr
+        });
+        expect_clean("same word load");
+        for (int lane = 0; lane < NUM_CORES; lane++)
+            expect_mem("same word load", dst + 4 * lane, 32'h5EED_0000 + 32'(lane));
+        expect_reads("same word load", 1);
+
+        // More groups than read slots: the ring fills and refills
+        $display("\n[INFO] ---> One read group per lane");
+        ddr_mem.clear();
+        src = TEX_BASE + 'h12000;
+        dst = FB1_BASE + 'h22000;
+        for (int lane = 0; lane < NUM_CORES; lane++)
+            ddr_mem.write_word(src + GROUP_BYTES * lane, 32'hB000_0000 | 32'(lane));
+        run_kernel('{
+            rv_lui(5, src),
+            rv_slli(6, 31, $clog2(GROUP_BYTES)),
+            rv_add(5, 5, 6),
+            rv_lw(7, 5, 0),
+            rv_addi(7, 7, 1),
+            rv_slli(6, 31, 2),
+            rv_lui(10, dst),
+            rv_add(10, 10, 6),
+            rv_sw(7, 10, 0),
+            ret_instr
+        });
+        expect_clean("group per lane load");
+        for (int lane = 0; lane < NUM_CORES; lane++)
+            expect_mem("group per lane load", dst + 4 * lane, (32'hB000_0000 | 32'(lane)) + 1);
+        expect_reads("group per lane load", NUM_CORES);
+
+        // Gaps: beats no lane asked for are read and discarded
+        $display("\n[INFO] ---> Every other word loaded");
+        ddr_mem.clear();
+        src = TEX_BASE + 'h13000;
+        dst = FB1_BASE + 'h23000;
+        for (int lane = 0; lane < NUM_CORES; lane++) begin
+            ddr_mem.write_word(src + 8 * lane, 32'hC000_0000 | 32'(lane));
+            ddr_mem.write_word(src + 8 * lane + 4, 32'hDEAD_0000 | 32'(lane));
+        end
+        run_kernel('{
+            rv_lui(5, src),
+            rv_slli(6, 31, 3),
+            rv_add(5, 5, 6),
+            rv_lw(7, 5, 0),
+            rv_addi(7, 7, 1),
+            rv_slli(6, 31, 2),
+            rv_lui(10, dst),
+            rv_add(10, 10, 6),
+            rv_sw(7, 10, 0),
+            ret_instr
+        });
+        expect_clean("every other word load");
+        for (int lane = 0; lane < NUM_CORES; lane++)
+            expect_mem("every other word load", dst + 4 * lane, (32'hC000_0000 | 32'(lane)) + 1);
+        expect_reads("every other word load", groups(2 * LANE_BYTES));
+
+        // Sustained loads and stores: copy LOOP_ITERATIONS rows, plus one
+        $display("\n[INFO] ---> Copy loop");
+        ddr_mem.clear();
+        src = TEX_BASE + 'h30000;
+        dst = FB1_BASE + 'h40000;
+        for (int row = 0; row < LOOP_ITERATIONS; row++)
+            for (int lane = 0; lane < NUM_CORES; lane++)
+                ddr_mem.write_word(src + LANE_BYTES * row + 4 * lane, 32'((row << 16) | lane));
+        run_kernel('{
+            rv_lui(5, src),
+            rv_lui(10, dst),
+            rv_slli(6, 31, 2),
+            rv_add(5, 5, 6),                // x5: this lane's word in source row 0
+            rv_add(10, 10, 6),              // x10: and in destination row 0
+            rv_addi(8, 0, LOOP_ITERATIONS), // x8: rows left
+            rv_addi(9, 0, LANE_BYTES),      // x9: row stride
+            rv_lw(7, 5, 0),                 // loop
+            rv_addi(7, 7, 1),
+            rv_sw(7, 10, 0),
+            rv_add(5, 5, 9),
+            rv_add(10, 10, 9),
+            rv_addi(8, 8, -1),
+            rv_bne(8, 0, -24),
+            ret_instr
+        });
+        expect_clean("copy loop");
+        for (int row = 0; row < LOOP_ITERATIONS; row++)
+            for (int lane = 0; lane < NUM_CORES; lane++)
+                expect_mem("copy loop", dst + LANE_BYTES * row + 4 * lane, 32'((row << 16) | lane) + 1);
+        expect_reads("copy loop", LOOP_ITERATIONS * groups(LANE_BYTES));
+        expect_bursts("copy loop", LOOP_ITERATIONS * groups(LANE_BYTES));
+
+        // --------------------------------------------------------
         // SLVERR on a burst reaches every member and leaves memory unchanged
         // --------------------------------------------------------
         ddr_mem.clear();
@@ -245,6 +381,36 @@ module tb_GPGPU_ddr
             }, 32'(FAULT_MEMORY) | fault_kind(MemorySubsystemPkg::ST_DECERR), 32'd1 << error_lane, 32'd12);
         for (int lane = 0; lane < NUM_CORES - 1; lane++)
             expect_mem("DECERR on one burst", base + GROUP_BYTES * lane, 32'(lane));
+        ddr_mem.set_error(base + GROUP_BYTES * error_lane, AXI4FullPkg::AXI_RESP_OKAY);
+
+        // --------------------------------------------------------
+        // Read errors: the lanes of the failing beat fault at the load
+        // --------------------------------------------------------
+        ddr_mem.clear();
+        base = TEX_BASE + 'h60000;
+        ddr_mem.set_error(base, AXI4FullPkg::AXI_RESP_SLVERR);
+        // RRESP is per beat: only the lanes whose word is in the failing beat
+        lanes = all_lanes() & 32'((64'd1 << (AXI4FullPkg::AXI_DATA_W / 32)) - 1);
+        expect_fault("SLVERR on a read burst", '{
+                rv_lui(5, base),
+                rv_slli(6, 31, 2),
+                rv_add(5, 5, 6),
+                rv_lw(7, 5, 0),
+                ret_instr
+            }, 32'(FAULT_MEMORY) | fault_kind(MemorySubsystemPkg::ST_SLVERR), lanes, 32'd12);
+        ddr_mem.set_error(base, AXI4FullPkg::AXI_RESP_OKAY);
+
+        ddr_mem.clear();
+        base = TEX_BASE + 'h70000;
+        error_lane = NUM_CORES - 1;
+        ddr_mem.set_error(base + GROUP_BYTES * error_lane, AXI4FullPkg::AXI_RESP_DECERR);
+        expect_fault("DECERR on one read burst", '{
+                rv_lui(5, base),
+                rv_slli(6, 31, $clog2(GROUP_BYTES)),
+                rv_add(5, 5, 6),
+                rv_lw(7, 5, 0),
+                ret_instr
+            }, 32'(FAULT_MEMORY) | fault_kind(MemorySubsystemPkg::ST_DECERR), 32'd1 << error_lane, 32'd12);
         ddr_mem.set_error(base + GROUP_BYTES * error_lane, AXI4FullPkg::AXI_RESP_OKAY);
 
         if (!ddr_mem.idle()) begin

@@ -41,12 +41,15 @@ module DDRBackend
     ring_index_t[NUM_REQ-1:0] idx;
     logic [NUM_REQ-1:0] wr_take, wr_bdone;
     axi_resp_t[NUM_REQ-1:0] wr_bresp;
+    logic [NUM_REQ-1:0] rd_take, rd_sel;
 
     for (genvar i = 0; i < NUM_REQ; i++) begin: ddr_expand
         assign idx[i] = ddr_if[i].idx;
         assign wr_take[i] = ddr_if[i].wr_take;
         assign ddr_if[i].wr_bdone = wr_bdone[i];
         assign ddr_if[i].wr_bresp = wr_bresp[i];
+        assign rd_take[i] = ddr_if[i].rd_take;
+        assign ddr_if[i].rd_sel = rd_sel[i];
     end
 
     //& =============================================
@@ -58,7 +61,6 @@ module DDRBackend
     ring_group_t group_address;
     beat_t first_beat, last_beat;
     logic rd_ring_free, wr_ring_free;
-    assign rd_ring_free = 1'b0; // TODO: remove when read ring is impemented (Currently hangs read instrutions)
 
     for (genvar i = 0; i < NUM_REQ; i++) begin: cand_expand
         assign cand[i] = ddr_if[i].cand;
@@ -160,15 +162,56 @@ module DDRBackend
     );
 
     //& =============================================
-    //& AXI Master
+    //& DDRReadRing claims a group from GroupFormer,
+    //& issues its AR and hands each R beat to its members
     //& =============================================
-    // TODO: drive from DDRReadRing
+    logic [NUM_REQ-1:0] rd_members;
+    ring_index_t rd_alloc;
+    logic rd_busy, rd_fatal;
+    mem_fatal_t rd_fatal_code;
     cmd_t rd_cmd;
     logic rd_r_ready, rd_owed;
     logic ar_ready, r_valid, r_last;
-    assign rd_cmd     = '0;
-    assign rd_r_ready = 1'b0;
-    assign rd_owed    = 1'b0;
+
+    for (genvar i = 0; i < NUM_REQ; i++) begin: rd_member_expand
+        assign rd_members[i] = ddr_if[i].rd_member;
+    end
+
+    DDRReadRing #(
+        .NUM_REQ(NUM_REQ)
+    ) ddrReadRing (
+        .clk          (clk),
+        .rst_n        (rst_n),
+        // AXI channel
+        .ar_ready     (ar_ready),
+        .r_valid      (r_valid),
+        .r_last       (r_last),
+        .r_ready      (rd_r_ready),
+        .rd_owed      (rd_owed),
+        .rd_cmd       (rd_cmd),
+        // Group formation
+        .free         (rd_ring_free),
+        .rd_alloc     (rd_alloc),
+        .push_rd      (push_rd),
+        .group_address(group_address),
+        .first_beat   (first_beat),
+        .last_beat    (last_beat),
+        // DDR interface from requesters
+        .req          (req),
+        .rd_members   (rd_members),
+        .idx          (idx),
+        .rd_take      (rd_take),
+        // DDR interface to requesters
+        .rd_sel       (rd_sel),
+        // Ring state
+        .busy         (rd_busy),
+        .fatal        (rd_fatal),
+        .fatal_code   (rd_fatal_code)
+    );
+
+    //& =============================================
+    //& AXI Master
+    //& =============================================
 
     logic axi_fatal;
     mem_fatal_t axi_fatal_code;
@@ -206,15 +249,6 @@ module DDRBackend
     //& =============================================
     //& Output signals
     //& =============================================
-    // TODO: drive from DDRReadRing
-    ring_index_t rd_alloc;
-    logic rd_busy, rd_fatal;
-    mem_fatal_t rd_fatal_code;
-    assign rd_alloc      = '0;
-    assign rd_busy       = 1'b0;
-    assign rd_fatal      = 1'b0;
-    assign rd_fatal_code = FATAL_NONE;
-
     assign o_alloc = push_wr ? wr_alloc : rd_alloc;
     assign o_busy = rd_busy | wr_busy;
 
