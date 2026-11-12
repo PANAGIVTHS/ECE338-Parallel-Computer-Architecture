@@ -20,9 +20,6 @@ hardware:
     upload:
       destination: njason@192.168.1.13
       directory: /home/njason/upload
-  serial:
-    port: /dev/ttyACM0
-    baud: 115200
   # RTL source discovery shared by every consumer (RTL test suites, Vivado IP):
   # all `extensions` files under paths.rtl.sources.gpgpu, minus the consumer's
   # own `exclude_sources` list. An entry is a bare directory/file name matched
