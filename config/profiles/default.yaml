@@ -125,6 +125,11 @@ software:
       # platform_header such as GPGPU_FB0_BASE. Unlisted words are 0.
       args: [GPGPU_FB0_BASE, GPGPU_FB_WIDTH, GPGPU_FB_HEIGHT, 0]
       display: 0
+  # Every build of a program, RISC-V kernel and native x86 alike, so both
+  # builds of a program are compiled the same way: -O0, -O1, -O2, -O3, -Os
+  # or -Og.
+  programs:
+    optimization: "-O2"
   riscv:
     march: rv32im
     abi: ilp32

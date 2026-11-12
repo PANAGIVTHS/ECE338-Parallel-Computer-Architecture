@@ -6,6 +6,7 @@ import shutil
 import subprocess
 from functools import partial
 from pathlib import Path
+from typing import Literal
 
 from gpgpu.api import GpgpuError, Step
 
@@ -17,6 +18,10 @@ from .tools import run
 _RISCV_CFLAGS = ("-ffreestanding", "-fno-builtin", "-fomit-frame-pointer", "-ffixed-x31", "-ffunction-sections",
                  "-fdata-sections", "-msmall-data-limit=0", "-mno-relax")
 _INSTRUCTION = re.compile(r"^\s*[0-9a-fA-F]+:\s+(\S+)(?:\s+(.*))?$")
+
+
+class _Programs(Section):
+    optimization: Literal["-O0", "-O1", "-O2", "-O3", "-Os", "-Og"]
 
 
 class _Riscv(Section):
@@ -59,6 +64,7 @@ class GccToolchain:
         self._config = config
         self._root = config.repo_root / "software/programs"
         self._cores = architecture(config).num_cores
+        self._optimization = config.section("software.programs", _Programs).optimization
         self._riscv = config.section("software.riscv", _Riscv)
         self._native_cc, self._riscv_cc = config.tool("native_cc"), config.tool("riscv_gcc")
         if not self._riscv_cc.endswith("-gcc"):
@@ -83,9 +89,10 @@ class GccToolchain:
     def build_native(self, program: str) -> Step:
         source, headers = self._sources(program)
         executable = self._out(program, "_x86")
-        command = [self._native_cc, "-O2", f"-DGPGPU_NUM_CORES={self._cores}", "-o", str(executable), str(source)]
+        command = [self._native_cc, self._optimization, f"-DGPGPU_NUM_CORES={self._cores}", "-o", str(executable), str(source)]
+        # The whole command: a change of compiler, flags or core count rebuilds.
         return Step(partial(run, command, creates=executable.parent), inputs=(source, *headers), outputs=(executable,),
-                    fingerprint={"num_cores": self._cores})
+                    fingerprint={"command": command})
 
     def run_native(self, program: str) -> Step:
         return Step(partial(run, [str(self._out(program, "_x86"))]), always_run=True)
@@ -94,11 +101,12 @@ class GccToolchain:
         source, headers = self._sources(program)
         elf, link_map = self._out(program, ".elf"), self._out(program, ".map")
         linker_script = self._root / "gpgpu.ld"
-        command = [self._riscv_cc, "-O2", f"-march={self._riscv.march}", f"-mabi={self._riscv.abi}",
+        command = [self._riscv_cc, self._optimization, f"-march={self._riscv.march}", f"-mabi={self._riscv.abi}",
                    f"-DGPGPU_NUM_CORES={self._cores}", *_RISCV_CFLAGS, "-o", str(elf), str(source), "-nostdlib", "-nostartfiles",
                    f"-Wl,-T,{linker_script}", f"-Wl,-Map,{link_map}", "-Wl,--build-id=none"]
+        # The whole command: a change of compiler, flags, march/abi or core count rebuilds.
         return Step(partial(run, command, creates=elf.parent), inputs=(source, linker_script, *headers),
-                    outputs=(elf, link_map), fingerprint={"num_cores": self._cores})
+                    outputs=(elf, link_map), fingerprint={"command": command})
 
     def disassemble(self, program: str) -> Step:
         elf, listing = self._out(program, ".elf"), self._out(program, "_dump_real.asm")
