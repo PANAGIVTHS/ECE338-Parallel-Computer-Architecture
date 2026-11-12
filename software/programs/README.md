@@ -68,5 +68,3 @@ programmed with the compatible host monitor. These tasks retain DMEM and do not
 initialize program-specific arguments, export CSVs or visualize results.
 See [FPGA CLI flow](../../docs/fpga-cli.md) for VM serial configuration,
 permissions, UART ownership and failure handling. `run.sh` remains untouched.
-
-The legacy `Makefile` uses the same output layout and accepts `BUILD_ROOT` as an override, but the `gpgpu` task runner is the authoritative config-driven entry point.
