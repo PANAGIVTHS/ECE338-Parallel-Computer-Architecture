@@ -90,7 +90,12 @@ class ProgramAdapter:
       - configure()
       - imem_path()
       - initial_dmem()
+      - before_calls()
+      - after_call()
       - finalize()
+
+    output_window() may return None when the program has no DMEM output; the
+    dump and process_output() are then skipped.
     """
 
     def __init__(self, program_dir: Path, artifact_dir: Path):
@@ -129,6 +134,20 @@ class ProgramAdapter:
         """
         return None
 
+    def before_calls(self, *, uart: GpgpuUartMonitor, adapter_args: argparse.Namespace) -> None:
+        """Optional monitor commands once IMEM and the initial DMEM are loaded,
+        before the first kernel call."""
+
+    def after_call(
+        self,
+        *,
+        uart: GpgpuUartMonitor,
+        call_index: int,
+        kernel_args: list[str],
+        adapter_args: argparse.Namespace,
+    ) -> None:
+        """Optional monitor commands after each kernel run, before its DMEM dump."""
+
     def kernel_arguments(
         self,
         *,
@@ -149,8 +168,8 @@ class ProgramAdapter:
         call_index: int,
         kernel_args: list[str],
         adapter_args: argparse.Namespace,
-    ) -> DmemWindow:
-        """Return the DMEM window to dump after this kernel call."""
+    ) -> DmemWindow | None:
+        """Return the DMEM window to dump after this kernel call, or None for no dump."""
         raise NotImplementedError("ProgramAdapter.output_window() must be overridden")
 
     def process_output(
@@ -425,11 +444,21 @@ def run_kernel_call(
 
     uart.run()
 
+    adapter.after_call(
+        uart=uart,
+        call_index=call_index,
+        kernel_args=kernel_args,
+        adapter_args=adapter_args,
+    )
+
     window = adapter.output_window(
         call_index=call_index,
         kernel_args=kernel_args,
         adapter_args=adapter_args,
     )
+
+    if window is None:
+        return previous_kernel_args
 
     if window.word_count < 1:
         raise AdapterProtocolError("output_window().word_count must be >= 1")
@@ -486,6 +515,8 @@ def main(argv: list[str] | None = None) -> int:
             adapter.initial_dmem(),
             verbose=args.verbose,
         )
+
+        adapter.before_calls(uart=uart, adapter_args=adapter_args)
 
         for call_index in range(args.kernel_calls):
             previous_kernel_args = run_kernel_call(

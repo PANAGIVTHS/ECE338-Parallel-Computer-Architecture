@@ -1,6 +1,7 @@
 #include "gpgpu_driver.h"
 
 #include "xparameters.h"
+#include "xil_cache.h"
 #include "xil_io.h"
 #include "xil_printf.h"
 #include "xil_types.h"
@@ -135,18 +136,21 @@ static int display_show(u32 fb) {
     return 0;
 }
 
-/* Run the loaded kernel `frames` times back to back and report the rate. The
- * kernel must need no host writes between runs (e.g. it advances its own
- * frame counter). The time covers START to completion and the driver's
- * checks, not UART traffic.
+/* Run the loaded kernel `frames` times back to back and report the rate, then
+ * the performance counters of all the runs added up (the GPU clears them at
+ * every START, so they are read after each run) and the result of their
+ * consistency checks. The kernel must need no host writes between runs (e.g.
+ * it advances its own frame counter). The time covers each run's START to
+ * completion and the driver's checks, not the counter reads or UART traffic.
  *
  * XTime_GetTime (XilTimer) reads the Cortex-A9 global timer, which counts at
  * half the CPU clock. XilTimer starts that timer on the first sleep call, so
  * one usleep() comes first. */
 static int bench(u32 frames) {
     const u64 counts_per_second = XGet_CpuFreq() / 2U;
+    static gpgpu_perf_t total, run;
     XTime start, end;
-    u64 elapsed, rate_x100;
+    u64 elapsed = 0U, rate_x100;
 
     if (frames == 0U) {
         xil_printf("ERROR: bench needs at least one frame\r\n");
@@ -154,23 +158,83 @@ static int bench(u32 frames) {
     }
 
     usleep(1);
-    XTime_GetTime(&start);
+    memset(&total, 0, sizeof(total));
     for (u32 i = 0; i < frames; i++) {
+        XTime_GetTime(&start);
         if (gpgpu_run_quiet() != GPGPU_OK) {
             xil_printf("ERROR: frame %u failed\r\n", i);
             return -1;
         }
+        XTime_GetTime(&end);
+        elapsed += end - start;
+        if (gpgpu_perf_read(&run) != GPGPU_OK)
+            return -1;
+        gpgpu_perf_add(&total, &run);
     }
-    XTime_GetTime(&end);
 
-    elapsed = end - start;
     /* xil_printf has no floats or 64-bit integers: print fixed point. */
     rate_x100 = ((u64)frames * counts_per_second * 100U) / elapsed;
     xil_printf("%u frames in %u us: %u.%02u frames/s, %u us/frame\r\n", frames,
                (u32)((elapsed * 1000000U) / counts_per_second),
                (u32)(rate_x100 / 100U), (u32)(rate_x100 % 100U),
                (u32)((elapsed * 1000000U) / counts_per_second / frames));
+
+    gpgpu_perf_report(&total, frames);
     return 0;
+}
+
+/* DDR test picture: `gmemfill` writes a picture into GMEM (the GPU's
+ * read-write DDR region) and clears a framebuffer, a kernel copies GMEM ->
+ * framebuffer, and `gmemcheck` compares the two word by word. The GPU reaches DDR through an HP port that does not snoop
+ * the A9 caches: the A9 flushes what it writes before the GPU reads it, and
+ * invalidates what the GPU wrote before reading it. */
+#define GMEMTEST_WORDS            (GPGPU_FB_WIDTH * GPGPU_FB_HEIGHT)
+#define GMEMTEST_BYTES            (GMEMTEST_WORDS * 4U)
+#define GMEMTEST_REPORT_MAX       8U
+
+_Static_assert(GMEMTEST_BYTES <= GPGPU_GMEM_SIZE, "the test picture does not fit GMEM");
+
+/* Pixel (x, y) of the test picture: a red/green gradient whose low bits sit
+ * in blue, so every pixel of the frame has its own value and a word that
+ * lands in the wrong place cannot match by accident. */
+static inline u32 gmemtest_pixel(u32 x, u32 y) {
+    return ((x >> 3) << 16) | ((y >> 2) << 8) | ((x & 7U) << 5) | ((y & 3U) << 3);
+}
+
+static void gmemfill(u32 fb) {
+    u32 *gmem = (u32 *)(UINTPTR)GPGPU_GMEM_BASE;
+    u32 *dst = (u32 *)(UINTPTR)framebuffers[fb];
+
+    for (u32 y = 0U; y < GPGPU_FB_HEIGHT; y++)
+        for (u32 x = 0U; x < GPGPU_FB_WIDTH; x++)
+            gmem[y * GPGPU_FB_WIDTH + x] = gmemtest_pixel(x, y);
+    memset(dst, 0, GMEMTEST_BYTES);
+
+    Xil_DCacheFlushRange((INTPTR)gmem, GMEMTEST_BYTES);
+    Xil_DCacheFlushRange((INTPTR)dst, GMEMTEST_BYTES);
+    xil_printf("GMEMFILL_DONE %u words at 0x%08x, FB%u cleared\r\n",
+               (u32)GMEMTEST_WORDS, (u32)GPGPU_GMEM_BASE, fb);
+}
+
+static void gmemcheck(u32 fb) {
+    const u32 *gmem = (const u32 *)(UINTPTR)GPGPU_GMEM_BASE;
+    const u32 *dst = (const u32 *)(UINTPTR)framebuffers[fb];
+    u32 mismatches = 0U;
+
+    Xil_DCacheInvalidateRange((INTPTR)dst, GMEMTEST_BYTES);
+    for (u32 i = 0U; i < GMEMTEST_WORDS; i++) {
+        if (dst[i] == gmem[i])
+            continue;
+        if (mismatches < GMEMTEST_REPORT_MAX)
+            xil_printf("  word %u (x %u, y %u): FB%u 0x%08x, GMEM 0x%08x\r\n", i,
+                       i % GPGPU_FB_WIDTH, i / GPGPU_FB_WIDTH, fb, dst[i], gmem[i]);
+        mismatches++;
+    }
+
+    if (mismatches == 0U)
+        xil_printf("GMEMCHECK_PASS %u words\r\n", (u32)GMEMTEST_WORDS);
+    else
+        xil_printf("GMEMCHECK_FAIL %u of %u words differ\r\n", mismatches, (u32)GMEMTEST_WORDS);
 }
 
 #if GPGPU_AUTORUN
@@ -467,11 +531,15 @@ static void print_help(void) {
     xil_printf("  loaddmem_bin <offset> <count>\r\n");
     xil_printf("  --------- CONTROL ---------\r\n");
     xil_printf("  run\r\n");
-    xil_printf("  bench <frames>   (run the kernel back to back, report frames/s)\r\n");
+    xil_printf("  bench <frames>   (run the kernel back to back, report frames/s and the perf counters)\r\n");
+    xil_printf("  perf   (report the perf counters of the last run)\r\n");
     xil_printf("  clear   (acknowledge STOPPED/FAULTED)\r\n");
     xil_printf("  reset   (PL reset; needed after a fatal fault)\r\n");
     xil_printf("  --------- DISPLAY ---------\r\n");
     xil_printf("  display <fb>   (show framebuffer 0 or 1 on HDMI)\r\n");
+    xil_printf("  --------- DDR TEST PICTURE ---------\r\n");
+    xil_printf("  gmemfill <fb>   (write the test picture to GMEM, clear framebuffer fb)\r\n");
+    xil_printf("  gmemcheck <fb>  (compare framebuffer fb with GMEM)\r\n");
     xil_printf("\r\n");
 }
 
@@ -664,6 +732,13 @@ int main(void) {
 
             bench(frames);
 
+        } else if (strcmp(cmd, "perf") == 0) {
+            static gpgpu_perf_t last;
+
+            /* The GPU clears the counters at START: these are the last run's. */
+            if (gpgpu_perf_read(&last) == GPGPU_OK)
+                gpgpu_perf_report(&last, 1U);
+
         } else if (strcmp(cmd, "clear") == 0) {
             gpgpu_clear();
             xil_printf("Acknowledged the STOPPED and FAULTED latches (a fatal fault needs `reset`).\r\n");
@@ -687,6 +762,20 @@ int main(void) {
             }
 
             display_show(fb);
+
+        } else if (strcmp(cmd, "gmemfill") == 0 || strcmp(cmd, "gmemcheck") == 0) {
+            u32 fb;
+
+            arg1 = strtok(NULL, " \t");
+            if (parse_count(arg1, &fb) != 0 || fb >= FB_COUNT) {
+                xil_printf("ERROR: usage: %s <fb>, fb 0..%u\r\n", cmd, (u32)FB_COUNT - 1U);
+                continue;
+            }
+
+            if (strcmp(cmd, "gmemfill") == 0)
+                gmemfill(fb);
+            else
+                gmemcheck(fb);
 
         } else {
             xil_printf("Unknown command: %s\r\n", cmd);

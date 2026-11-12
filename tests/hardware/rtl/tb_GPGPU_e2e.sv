@@ -74,6 +74,18 @@ module tb_GPGPU_e2e
         expect_read_resp(unmapped_addr, AXI_DECERR);
         expect_read_resp(IMEM_BASE + 2, AXI_DECERR);               // misaligned
 
+        // Performance counter block: read-only, zero before any run, and a
+        // slot with no counter (or a misaligned word) is not mapped
+        expect_csr(PERF_GLOBAL_BASE + PERF_COUNTER_BYTES * PerfPkg::PERF_KERNEL_CYCLES, 32'd0, "PERF_KERNEL_CYCLES");
+        expect_csr(PERF_GLOBAL_BASE + PERF_COUNTER_BYTES * PerfPkg::PERF_KERNEL_CYCLES + PERF_HI_OFFSET, 32'd0,
+                   "PERF_KERNEL_CYCLES high word");
+        expect_write_resp(PERF_GLOBAL_BASE, 32'd0, AXI_SLVERR);
+        expect_write_resp(PERF_WARP_BASE, 32'd0, AXI_SLVERR);
+        expect_read_resp(PERF_GLOBAL_BASE + PERF_COUNTER_BYTES * PerfPkg::PERF_GLOBAL_COUNT, AXI_DECERR);
+        expect_read_resp(PERF_WARP_BASE + PERF_COUNTER_BYTES * PerfPkg::PERF_WARP_LEAF_COUNT, AXI_DECERR);
+        expect_read_resp(PERF_WARP_BASE + PERF_WARP_STRIDE * warp_pkg::WARPS_PER_SM, AXI_DECERR);
+        expect_read_resp(PERF_GLOBAL_BASE + 2, AXI_DECERR);
+
         if (irq !== 1'b0) begin
             $display("  [ERROR] IRQ asserted after reset");
             csr_errors = csr_errors + 1;
@@ -120,6 +132,42 @@ module tb_GPGPU_e2e
             }, 32'(FAULT_MEMORY) | fault_kind(MemorySubsystemPkg::ST_MISALIGNED),
             all_lanes() & 32'hAAAA_AAAA, 32'd4);
 
+        // A halfword only needs an even address: load from the lane id, so
+        // lanes 2, 6, ... complete where a word load would fault.
+        expect_fault("odd lanes misaligned halfword load", '{
+                rv_lh(5, 31, 0),
+                ret_instr
+            }, 32'(FAULT_MEMORY) | fault_kind(MemorySubsystemPkg::ST_MISALIGNED),
+            all_lanes() & 32'hAAAA_AAAA, 32'd0);
+
+        // A misaligned sub-word store leaves the word untouched.
+        write_dmem(0, 32'hDEAD_BEEF);
+        expect_fault("misaligned halfword store", '{
+                rv_addi(6, 0, 'h5A),
+                rv_sh(6, 0, 1),
+                ret_instr
+            }, 32'(FAULT_MEMORY) | fault_kind(MemorySubsystemPkg::ST_MISALIGNED), all_lanes(), 32'd4);
+        read_dmem(0, captured_word);
+        if (captured_word !== 32'hDEAD_BEEF) begin
+            $display("  [ERROR] A misaligned store changed DMEM[0] to %h", captured_word);
+            csr_errors = csr_errors + 1;
+        end
+
+        // Byte accesses cannot be misaligned, so the map decides: the last byte
+        // of DMEM completes and the next one is unmapped.
+        expect_fault("byte load past the end of DMEM", '{
+                rv_lui(5, gpu_pkg::DMEM_BASE + gpu_pkg::DMEM_SIZE),
+                rv_lbu(6, 5, -1),
+                rv_lbu(6, 5, 0),
+                ret_instr
+            }, 32'(FAULT_MEMORY) | fault_kind(MemorySubsystemPkg::ST_UNMAPPED), all_lanes(), 32'd8);
+
+        expect_fault("byte load from the write-only framebuffer", '{
+                rv_lui(5, FB0_BASE),
+                rv_lbu(6, 5, 1),
+                ret_instr
+            }, 32'(FAULT_MEMORY) | fault_kind(MemorySubsystemPkg::ST_PERMISSION), all_lanes(), 32'd4);
+
         // One store, two kinds: from the first 4 KiB boundary after DMEM
         // (unmapped up to FB0), even lanes are unmapped and odd misaligned.
         if (gpu_pkg::DMEM_BASE + gpu_pkg::DMEM_SIZE + 'h1000 > FB0_BASE)
@@ -133,9 +181,9 @@ module tb_GPGPU_e2e
             }, 32'(FAULT_MEMORY) | fault_kind(MemorySubsystemPkg::ST_UNMAPPED)
                             | fault_kind(MemorySubsystemPkg::ST_MISALIGNED), all_lanes(), 32'd12);
 
-        expect_fault("store to the read-only texture region", '{
-                rv_lui(5, TEX_BASE),
-                rv_sw(0, 5, 0),
+        expect_fault("load from the write-only framebuffer", '{
+                rv_lui(5, FB1_BASE),
+                rv_lw(6, 5, 0),
                 ret_instr
             }, 32'(FAULT_MEMORY) | fault_kind(MemorySubsystemPkg::ST_PERMISSION), all_lanes(), 32'd4);
 

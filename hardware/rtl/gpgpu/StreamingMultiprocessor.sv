@@ -4,6 +4,8 @@ module StreamingMultiprocessor
     import alu_pkg::*;
     import pipeline_pkg::*;
     import MemorySubsystemPkg::*;
+    import warp_pkg::*;
+    import PerfPkg::*;
 #(
     parameter int unsigned NUM_CORES = 32
 )(
@@ -23,11 +25,27 @@ module StreamingMultiprocessor
     output logic o_fault,
     output logic [NUM_CORES-1:0] o_fault_lanes,
     output mem_status_kinds_t o_fault_kinds,
-    output pc_t o_fault_pc
+    output pc_t o_fault_pc,
+
+    // Performance counters: per lane, a DDR store not yet admitted to the
+    // write path, one admitted and waiting, and a DDR load not yet answered
+    // (MemorySubsystem), and whether
+    // the write ring has a free slot; out, each warp's leaf this cycle
+    input logic [NUM_CORES-1:0] i_perf_st_waiting,
+    input logic [NUM_CORES-1:0] i_perf_st_admitted,
+    input logic [NUM_CORES-1:0] i_perf_ld_waiting,
+    input logic [NUM_CORES-1:0] i_perf_ld_admitted,
+    input logic i_perf_wr_slot_free,
+    input logic i_perf_rd_slot_free,
+    output perf_warp_leaf_t o_perf_leaf [WARPS_PER_SM]
 );
+    if (WARPS_PER_SM != 1) begin : g_warps_check
+        $fatal(1, "The SM runs one warp; WARPS_PER_SM is %0d", WARPS_PER_SM);
+    end
+
     logic ex_branch_taken;
     imem_idx_t ex_beq_target_idx;
-    logic data_hazard, flush;
+    logic data_hazard, flush, load_use, mul_hazard;
 
     // Memory stall signal
     logic stall;
@@ -127,7 +145,9 @@ module StreamingMultiprocessor
         .i_branch_taken(ex_branch_taken),
         .i_id_instr_type(decoded.instr_type),
         .o_data_hazard(data_hazard),
-        .o_flush(flush)
+        .o_flush(flush),
+        .o_load_use(load_use),
+        .o_mul_hazard(mul_hazard)
     );
 
     //& ===============
@@ -190,6 +210,49 @@ module StreamingMultiprocessor
     end
 
     assign o_fault = fault_q || (|lane_fault);
+
+    //& ===============
+    //& PERFORMANCE COUNTERS
+    //& ===============
+    // The warp's leaf this cycle, in PerfPkg's priority order: the first
+    // that applies. Only RUNNING cycles are counted, where i_enable is high
+    // and fault_q low (a fault ends RUNNING in the cycle its response
+    // arrives), so a stall there is a memory wait.
+    logic mem_wait, st_waiting, st_admitted, ld_waiting, ld_admitted;
+    assign mem_wait = i_enable && !fault_q && mem_is_mem_vec[0] && !(&mem_response_received);
+    assign st_waiting = |(i_perf_st_waiting & ~mem_response_received);
+    assign st_admitted = |(i_perf_st_admitted & ~mem_response_received);
+    assign ld_waiting = |(i_perf_ld_waiting & ~mem_response_received);
+    assign ld_admitted = |(i_perf_ld_admitted & ~mem_response_received);
+
+    always_comb begin
+        if (mem_wait && st_waiting && !i_perf_wr_slot_free) begin
+            o_perf_leaf[0] = PERF_WARP_ST_RING_FULL;
+        end else if (mem_wait && st_waiting) begin
+            o_perf_leaf[0] = PERF_WARP_ST_ADMIT;
+        end else if (mem_wait && st_admitted) begin
+            o_perf_leaf[0] = PERF_WARP_ST_DATA;
+        end else if (mem_wait && ld_waiting && !i_perf_rd_slot_free) begin
+            o_perf_leaf[0] = PERF_WARP_LD_RING_FULL;
+        end else if (mem_wait && ld_waiting) begin
+            o_perf_leaf[0] = PERF_WARP_LD_ADMIT;
+        end else if (mem_wait && ld_admitted) begin
+            o_perf_leaf[0] = PERF_WARP_LD_DATA;
+        end else if (mem_wait) begin
+            // Only BRAM lanes are left
+            o_perf_leaf[0] = PERF_WARP_BRAM;
+        end else if (stall || !decode_enabled) begin
+            o_perf_leaf[0] = PERF_WARP_PIPE_FILL;
+        end else if (flush) begin
+            o_perf_leaf[0] = PERF_WARP_BRANCH;
+        end else if (load_use) begin
+            o_perf_leaf[0] = PERF_WARP_LOAD_USE;
+        end else if (mul_hazard) begin
+            o_perf_leaf[0] = PERF_WARP_MUL;
+        end else begin
+            o_perf_leaf[0] = PERF_WARP_ISSUED;
+        end
+    end
 
     generate
         for (genvar i = 0; i < NUM_CORES; i = i + 1) begin : cores

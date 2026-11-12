@@ -291,6 +291,110 @@
     endtask
 
     // ============================================================
+    // Performance counters (PerfPkg), read over AXI4-Lite
+    // ============================================================
+    // Sized by the register map's slots, so the counter enums index them
+    longint unsigned perf_global [PERF_GLOBAL_SLOTS];
+    longint unsigned perf_warp [warp_pkg::WARPS_PER_SM][PERF_WARP_SLOTS];
+
+    task automatic read_perf(input [31:0] addr, output longint unsigned value);
+        reg [31:0] lo, hi;
+        begin
+            read_word(addr, lo);
+            read_word(addr + PERF_HI_OFFSET, hi);
+            value = {hi, lo};
+        end
+    endtask
+
+    task automatic read_all_perf;
+        for (int unsigned c = 0; c < PerfPkg::PERF_GLOBAL_COUNT; c++)
+            read_perf(PERF_GLOBAL_BASE + PERF_COUNTER_BYTES * c, perf_global[c]);
+        for (int unsigned w = 0; w < warp_pkg::WARPS_PER_SM; w++)
+            for (int unsigned l = 0; l < PerfPkg::PERF_WARP_LEAF_COUNT; l++)
+                read_perf(PERF_WARP_BASE + PERF_WARP_STRIDE * w + PERF_COUNTER_BYTES * l, perf_warp[w][l]);
+    endtask
+
+    function automatic longint unsigned perf_g(input PerfPkg::perf_global_t c);
+        return perf_global[c];
+    endfunction
+
+    // The consistency rules of docs/perf-counters-spec.md §6 that hold for
+    // every run, printing the breakdown; mismatches count as CSR errors.
+    task automatic check_perf(input string name);
+        longint unsigned kernel, leaf_sum, ring_full_leaves;
+        PerfPkg::perf_warp_leaf_t leaf;
+        begin
+            read_all_perf();
+            kernel = perf_g(PerfPkg::PERF_KERNEL_CYCLES);
+            ring_full_leaves = 0;
+            for (int unsigned w = 0; w < warp_pkg::WARPS_PER_SM; w++) begin
+                leaf_sum = 0;
+                $write("  [PERF] %0s: %0d cycles (reset %0d, drain %0d), warp %0d:", name, kernel,
+                       perf_g(PerfPkg::PERF_RUN_RESET), perf_g(PerfPkg::PERF_RUN_DRAIN), w);
+                for (int unsigned l = 0; l < PerfPkg::PERF_WARP_LEAF_COUNT; l++) begin
+                    leaf = PerfPkg::perf_warp_leaf_t'(l);
+                    leaf_sum += perf_warp[w][l];
+                    if (perf_warp[w][l] != 0)
+                        $write(" %s=%0d", leaf.name(), perf_warp[w][l]);
+                end
+                $write("\n");
+                ring_full_leaves += perf_warp[w][PerfPkg::PERF_WARP_ST_RING_FULL];
+                if (perf_g(PerfPkg::PERF_RUN_RESET) + perf_g(PerfPkg::PERF_RUN_DRAIN) + leaf_sum != kernel) begin
+                    $display("  [ERROR] %0s: reset + drain + warp %0d leaves = %0d, not KERNEL_CYCLES %0d", name, w,
+                             perf_g(PerfPkg::PERF_RUN_RESET) + perf_g(PerfPkg::PERF_RUN_DRAIN) + leaf_sum, kernel);
+                    csr_errors = csr_errors + 1;
+                end
+            end
+            $display("  [PERF] %0s: AW transfer %0d blocked %0d idle %0d; W transfer %0d blocked %0d wait_aw %0d idle %0d; ring full %0d",
+                     name, perf_g(PerfPkg::PERF_AW_TRANSFER), perf_g(PerfPkg::PERF_AW_BLOCKED), perf_g(PerfPkg::PERF_AW_IDLE),
+                     perf_g(PerfPkg::PERF_W_TRANSFER), perf_g(PerfPkg::PERF_W_BLOCKED), perf_g(PerfPkg::PERF_W_WAIT_AW),
+                     perf_g(PerfPkg::PERF_W_IDLE), perf_g(PerfPkg::PERF_WR_RING_FULL));
+            $display("  [PERF] %0s: inflight sum %0d, owed sum %0d, lane stores %0d; BRAM accesses %0d busy %0d deferred %0d",
+                     name, perf_g(PerfPkg::PERF_WR_INFLIGHT_SUM), perf_g(PerfPkg::PERF_WR_OWED_SUM),
+                     perf_g(PerfPkg::PERF_WR_LANE_STORES), perf_g(PerfPkg::PERF_BRAM_ACCESSES),
+                     perf_g(PerfPkg::PERF_BRAM_BUSY), perf_g(PerfPkg::PERF_BRAM_DEFERRED));
+            $display("  [PERF] %0s: AR transfer %0d blocked %0d idle %0d; R transfer %0d blocked %0d wait %0d idle %0d; read owed sum %0d, lane loads %0d",
+                     name, perf_g(PerfPkg::PERF_AR_TRANSFER), perf_g(PerfPkg::PERF_AR_BLOCKED), perf_g(PerfPkg::PERF_AR_IDLE),
+                     perf_g(PerfPkg::PERF_R_TRANSFER), perf_g(PerfPkg::PERF_R_BLOCKED), perf_g(PerfPkg::PERF_R_WAIT),
+                     perf_g(PerfPkg::PERF_R_IDLE), perf_g(PerfPkg::PERF_RD_OWED_SUM), perf_g(PerfPkg::PERF_RD_LANE_LOADS));
+            if (perf_g(PerfPkg::PERF_AW_TRANSFER) + perf_g(PerfPkg::PERF_AW_BLOCKED) + perf_g(PerfPkg::PERF_AW_IDLE) != kernel) begin
+                $display("  [ERROR] %0s: the AW partition does not sum to KERNEL_CYCLES", name);
+                csr_errors = csr_errors + 1;
+            end
+            if (perf_g(PerfPkg::PERF_W_TRANSFER) + perf_g(PerfPkg::PERF_W_BLOCKED) + perf_g(PerfPkg::PERF_W_WAIT_AW)
+                    + perf_g(PerfPkg::PERF_W_IDLE) != kernel) begin
+                $display("  [ERROR] %0s: the W partition does not sum to KERNEL_CYCLES", name);
+                csr_errors = csr_errors + 1;
+            end
+            if (perf_g(PerfPkg::PERF_AR_TRANSFER) + perf_g(PerfPkg::PERF_AR_BLOCKED) + perf_g(PerfPkg::PERF_AR_IDLE) != kernel) begin
+                $display("  [ERROR] %0s: the AR partition does not sum to KERNEL_CYCLES", name);
+                csr_errors = csr_errors + 1;
+            end
+            if (perf_g(PerfPkg::PERF_R_TRANSFER) + perf_g(PerfPkg::PERF_R_BLOCKED) + perf_g(PerfPkg::PERF_R_WAIT)
+                    + perf_g(PerfPkg::PERF_R_IDLE) != kernel) begin
+                $display("  [ERROR] %0s: the R partition does not sum to KERNEL_CYCLES", name);
+                csr_errors = csr_errors + 1;
+            end
+            if (perf_g(PerfPkg::PERF_AR_TRANSFER) > perf_g(PerfPkg::PERF_R_TRANSFER)) begin
+                $display("  [ERROR] %0s: AR_TRANSFER %0d exceeds R_TRANSFER %0d", name,
+                         perf_g(PerfPkg::PERF_AR_TRANSFER), perf_g(PerfPkg::PERF_R_TRANSFER));
+                csr_errors = csr_errors + 1;
+            end
+            if (ring_full_leaves > perf_g(PerfPkg::PERF_WR_RING_FULL)) begin
+                $display("  [ERROR] %0s: WARP_ST_RING_FULL %0d exceeds WR_RING_FULL %0d", name,
+                         ring_full_leaves, perf_g(PerfPkg::PERF_WR_RING_FULL));
+                csr_errors = csr_errors + 1;
+            end
+            if (perf_g(PerfPkg::PERF_BRAM_BUSY) > perf_g(PerfPkg::PERF_BRAM_ACCESSES) ||
+                perf_g(PerfPkg::PERF_BRAM_ACCESSES) > MemorySubsystemPkg::BRAM_PORTS * perf_g(PerfPkg::PERF_BRAM_BUSY)) begin
+                $display("  [ERROR] %0s: BRAM accesses %0d outside busy cycles %0d to %0d x busy", name,
+                         perf_g(PerfPkg::PERF_BRAM_ACCESSES), perf_g(PerfPkg::PERF_BRAM_BUSY), MemorySubsystemPkg::BRAM_PORTS);
+                csr_errors = csr_errors + 1;
+            end
+        end
+    endtask
+
+    // ============================================================
     // Fault checks: short kernels built from these encoders, so the
     // addresses they use come from gpu_pkg rather than fixed encodings.
     // ============================================================
@@ -314,6 +418,26 @@
         logic [11:0] offset;
         offset = 12'(imm);
         return {offset[11:5], 5'(rs2), 5'(rs1), 3'b010, offset[4:0], 7'b0100011};
+    endfunction
+
+    function automatic logic [31:0] rv_lh(input int rd, input int rs1, input int imm);
+        return {12'(imm), 5'(rs1), 3'b001, 5'(rd), 7'b0000011};
+    endfunction
+
+    function automatic logic [31:0] rv_lbu(input int rd, input int rs1, input int imm);
+        return {12'(imm), 5'(rs1), 3'b100, 5'(rd), 7'b0000011};
+    endfunction
+
+    function automatic logic [31:0] rv_sb(input int rs2, input int rs1, input int imm);
+        logic [11:0] offset;
+        offset = 12'(imm);
+        return {offset[11:5], 5'(rs2), 5'(rs1), 3'b000, offset[4:0], 7'b0100011};
+    endfunction
+
+    function automatic logic [31:0] rv_sh(input int rs2, input int rs1, input int imm);
+        logic [11:0] offset;
+        offset = 12'(imm);
+        return {offset[11:5], 5'(rs2), 5'(rs1), 3'b001, offset[4:0], 7'b0100011};
     endfunction
 
     function automatic logic [31:0] rv_slli(input int rd, input int rs1, input int shamt);
@@ -352,6 +476,7 @@
             $fatal(1, "[ERROR] Kernel reached timeout of %0d cycles without IRQ", test_timeout_cycles);
         write_word(REG_IRQ_STATUS, 32'd1);
         write_word(REG_IRQ_ENABLE, 32'd0);
+        check_perf("kernel");
     endtask
 
     // A faulting kernel ends IDLE with FAULTED set and the fault report;
@@ -420,8 +545,11 @@
         bit found_ret;
         bit has_ddr;
         reg [31:0] captured_word;
-        string test_root, case_prefix, program_name, data_name, ddr_seed_name, ddr_name;
-        string prog_file, data_file, ddr_seed_file, ddr_file;
+        string test_root, case_prefix, program_name, data_name, ddr_seed_name, ddr_name, perf_name;
+        string prog_file, data_file, ddr_seed_file, ddr_file, perf_file;
+        string perf_key;
+        longint unsigned model_instructions, model_ddr_lane_stores, model_dmem_lane_accesses;
+        longint unsigned model_ddr_lane_loads, model_ddr_read_bursts, model_ddr_read_beats;
 
         `REQUIRE_PLUSARG("TEST_ROOT=%s", test_root)
         `REQUIRE_PLUSARG("TEST_IDX=%d", test_idx)
@@ -430,6 +558,7 @@
         `REQUIRE_PLUSARG("DATA_FILE=%s", data_name)
         `REQUIRE_PLUSARG("DDR_SEED_FILE=%s", ddr_seed_name)
         `REQUIRE_PLUSARG("DDR_FILE=%s", ddr_name)
+        `REQUIRE_PLUSARG("PERF_FILE=%s", perf_name)
         has_test_end = $value$plusargs("TEST_END=%d", test_end) != 0;
         $display("\n[INFO] ---> Directed cases from %0s", test_root);
 
@@ -448,6 +577,7 @@
             data_file = $sformatf("%0s/%0s%0d/%0s", test_root, case_prefix, test_idx, data_name);
             ddr_seed_file = $sformatf("%0s/%0s%0d/%0s", test_root, case_prefix, test_idx, ddr_seed_name);
             ddr_file = $sformatf("%0s/%0s%0d/%0s", test_root, case_prefix, test_idx, ddr_name);
+            perf_file = $sformatf("%0s/%0s%0d/%0s", test_root, case_prefix, test_idx, perf_name);
 
             fd = $fopen(prog_file, "r");
             if (fd == 0) begin
@@ -575,6 +705,63 @@
             if (!ddr_mem.idle()) begin
                 $display("  [ERROR] A DDR transaction is still open after completion");
                 csr_errors = csr_errors + 1;
+            end
+
+            // ----------------------------------------------------
+            // Performance counters: the rules of every run, and the
+            // instructions the model executed (expected_generator.py)
+            // ----------------------------------------------------
+            check_perf($sformatf("test %0d", test_idx));
+            fd = $fopen(perf_file, "r");
+            if (fd == 0)
+                $fatal(1, "[ERROR] Test %0d: no %0s (run tests:rtl:generate)", test_idx, perf_file);
+            if ($fscanf(fd, "%s %d", perf_key, model_instructions) != 2 || perf_key != "instructions")
+                $fatal(1, "[ERROR] %0s: expected 'instructions <count>' first", perf_file);
+            if ($fscanf(fd, "%s %d", perf_key, model_ddr_lane_stores) != 2 || perf_key != "ddr_lane_stores")
+                $fatal(1, "[ERROR] %0s: expected 'ddr_lane_stores <count>' second", perf_file);
+            if ($fscanf(fd, "%s %d", perf_key, model_dmem_lane_accesses) != 2 || perf_key != "dmem_lane_accesses")
+                $fatal(1, "[ERROR] %0s: expected 'dmem_lane_accesses <count>' third", perf_file);
+            if ($fscanf(fd, "%s %d", perf_key, model_ddr_lane_loads) != 2 || perf_key != "ddr_lane_loads")
+                $fatal(1, "[ERROR] %0s: expected 'ddr_lane_loads <count>' fourth", perf_file);
+            if ($fscanf(fd, "%s %d", perf_key, model_ddr_read_bursts) != 2 || perf_key != "ddr_read_bursts")
+                $fatal(1, "[ERROR] %0s: expected 'ddr_read_bursts <count>' fifth", perf_file);
+            if ($fscanf(fd, "%s %d", perf_key, model_ddr_read_beats) != 2 || perf_key != "ddr_read_beats")
+                $fatal(1, "[ERROR] %0s: expected 'ddr_read_beats <count>' sixth", perf_file);
+            $fclose(fd);
+            if (perf_g(PerfPkg::PERF_WR_LANE_STORES) != model_ddr_lane_stores) begin
+                $display("  [ERROR] WR_LANE_STORES: Expected %0d (the model's DDR lane stores), Found %0d",
+                         model_ddr_lane_stores, perf_g(PerfPkg::PERF_WR_LANE_STORES));
+                csr_errors = csr_errors + 1;
+            end
+            if (perf_g(PerfPkg::PERF_BRAM_ACCESSES) != model_dmem_lane_accesses) begin
+                $display("  [ERROR] BRAM_ACCESSES: Expected %0d (the model's DMEM lane accesses), Found %0d",
+                         model_dmem_lane_accesses, perf_g(PerfPkg::PERF_BRAM_ACCESSES));
+                csr_errors = csr_errors + 1;
+            end
+            if (perf_g(PerfPkg::PERF_RD_LANE_LOADS) != model_ddr_lane_loads) begin
+                $display("  [ERROR] RD_LANE_LOADS: Expected %0d (the model's DDR lane loads), Found %0d",
+                         model_ddr_lane_loads, perf_g(PerfPkg::PERF_RD_LANE_LOADS));
+                csr_errors = csr_errors + 1;
+            end
+            if (perf_g(PerfPkg::PERF_AR_TRANSFER) != model_ddr_read_bursts) begin
+                $display("  [ERROR] AR_TRANSFER: Expected %0d (the model's read bursts), Found %0d",
+                         model_ddr_read_bursts, perf_g(PerfPkg::PERF_AR_TRANSFER));
+                csr_errors = csr_errors + 1;
+            end
+            if (perf_g(PerfPkg::PERF_R_TRANSFER) != model_ddr_read_beats) begin
+                $display("  [ERROR] R_TRANSFER: Expected %0d (the model's read beats), Found %0d",
+                         model_ddr_read_beats, perf_g(PerfPkg::PERF_R_TRANSFER));
+                csr_errors = csr_errors + 1;
+            end
+            // The instruction at RET's target issues before the controller
+            // sees the completion: one more than the kernel executes, until
+            // the halt instruction changes.
+            for (int unsigned w = 0; w < warp_pkg::WARPS_PER_SM; w++) begin
+                if (perf_warp[w][PerfPkg::PERF_WARP_ISSUED] != model_instructions + 1) begin
+                    $display("  [ERROR] Warp %0d WARP_ISSUED: Expected %0d (the model's %0d + 1), Found %0d", w,
+                             model_instructions + 1, model_instructions, perf_warp[w][PerfPkg::PERF_WARP_ISSUED]);
+                    csr_errors = csr_errors + 1;
+                end
             end
 
             // ----------------------------------------------------

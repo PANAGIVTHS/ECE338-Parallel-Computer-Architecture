@@ -43,6 +43,13 @@ def _guard(header: Path) -> str:
     return re.sub(r"\W", "_", header.name).upper()
 
 
+def _c_value(value: int | tuple[int, ...] | tuple[str, ...], hex_digits: int | None) -> str:
+    """A C literal for an exported value; a tuple is an initializer list."""
+    if isinstance(value, tuple):
+        return "{ " + ", ".join(f'"{item}"' if isinstance(item, str) else _c_value(item, hex_digits) for item in value) + " }"
+    return f"{value}U" if hex_digits is None else f"0x{value:0{hex_digits}X}U"
+
+
 def _write_platform(sources: list[Path], include_directory: Path, settings: dict[str, Any], output: Path) -> None:
     from .slang import read_exports  # loaded only when a header is really generated
 
@@ -61,7 +68,7 @@ def _write_platform(sources: list[Path], include_directory: Path, settings: dict
         if export.package != package:
             package = export.package
             lines += ["", f"/* {package} */"]
-        define(export.name, f"{export.value}U" if export.hex_digits is None else f"0x{export.value:0{export.hex_digits}X}U")
+        define(export.name, _c_value(export.value, export.hex_digits))
     lines += ["", "/* Completion wait: PS interrupt or IRQ_STATUS polling (software.host). */"]
     define("USE_IRQ", "1" if settings["use_irq"] else "0")
     define("IRQ_ID", f"{settings['irq_id']}U")

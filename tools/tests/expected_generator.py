@@ -11,6 +11,14 @@ Outputs:
   ddr.mem              only for cases that use DDR: 'bursts <n>' (AXI write
                        bursts the kernel issues), then every DDR word, seeded
                        or written, as '<byte address> <word>' hex pairs
+  perf.mem             the model's counts for the performance counters, as
+                       '<name> <decimal count>' lines: 'instructions' (warp
+                       instructions executed, RET included),
+                       'ddr_lane_stores' (lane stores to DDR),
+                       'dmem_lane_accesses' (lane loads and stores to DMEM),
+                       'ddr_lane_loads' (lane loads from DDR),
+                       'ddr_read_bursts' (AXI read bursts) and
+                       'ddr_read_beats' (AXI read beats)
 
 A case must end with RET and must not fault: fault reporting is checked by
 the E2E bench's directed fault kernels. The model and its rules are in
@@ -96,6 +104,13 @@ def generate_case(test_dir, num_cores, constants, max_instructions):
     for lane, regs in enumerate(result.regfiles):
         (test_dir / f'regfile_c{lane}.mem').write_text(''.join(format_hex(v) + '\n' for v in regs))
     (test_dir / 'data.mem').write_text(''.join(format_hex(v) + '\n' for v in result.dmem))
+
+    (test_dir / 'perf.mem').write_text(f'instructions {result.instructions}\n'
+                                       f'ddr_lane_stores {result.ddr_lane_stores}\n'
+                                       f'dmem_lane_accesses {result.dmem_lane_accesses}\n'
+                                       f'ddr_lane_loads {result.ddr_lane_loads}\n'
+                                       f'ddr_read_bursts {result.ddr_read_bursts}\n'
+                                       f'ddr_read_beats {result.ddr_read_beats}\n')
 
     ddr_path = test_dir / 'ddr.mem'
     if ddr_seed or result.ddr or result.ddr_bursts:

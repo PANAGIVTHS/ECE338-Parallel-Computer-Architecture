@@ -1,6 +1,7 @@
 """Reads constants out of the RTL's SystemVerilog packages, as the RTL itself computes them."""
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any, NamedTuple
 
@@ -11,7 +12,7 @@ from pyslang import ast, syntax
 class Export(NamedTuple):
     package: str
     name: str
-    value: int
+    value: int | tuple[int, ...] | tuple[str, ...]  # a tuple: a C initializer list
     hex_digits: int | None  # None: decimal (integer types and enum members)
 
 
@@ -73,14 +74,27 @@ def _integer(symbol: Any, value: Any, attribute: str) -> int:
     return int(number)
 
 
+def _hex_digits(kind: Any) -> int | None:
+    return None if kind.isPredefinedInteger or kind.isEnum else (kind.bitWidth + 3) // 4
+
+
 def _symbol_exports(package: str, symbol: Any, attribute: str) -> list[Export]:
+    """A parameter's value (an unpacked array's as a tuple); an enum's members and, when they
+    are numbered 0 to N-1, <TYPE>_NAMES: their names indexed by value (TYPE without its _t)."""
     if symbol.kind == ast.SymbolKind.Parameter:
         kind = symbol.type.canonicalType
-        digits = None if kind.isPredefinedInteger else (kind.bitWidth + 3) // 4
-        return [Export(package, symbol.name, _integer(symbol, symbol.value, attribute), digits)]
+        if kind.isUnpackedArray:
+            values = tuple(_integer(symbol, element, attribute) for element in symbol.value.value)
+            return [Export(package, symbol.name, values, _hex_digits(kind.elementType.canonicalType))]
+        return [Export(package, symbol.name, _integer(symbol, symbol.value, attribute), _hex_digits(kind))]
     if symbol.kind == ast.SymbolKind.TypeAlias and symbol.targetType.type.canonicalType.isEnum:
-        return [Export(package, member.name, _integer(member, member.value, attribute), None)
-                for member in symbol.targetType.type.canonicalType]
+        members = [(member.name, _integer(member, member.value, attribute))
+                   for member in symbol.targetType.type.canonicalType]
+        exports = [Export(package, name, value, None) for name, value in members]
+        if [value for _, value in members] == list(range(len(members))):
+            table = re.sub(r"_t$", "", symbol.name).upper() + "_NAMES"
+            exports.append(Export(package, table, tuple(name for name, _ in members), None))
+        return exports
     raise ValueError(f"(* {attribute} *) supports parameters and enum typedefs; "
                      f"{package}::{symbol.name} is a {symbol.kind.name}")
 

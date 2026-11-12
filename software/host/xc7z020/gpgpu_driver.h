@@ -45,6 +45,22 @@ int gpgpu_read_dmem(u32 index, u32 *data);
 int gpgpu_dump_imem_ascii(u32 offset, u32 count);
 int gpgpu_dump_dmem_ascii(u32 offset, u32 count);
 
+/* Performance counters (docs/perf-counters-spec.md, RTL PerfPkg). The GPU
+ * clears them at every START; each run reads its own. */
+typedef struct {
+    u64 global[GPGPU_PERF_GLOBAL_COUNT];
+    u64 warp[GPGPU_WARPS_PER_SM][GPGPU_PERF_WARP_LEAF_COUNT];
+} gpgpu_perf_t;
+
+/* Read every counter; the GPU must be idle (GPGPU_ERR_STATE otherwise). */
+int gpgpu_perf_read(gpgpu_perf_t *perf);
+/* Add one run's counters into a total. */
+void gpgpu_perf_add(gpgpu_perf_t *total, const gpgpu_perf_t *run);
+/* Print the report of `runs` runs added into `perf` (warp groups and leaves,
+ * the global counters by group with their derived values), then check the
+ * consistency rules (spec §6); returns the number of rules that fail. */
+u32 gpgpu_perf_report(const gpgpu_perf_t *perf, u32 runs);
+
 /* Compatibility stubs: the AXI MMIO map has no SP regfile window. */
 int gpgpu_read_regfile(u32 index, u32 *data);
 int gpgpu_dump_regfile_ascii(void);

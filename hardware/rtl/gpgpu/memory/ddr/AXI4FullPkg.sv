@@ -5,7 +5,7 @@ package AXI4FullPkg;
     // AXI burst geometry: a window is the longest HP burst, so a burst never
     // crosses a window and every DDR region must be window-aligned.
     localparam int unsigned AXI_ADDR_W = 32;
-    localparam int unsigned AXI_DATA_W = 64;
+    (* host *) localparam int unsigned AXI_DATA_W = 64;
     localparam int unsigned AXI_STRB_W = AXI_DATA_W / 8;
     localparam int unsigned AXI_ID_W   = 1;
     localparam int unsigned AXI_MAX_BEATS_PER_BURST = 16;

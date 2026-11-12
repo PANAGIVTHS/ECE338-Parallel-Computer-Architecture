@@ -10,6 +10,7 @@ from types import SimpleNamespace
 import pytest
 
 from gpgpu.adapters.doit_engine import DoitEngine, _StateCheck
+from gpgpu.adapters.host_headers import _write_platform
 from gpgpu.adapters.tools import Machine, check_version, version_current
 from gpgpu.adapters.verilator import _open_waveform, _run_bench
 from gpgpu.adapters.vivado.flow import timing_summary
@@ -293,3 +294,26 @@ def test_a_run_removes_the_previous_dump(tmp_path):
     _run_bench([str(simulator)], tmp_path, build / "simulation.log", dump)
     assert not dump.exists()
     assert (build / "simulation.log").read_text() == "done\n"
+
+
+def test_platform_header_exports_arrays_and_enum_names(tmp_path):
+    package = tmp_path / "perf_pkg.sv"
+    package.write_text("""
+package Perf;
+    (* host *) typedef enum logic [1:0] { G_A, G_B, G_C } group_t;
+    (* host *) typedef enum logic [2:0] { ST_OK = 0, ST_ERR = 4 } status_t;
+    (* host *) localparam group_t GROUP_OF [3] = '{ G_C, G_A, G_B };
+    (* host *) localparam logic [7:0] BYTES [2] = '{ 8'h12, 8'hAB };
+endpackage
+""")
+    header = tmp_path / "platform.h"
+    settings = {"export_attribute": "host", "define_prefix": "GPGPU_", "interface_version": 3, "use_irq": True, "irq_id": 61}
+    _write_platform([package], tmp_path, settings, header)
+    lines = {line.split()[1]: line.split(None, 2)[2] for line in header.read_text().splitlines()
+             if line.startswith("#define GPGPU_")}
+    # Members numbered 0 to N-1 also export their names, indexed by value
+    assert lines["GPGPU_GROUP_NAMES"] == '{ "G_A", "G_B", "G_C" }'
+    assert lines["GPGPU_GROUP_OF"] == "{ 2U, 0U, 1U }"
+    assert lines["GPGPU_BYTES"] == "{ 0x12U, 0xABU }"
+    # status_t is numbered 0 and 4: no name table
+    assert lines["GPGPU_ST_ERR"] == "4U" and "GPGPU_STATUS_NAMES" not in lines

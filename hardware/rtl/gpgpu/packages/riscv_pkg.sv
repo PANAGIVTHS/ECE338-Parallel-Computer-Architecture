@@ -17,6 +17,12 @@ package riscv_pkg;
     localparam logic [2:0] FUNCT3_SLT = 3'b010;
     localparam logic [2:0] FUNCT3_SLTU = 3'b011;
     localparam logic [2:0] FUNCT3_SRL = 3'b101;
+    localparam logic [2:0] FUNCT3_LB = 3'b000;
+    localparam logic [2:0] FUNCT3_LH = 3'b001;
+    localparam logic [2:0] FUNCT3_LBU = 3'b100;
+    localparam logic [2:0] FUNCT3_LHU = 3'b101;
+    localparam logic [2:0] FUNCT3_SB = 3'b000;
+    localparam logic [2:0] FUNCT3_SH = 3'b001;
 
     localparam logic [6:0] FUNCT7_ADD = 7'b0000000;
     localparam logic [6:0] FUNCT7_SUB = 7'b0100000;
@@ -32,6 +38,7 @@ package riscv_pkg;
         OP_JAL = 7'b1101111,
         OP_JALR = 7'b1100111,
         OP_LUI = 7'b0110111,
+        OP_AUIPC = 7'b0010111,
         OP_INVALID = 7'b0
     } opcode_t;
 
