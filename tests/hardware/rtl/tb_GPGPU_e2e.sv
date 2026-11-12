@@ -132,6 +132,48 @@ module tb_GPGPU_e2e
             }, 32'(FAULT_MEMORY) | fault_kind(MemorySubsystemPkg::ST_MISALIGNED),
             all_lanes() & 32'hAAAA_AAAA, 32'd4);
 
+        // A halfword only needs an even address: load from the lane id, so
+        // lanes 2, 6, ... complete where a word load would fault.
+        expect_fault("odd lanes misaligned halfword load", '{
+                rv_lh(5, 31, 0),
+                ret_instr
+            }, 32'(FAULT_MEMORY) | fault_kind(MemorySubsystemPkg::ST_MISALIGNED),
+            all_lanes() & 32'hAAAA_AAAA, 32'd0);
+
+        // A misaligned sub-word store leaves the word untouched.
+        write_dmem(0, 32'hDEAD_BEEF);
+        expect_fault("misaligned halfword store", '{
+                rv_addi(6, 0, 'h5A),
+                rv_sh(6, 0, 1),
+                ret_instr
+            }, 32'(FAULT_MEMORY) | fault_kind(MemorySubsystemPkg::ST_MISALIGNED), all_lanes(), 32'd4);
+        read_dmem(0, captured_word);
+        if (captured_word !== 32'hDEAD_BEEF) begin
+            $display("  [ERROR] A misaligned store changed DMEM[0] to %h", captured_word);
+            csr_errors = csr_errors + 1;
+        end
+
+        // Byte accesses cannot be misaligned, so the map decides: the last byte
+        // of DMEM completes and the next one is unmapped.
+        expect_fault("byte load past the end of DMEM", '{
+                rv_lui(5, gpu_pkg::DMEM_BASE + gpu_pkg::DMEM_SIZE),
+                rv_lbu(6, 5, -1),
+                rv_lbu(6, 5, 0),
+                ret_instr
+            }, 32'(FAULT_MEMORY) | fault_kind(MemorySubsystemPkg::ST_UNMAPPED), all_lanes(), 32'd8);
+
+        expect_fault("byte store to the read-only texture region", '{
+                rv_lui(5, TEX_BASE),
+                rv_sb(0, 5, 1),
+                ret_instr
+            }, 32'(FAULT_MEMORY) | fault_kind(MemorySubsystemPkg::ST_PERMISSION), all_lanes(), 32'd4);
+
+        expect_fault("byte load from the write-only framebuffer", '{
+                rv_lui(5, FB0_BASE),
+                rv_lbu(6, 5, 1),
+                ret_instr
+            }, 32'(FAULT_MEMORY) | fault_kind(MemorySubsystemPkg::ST_PERMISSION), all_lanes(), 32'd4);
+
         // One store, two kinds: from the first 4 KiB boundary after DMEM
         // (unmapped up to FB0), even lanes are unmapped and odd misaligned.
         if (gpu_pkg::DMEM_BASE + gpu_pkg::DMEM_SIZE + 'h1000 > FB0_BASE)

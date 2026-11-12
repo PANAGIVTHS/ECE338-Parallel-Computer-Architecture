@@ -35,9 +35,19 @@ package MemorySubsystemPkg;
         TGT_DDR = 2'd2
     } mem_target_e;
 
+    // Access size, as bits [1:0] of a RISC-V load/store funct3
+    typedef enum logic [1:0] {
+        MEM_SIZE_BYTE = 2'b00,
+        MEM_SIZE_HALF = 2'b01,
+        MEM_SIZE_WORD = 2'b10
+    } mem_size_t;
+
+    // addr is the access's byte address. wdata holds the store on its byte
+    // lanes in the addressed word and wstrb selects those lanes.
     typedef struct packed {
         logic write;
         word_t addr;
+        mem_size_t size;
         word_t wdata;
         strb_t wstrb;
     } mem_req_t;
@@ -56,16 +66,25 @@ package MemorySubsystemPkg;
         return (a >= base) && (a - base < size);
     endfunction
 
+    // Every access must be aligned to its own size.
+    function automatic logic is_misaligned(word_t addr, mem_size_t size);
+        case (size)
+            MEM_SIZE_BYTE: return 1'b0;
+            MEM_SIZE_HALF: return addr[0];
+            default:       return addr[1:0] != 2'b00;
+        endcase
+    endfunction
+
     // ddr_enable = 0: the DDR backend is absent, so an access the map would
     // send to DDR is unmapped. Permission rules still apply first.
-    function automatic decode_t decode_access(word_t addr, logic write, bit ddr_enable);
+    function automatic decode_t decode_access(word_t addr, mem_size_t size, logic write, bit ddr_enable);
         decode_t d;
         d = '{
             target: TGT_ERR,
             status: ST_OK
         };
 
-        if (addr[1:0] != 2'b00)
+        if (is_misaligned(addr, size))
             d.status = ST_MISALIGNED;
         else if (in_range(addr, DMEM_BASE, DMEM_SIZE))
             d.target = TGT_BRAM;
