@@ -3,10 +3,12 @@ from __future__ import annotations
 
 import fcntl
 import os
+import re
 import shutil
 import subprocess
 from collections.abc import Iterable, Iterator, Sequence
 from contextlib import contextmanager
+from functools import cache
 from pathlib import Path
 
 from gpgpu.api import CheckResult, GpgpuError
@@ -22,6 +24,20 @@ def run(command: Sequence[str], cwd: Path | None = None, creates: Path | None = 
     if creates is not None:
         creates.mkdir(parents=True, exist_ok=True)
     subprocess.run(list(command), cwd=cwd, check=True)
+
+
+@cache  # about a second per call, and every stage's freshness check asks
+def check_version(name: str, command: str, flag: str, required: str) -> None:
+    """Fail unless `command flag` reports version *required* (2025.2 is not 2025.21)."""
+    result = subprocess.run([command, flag], capture_output=True, text=True, check=True)
+    if re.search(rf"(?<!\d){re.escape(required)}(?!\d)", result.stdout + result.stderr) is None:
+        raise RuntimeError(f"{name} {required} required: {result.stdout}{result.stderr}")
+
+
+def version_current(name: str, command: str, flag: str, required: str) -> bool:
+    """check_version as a freshness check: another version makes the task stale, and its action then fails."""
+    check_version(name, command, flag, required)
+    return True
 
 
 class Machine:

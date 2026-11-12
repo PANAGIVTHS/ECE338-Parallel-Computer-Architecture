@@ -23,8 +23,10 @@ Configured host sources are `software/host/xc7z020/gpgpu_driver.c` and `main.c`,
 with adjacent headers as real build dependencies.
 
 Provide the licensed SDK environment or set `tools.vitis.command` in ignored
-`config/local.yaml`. No SDK is downloaded by this flow. Use a new build root to
-avoid pre-existing reference projects:
+`config/local.yaml`. No SDK is downloaded by this flow. Every task that runs
+Vitis first checks that `vitis --version` reports `hardware.vitis.version`, and
+stops if it does not, as the Vivado stages do. Use a new build root to avoid
+pre-existing reference projects:
 
 ```bash
 ./gpgpu --set paths.build.root=build-axi-2025-2 vivado system:build

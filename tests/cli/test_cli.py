@@ -9,7 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 from gpgpu.adapters.doit_engine import DoitEngine, _StateCheck
-from gpgpu.adapters.tools import Machine
+from gpgpu.adapters.tools import Machine, check_version, version_current
 from gpgpu.adapters.vivado.flow import timing_summary
 from gpgpu.adapters.vivado.system_project import canonicalize
 from gpgpu.api import GpgpuError, Step, SyncRefused, SyncReport, SyncState, Task, classify
@@ -248,3 +248,14 @@ def test_timing_summary_reads_the_last_report_of_implementation(tmp_path):
     report, timing = timing_summary(tmp_path)
     assert report == "top_timing_summary_postroute_physopted.rpt"
     assert timing == {"wns": 0.012, "tns": 0.0, "failing": 0, "whs": 0.029, "ths": 0.0, "hold_failing": 0}
+
+
+def test_check_version_needs_the_configured_release(tmp_path):
+    tool = tmp_path / "vitis"
+    tool.write_text("#!/bin/sh\necho '****** Vitis v2025.2 (64-bit)'\n")
+    tool.chmod(0o755)
+    check_version("Vitis", str(tool), "--version", "2025.2")
+    assert version_current("Vitis", str(tool), "--version", "2025.2")
+    for other in ("2025.1", "2025.21", "025.2"):
+        with pytest.raises(RuntimeError, match=f"Vitis {other} required"):
+            check_version("Vitis", str(tool), "--version", other)

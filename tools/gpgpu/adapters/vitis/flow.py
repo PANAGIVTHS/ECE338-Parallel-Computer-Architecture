@@ -16,6 +16,7 @@ from gpgpu.api import Step
 
 from ..config import Config, Section
 from ..design import axi_address, vitis_workspace, xsa_path
+from ..tools import check_version, version_current
 
 _VENDOR_FLOW = Path(__file__).with_name("vendor_flow.py")
 _TEXT_SUFFIXES = {"", ".c", ".cmake", ".h", ".ini", ".json", ".ld", ".md", ".py", ".tcl", ".txt", ".yaml", ".yml"}
@@ -35,7 +36,8 @@ class _Vitis(Section):
     host_sources: list[str]
 
 
-def _run_vitis(command: list[str], repo: Path, outputs: tuple[Path, ...]) -> None:
+def _run_vitis(command: list[str], repo: Path, outputs: tuple[Path, ...], version: str) -> None:
+    check_version("Vitis", command[0], "--version", version)
     subprocess.run(command, cwd=repo, check=True)
     missing = [str(path) for path in outputs if not path.is_file()]
     if missing:
@@ -150,6 +152,7 @@ class VitisFlow:
         self._xsa = xsa_path(config)
         self._base, self._range = axi_address(config)
         self._prefix = [config.tool("vitis"), "-s", str(_VENDOR_FLOW), "--"]
+        self._version_current = partial(version_current, "Vitis", config.tool("vitis"), "--version", s.version)
         platform, host = self._workspace / s.platform_name, self._workspace / s.host_name
         self._platform_metadata, self._host_metadata = platform / "vitis-comp.json", host / "vitis-comp.json"
         export = platform / "export" / s.platform_name
@@ -161,15 +164,15 @@ class VitisFlow:
         s = self._s
         command = [*self._prefix, "project", "--workspace", str(self._workspace), "--xsa", str(self._xsa),
                    "--platform", s.platform_name, "--cpu", s.cpu, "--os", s.os, "--domain", s.domain]
-        return Step(partial(_run_vitis, command, self._repo, (self._platform_metadata,)),
+        return Step(partial(_run_vitis, command, self._repo, (self._platform_metadata,), s.version),
                     inputs=(self._xsa, _VENDOR_FLOW), outputs=(self._platform_metadata,),
-                    fingerprint={"version": s.version, "command": command})
+                    fingerprint={"version": s.version, "command": command}, checks=(self._version_current,))
 
     def build_platform(self) -> Step:
         command = [*self._prefix, "build", "--workspace", str(self._workspace), "--component", self._s.platform_name]
-        return Step(partial(_run_vitis, command, self._repo, self._platform_outputs),
+        return Step(partial(_run_vitis, command, self._repo, self._platform_outputs, self._s.version),
                     inputs=(_VENDOR_FLOW, self._platform_metadata, self._xsa), outputs=self._platform_outputs,
-                    fingerprint={"command": command})
+                    fingerprint={"command": command}, checks=(self._version_current,))
 
     def build_host(self) -> Step:
         s = self._s
@@ -180,9 +183,10 @@ class VitisFlow:
                    "--archive", str(self._archive), "--repo-root", str(self._repo)]
         command += [argument for source in sources for argument in ("--source", str(source))]
         outputs = (self._elf, self._host_metadata)
-        return Step(partial(_run_vitis, command, self._repo, outputs),
+        return Step(partial(_run_vitis, command, self._repo, outputs, s.version),
                     inputs=(_VENDOR_FLOW, self._archive, *self._platform_outputs, *sources, *headers), outputs=outputs,
-                    fingerprint={"command": command, "range": self._range}, checks=(_EditableHost(self._host_root),))
+                    fingerprint={"command": command, "range": self._range},
+                    checks=(self._version_current, _EditableHost(self._host_root)))
 
     def export_project(self) -> Step:
         return Step(partial(_export, self._workspace, self._archive, self._repo, self._s.platform_name, self._s.host_name),

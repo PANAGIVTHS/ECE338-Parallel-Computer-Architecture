@@ -9,7 +9,7 @@ import subprocess
 import uuid
 import zipfile
 from collections.abc import Callable
-from functools import cache, partial
+from functools import partial
 from pathlib import Path
 from typing import Annotated, Any, NamedTuple
 
@@ -20,6 +20,7 @@ from gpgpu.api import Action, DesignProject, FreshnessCheck, GpgpuError, Step
 from ..config import Config, Section
 from ..design import (architecture, axi_address, bitstream_path, fabric_clock_mhz, format_parameters, hdl_parameters,
                       identity_path, identity_step, rtl_sources, xsa_path)
+from ..tools import check_version, version_current
 from .ip_project import IpProject, tree_hash
 from .package_check import validate_package
 from .system_project import SystemProject
@@ -146,18 +147,6 @@ def _check_saved_bd(path: Path, part: str) -> None:
         raise RuntimeError(f"Legacy/incomplete saved BD: {path}")
 
 
-@cache  # about a second per call, and every stage's freshness check asks
-def _check_tool(command: str, required: str) -> None:
-    result = subprocess.run([command, "-version"], capture_output=True, text=True, check=True)
-    if re.search(rf"(?<!\d){re.escape(required)}(?!\d)", result.stdout + result.stderr) is None:
-        raise RuntimeError(f"Vivado {required} required: {result.stdout}{result.stderr}")
-
-
-def _tool_current(command: str, required: str) -> bool:
-    _check_tool(command, required)
-    return True
-
-
 def _stage_name(command: list[str]) -> str:
     return Path(command[command.index("-source") + 1]).stem
 
@@ -180,7 +169,7 @@ def _run_vivado(command: list[str], cwd: Path, project: Path) -> None:
 
 
 def _create_ip(command: list[str], repo: Path, directory: Path, name: str, part: str, version: str, inputs: _Inputs) -> None:
-    _check_tool(command[0], version)
+    check_version("Vivado", command[0], "-version", version)
     _prepare_managed(directory, name, part, "ip", recreate=True)
     _write_manifest(Path(command[command.index("-sources-manifest") + 1]), inputs)
     _run_vivado(command, repo, directory)
@@ -247,7 +236,7 @@ def _saved_current(directory: Path, name: str, part: str, bd: Path) -> bool:
 
 def _create_system(command: list[str], repo: Path, directory: Path, name: str, part: str, bd: Path, wrapper: Path,
                    ip_repo: Path, version: str, inputs: _Inputs) -> None:
-    _check_tool(command[0], version)
+    check_version("Vivado", command[0], "-version", version)
     validate_package(ip_repo, *inputs)
     if not (ip_repo / ".gpgpu-package.json").is_file():
         raise RuntimeError("IP repository has no completed managed publication")
@@ -402,7 +391,7 @@ class VivadoFlow:
                command: list[str], fingerprint: dict[str, Any] | None = None, checks: tuple[FreshnessCheck, ...] = ()) -> Step:
         return Step(action, inputs=(*self._shared, TCL / script, *deps), outputs=outputs,
                     fingerprint={"command": command, **(fingerprint or {})},
-                    checks=(partial(_tool_current, self._vivado, self._s.version), *checks))
+                    checks=(partial(version_current, "Vivado", self._vivado, "-version", self._s.version), *checks))
 
     def _create_ip_action(self) -> Action:
         return partial(_create_ip, self._command("create_ip_project.tcl", ip=True), self._repo, self._ip_dir,
