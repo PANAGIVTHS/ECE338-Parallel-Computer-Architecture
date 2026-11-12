@@ -135,18 +135,21 @@ static int display_show(u32 fb) {
     return 0;
 }
 
-/* Run the loaded kernel `frames` times back to back and report the rate. The
- * kernel must need no host writes between runs (e.g. it advances its own
- * frame counter). The time covers START to completion and the driver's
- * checks, not UART traffic.
+/* Run the loaded kernel `frames` times back to back and report the rate, then
+ * the performance counters of all the runs added up (the GPU clears them at
+ * every START, so they are read after each run) and the result of their
+ * consistency checks. The kernel must need no host writes between runs (e.g.
+ * it advances its own frame counter). The time covers each run's START to
+ * completion and the driver's checks, not the counter reads or UART traffic.
  *
  * XTime_GetTime (XilTimer) reads the Cortex-A9 global timer, which counts at
  * half the CPU clock. XilTimer starts that timer on the first sleep call, so
  * one usleep() comes first. */
 static int bench(u32 frames) {
     const u64 counts_per_second = XGet_CpuFreq() / 2U;
+    static gpgpu_perf_t total, run;
     XTime start, end;
-    u64 elapsed, rate_x100;
+    u64 elapsed = 0U, rate_x100;
 
     if (frames == 0U) {
         xil_printf("ERROR: bench needs at least one frame\r\n");
@@ -154,22 +157,28 @@ static int bench(u32 frames) {
     }
 
     usleep(1);
-    XTime_GetTime(&start);
+    memset(&total, 0, sizeof(total));
     for (u32 i = 0; i < frames; i++) {
+        XTime_GetTime(&start);
         if (gpgpu_run_quiet() != GPGPU_OK) {
             xil_printf("ERROR: frame %u failed\r\n", i);
             return -1;
         }
+        XTime_GetTime(&end);
+        elapsed += end - start;
+        if (gpgpu_perf_read(&run) != GPGPU_OK)
+            return -1;
+        gpgpu_perf_add(&total, &run);
     }
-    XTime_GetTime(&end);
 
-    elapsed = end - start;
     /* xil_printf has no floats or 64-bit integers: print fixed point. */
     rate_x100 = ((u64)frames * counts_per_second * 100U) / elapsed;
     xil_printf("%u frames in %u us: %u.%02u frames/s, %u us/frame\r\n", frames,
                (u32)((elapsed * 1000000U) / counts_per_second),
                (u32)(rate_x100 / 100U), (u32)(rate_x100 % 100U),
                (u32)((elapsed * 1000000U) / counts_per_second / frames));
+
+    gpgpu_perf_report(&total, frames);
     return 0;
 }
 
@@ -467,7 +476,8 @@ static void print_help(void) {
     xil_printf("  loaddmem_bin <offset> <count>\r\n");
     xil_printf("  --------- CONTROL ---------\r\n");
     xil_printf("  run\r\n");
-    xil_printf("  bench <frames>   (run the kernel back to back, report frames/s)\r\n");
+    xil_printf("  bench <frames>   (run the kernel back to back, report frames/s and the perf counters)\r\n");
+    xil_printf("  perf   (report the perf counters of the last run)\r\n");
     xil_printf("  clear   (acknowledge STOPPED/FAULTED)\r\n");
     xil_printf("  reset   (PL reset; needed after a fatal fault)\r\n");
     xil_printf("  --------- DISPLAY ---------\r\n");
@@ -663,6 +673,13 @@ int main(void) {
             }
 
             bench(frames);
+
+        } else if (strcmp(cmd, "perf") == 0) {
+            static gpgpu_perf_t last;
+
+            /* The GPU clears the counters at START: these are the last run's. */
+            if (gpgpu_perf_read(&last) == GPGPU_OK)
+                gpgpu_perf_report(&last, 1U);
 
         } else if (strcmp(cmd, "clear") == 0) {
             gpgpu_clear();

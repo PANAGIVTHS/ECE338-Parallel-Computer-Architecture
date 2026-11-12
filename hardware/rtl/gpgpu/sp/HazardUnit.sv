@@ -15,7 +15,10 @@ module HazardUnit
     input instr_type_t i_id_instr_type,
     input logic i_branch_taken,
     output logic o_data_hazard,
-    output logic o_flush
+    output logic o_flush,
+    // Which rule raised o_data_hazard (o_flush is the taken branch)
+    output logic o_load_use,
+    output logic o_mul_hazard
 );
 
     logic mul_pending, mul_dependency;
@@ -33,12 +36,15 @@ module HazardUnit
     always_comb begin
         o_data_hazard = 1'b0;
         o_flush = 1'b0;
+        o_load_use = 1'b0;
+        o_mul_hazard = 1'b0;
 
         //! Standard ALU RAW Hazard
         if (i_ex_is_load && (i_idex_rd != '0)) begin
             if ((i_id_rs1 == i_idex_rd) ||
                 ((i_id_instr_type != INSTR_TYPE_I) && (i_id_rs2 == i_idex_rd))) begin
                 o_data_hazard = 1'b1;
+                o_load_use = 1'b1;
             end
         end else if (i_branch_taken) begin
             o_data_hazard = 1'b1;
@@ -56,6 +62,7 @@ module HazardUnit
             !mul_dependency
         )) begin
             o_data_hazard = 1'b1;
+            o_mul_hazard = 1'b1;
         end
     end
 endmodule

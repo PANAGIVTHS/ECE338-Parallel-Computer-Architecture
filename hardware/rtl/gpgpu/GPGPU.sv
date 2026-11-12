@@ -5,6 +5,8 @@ module GPGPU
     import ControlPkg::*;
     import MemorySubsystemPkg::*;
     import AXI4FullPkg::*;
+    import warp_pkg::*;
+    import PerfPkg::*;
 #(
     parameter int unsigned SP_PER_SM = 32,
     parameter string MEMORY_INIT = "empty.mem",
@@ -98,6 +100,17 @@ module GPGPU
     assign o_core_idle = core_state == CORE_IDLE;
     assign o_core_running = core_state == CORE_RUNNING;
 
+    // Performance counters: the SM's warp leaves and the memory state they need
+    perf_warp_leaf_t warp_leaf [WARPS_PER_SM];
+    logic [SP_PER_SM-1:0] perf_st_waiting, perf_st_admitted;
+    logic perf_wr_slot_free;
+    logic perf_w_pending;
+    logic [$clog2(AXI_MAX_OUTSTANDING_WRITES):0] perf_wr_inflight, perf_wr_owed;
+    logic [$clog2(SP_PER_SM+1)-1:0] perf_wr_lane_stores;
+    logic [$clog2(BRAM_PORTS+1)-1:0] perf_bram_accesses, perf_bram_deferred;
+    logic perf_hit;
+    word_t perf_rdata;
+
     // CSR access description/commit. Register actions go directly to State.
     logic csr_write_fire;
     word_t csr_rdata;
@@ -143,6 +156,7 @@ module GPGPU
         .i_faulted(faulted), .i_complete_pulse(complete_pulse),
         .i_fault(core_fault), .i_fault_lanes(fault_lanes), .i_fault_kinds(fault_kinds),
         .i_fault_pc(fault_pc), .i_fatal(memory_fatal), .i_fatal_code(memory_fatal_code),
+        .i_perf_hit(perf_hit), .i_perf_rdata(perf_rdata),
         .o_start(control_start), .o_stop(control_stop),
         .o_clear_stopped(clear_stopped), .o_clear_faulted(clear_faulted), .o_irq(o_irq)
     );
@@ -174,7 +188,12 @@ module GPGPU
         .o_fault(core_fault),
         .o_fault_lanes(fault_lanes),
         .o_fault_kinds(fault_kinds),
-        .o_fault_pc(fault_pc)
+        .o_fault_pc(fault_pc),
+
+        .i_perf_st_waiting(perf_st_waiting),
+        .i_perf_st_admitted(perf_st_admitted),
+        .i_perf_wr_slot_free(perf_wr_slot_free),
+        .o_perf_leaf(warp_leaf)
     );
 
     //! Instruction memory (BRAM)
@@ -286,7 +305,43 @@ module GPGPU
         .axi_if(axi_if),
         .o_idle(memory_quiet),
         .o_fatal(memory_fatal),
-        .o_fatal_code(memory_fatal_code)
+        .o_fatal_code(memory_fatal_code),
+        .o_perf_st_waiting(perf_st_waiting),
+        .o_perf_st_admitted(perf_st_admitted),
+        .o_perf_wr_slot_free(perf_wr_slot_free),
+        .o_perf_w_pending(perf_w_pending),
+        .o_perf_wr_inflight(perf_wr_inflight),
+        .o_perf_wr_owed(perf_wr_owed),
+        .o_perf_wr_lane_stores(perf_wr_lane_stores),
+        .o_perf_bram_accesses(perf_bram_accesses),
+        .o_perf_bram_deferred(perf_bram_deferred)
+    );
+
+    //! Performance counters
+    PerfCounters #(
+        .NUM_WARPS(WARPS_PER_SM),
+        .SP_PER_SM(SP_PER_SM),
+        .WR_SLOTS(AXI_MAX_OUTSTANDING_WRITES),
+        .BRAM_PORTS(BRAM_PORTS)
+    ) perf (
+        .clk(clk),
+        .rst_n(rst_n),
+        .i_core_state(core_state),
+        .i_warp_leaf(warp_leaf),
+        .i_aw_valid(axi_if.aw_valid),
+        .i_aw_ready(axi_if.aw_ready),
+        .i_w_valid(axi_if.w_valid),
+        .i_w_ready(axi_if.w_ready),
+        .i_w_pending(perf_w_pending),
+        .i_wr_inflight(perf_wr_inflight),
+        .i_wr_owed(perf_wr_owed),
+        .i_wr_ring_full(!perf_wr_slot_free),
+        .i_wr_lane_stores(perf_wr_lane_stores),
+        .i_bram_accesses(perf_bram_accesses),
+        .i_bram_deferred(perf_bram_deferred),
+        .i_addr(i_req_addr),
+        .o_hit(perf_hit),
+        .o_rdata(perf_rdata)
     );
 
 endmodule

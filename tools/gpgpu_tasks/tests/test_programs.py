@@ -292,6 +292,25 @@ def test_platform_header_exports_elaborated_values_in_source_order() -> None:
     assert "#ifndef TEST_H" in header and header.rstrip().endswith("#endif /* TEST_H */")
 
 
+def test_platform_header_exports_arrays_and_enum_names() -> None:
+    exports = exports_of("""
+package Perf;
+    (* host *) typedef enum logic [1:0] { G_A, G_B, G_C } group_t;
+    (* host *) localparam group_t GROUP_OF [3] = '{ G_C, G_A, G_B };
+    (* host *) localparam logic [7:0] BYTES [2] = '{ 8'h12, 8'hAB };
+endpackage
+""", MEMORY_TEXT)
+    header = host_platform.render_header(exports, SETTINGS, "TEST_H")
+    lines = {line.split()[1]: line.split(None, 2)[2] for line in header.splitlines()
+             if line.startswith("#define GPGPU_")}
+    # Members numbered 0 to N-1 also export their names, indexed by value
+    assert lines["GPGPU_GROUP_NAMES"] == '{ "G_A", "G_B", "G_C" }'
+    assert lines["GPGPU_GROUP_OF"] == "{ 2U, 0U, 1U }"
+    assert lines["GPGPU_BYTES"] == "{ 0x12U, 0xABU }"
+    # status_t is numbered 0 and 4: no name table
+    assert "GPGPU_STATUS_NAMES" not in lines
+
+
 def test_platform_header_attribute_prefix_and_guard_follow_configuration() -> None:
     import pyslang
     from pyslang import syntax

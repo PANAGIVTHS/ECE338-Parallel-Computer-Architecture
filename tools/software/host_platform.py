@@ -2,8 +2,10 @@
 
 The RTL decides what the host sees: every package declaration marked with the
 SystemVerilog attribute named by software.host.export_attribute is exported as
-``<software.host.define_prefix><NAME>`` with the value pyslang elaborates for it. A marked parameter exports its value; a marked
-enum typedef exports each of its members. The interface version and the
+``<software.host.define_prefix><NAME>`` with the value pyslang elaborates for it. A marked parameter exports its value
+(an unpacked array parameter as a C initializer list); a marked enum typedef exports each of its members and, when they
+are numbered 0 to N-1, ``<TYPE>_NAMES``: their names as a C initializer list indexed by value (TYPE is the typedef's
+name in capitals without its ``_t``). The interface version and the
 driver's interrupt settings come from the configuration. The base address is
 not here: the Vitis flow defines GPGPU_BASEADDR from
 hardware.vivado.peripheral.base_address. The generated header is committed so
@@ -28,7 +30,7 @@ if TYPE_CHECKING:
 class Export(NamedTuple):
     package: str
     name: str
-    value: int
+    value: int | tuple[int, ...] | tuple[str, ...]  # a tuple: a C initializer list
     hex_digits: int | None  # None: decimal (integer types and enum members)
 
 
@@ -77,14 +79,25 @@ def _integer(symbol: Any, value: Any, attribute: str) -> int:
     return result
 
 
+def _hex_digits(kind: Any) -> int | None:
+    return None if kind.isPredefinedInteger or kind.isEnum else (kind.bitWidth + 3) // 4
+
+
 def _symbol_exports(package: str, symbol: Any, attribute: str) -> list[Export]:
     if symbol.kind == ast.SymbolKind.Parameter:
         kind = symbol.type.canonicalType
-        digits = None if kind.isPredefinedInteger else (kind.bitWidth + 3) // 4
-        return [Export(package, symbol.name, _integer(symbol, symbol.value, attribute), digits)]
+        if kind.isUnpackedArray:
+            values = tuple(_integer(symbol, element, attribute) for element in symbol.value.value)
+            return [Export(package, symbol.name, values, _hex_digits(kind.elementType.canonicalType))]
+        return [Export(package, symbol.name, _integer(symbol, symbol.value, attribute), _hex_digits(kind))]
     if symbol.kind == ast.SymbolKind.TypeAlias and symbol.targetType.type.canonicalType.isEnum:
-        return [Export(package, member.name, _integer(member, member.value, attribute), None)
-                for member in symbol.targetType.type.canonicalType]
+        members = [(member.name, _integer(member, member.value, attribute))
+                   for member in symbol.targetType.type.canonicalType]
+        exports = [Export(package, name, value, None) for name, value in members]
+        if [value for _, value in members] == list(range(len(members))):
+            table = re.sub(r"_t$", "", symbol.name).upper() + "_NAMES"
+            exports.append(Export(package, table, tuple(name for name, _ in members), None))
+        return exports
     raise ValueError(
         f"(* {attribute} *) supports parameters and enum typedefs; "
         f"{package}::{symbol.name} is a {symbol.kind.name}"
@@ -146,6 +159,15 @@ def include_guard(header: Path) -> str:
     return re.sub(r"\W", "_", header.name).upper()
 
 
+def _c_value(value: int | tuple[int, ...] | tuple[str, ...], hex_digits: int | None) -> str:
+    """A C literal for an exported value; a tuple is an initializer list."""
+
+    if isinstance(value, tuple):
+        return "{ " + ", ".join(f'"{item}"' if isinstance(item, str) else _c_value(item, hex_digits)
+                                for item in value) + " }"
+    return f"{value}U" if hex_digits is None else f"0x{value:0{hex_digits}X}U"
+
+
 def render_header(exports: list[Export], settings: dict[str, Any], guard: str) -> str:
     """The C header text for the given exports and host settings."""
 
@@ -170,9 +192,7 @@ def render_header(exports: list[Export], settings: dict[str, Any], guard: str) -
         if export.package != package:
             package = export.package
             lines += ["", f"/* {package} */"]
-        value = (f"{export.value}U" if export.hex_digits is None
-                 else f"0x{export.value:0{export.hex_digits}X}U")
-        define(export.name, value)
+        define(export.name, _c_value(export.value, export.hex_digits))
     lines += ["", "/* Completion wait: PS interrupt or IRQ_STATUS polling (software.host). */"]
     define("USE_IRQ", "1" if settings["use_irq"] else "0")
     define("IRQ_ID", f"{settings['irq_id']}U")

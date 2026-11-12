@@ -12,8 +12,17 @@ module BRAMBackend
     input mem_req_t [NUM_REQ-1:0] req,
     BRAMBackendInterface.responder bram_if [NUM_REQ],
 
-    output logic o_busy
+    output logic o_busy,
+
+    // Performance counters: accesses issued, and picks deferred to a later
+    // cycle (port still holding data, or a write to the other pick's word)
+    output logic [$clog2(BRAM_PORTS+1)-1:0] o_perf_accesses,
+    output logic [$clog2(BRAM_PORTS+1)-1:0] o_perf_deferred
 );
+    // This backend drives the two ports A and B
+    if (BRAM_PORTS != 2) begin : g_ports_check
+        $fatal(1, "BRAMBackend drives two BRAM ports; BRAM_PORTS is %0d", BRAM_PORTS);
+    end
 
     //& =============================================
     //& PORT EXPANSION
@@ -72,6 +81,9 @@ module BRAMBackend
     logic [1:0] win_issue;
     assign win_issue[0] = (available[0] | available[1]) & win_vld[0];
     assign win_issue[1] = (available[0] & available[1]) & win_vld[1] & ~conflict;
+
+    assign o_perf_accesses = $bits(o_perf_accesses)'($countones(win_issue));
+    assign o_perf_deferred = $bits(o_perf_deferred)'($countones(win_vld & ~win_issue));
 
     for (genvar i = 0; i < NUM_REQ; i++) begin : accept_join
         assign bram_if[i].accept = (win_issue[0] ? win_oh[0][i] : '0) | (win_issue[1] ? win_oh[1][i] : '0);
