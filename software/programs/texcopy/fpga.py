@@ -8,7 +8,7 @@
    fb (DDR writes); the HDMI output shows it.
 3. `texcheck <fb>`: the A9 compares the framebuffer with the texture word by
    word. Any difference fails the run.
-4. `perf`: the counters of the run (DDR load stalls show as LD_DDR).
+4. `perf`: the counters of the run (DDR load stalls show as the LD_* leaves).
 
 The addresses and the frame size come from the generated host header
 (software/host/xc7z020/gpgpu_platform.h, task software:host:platform), the

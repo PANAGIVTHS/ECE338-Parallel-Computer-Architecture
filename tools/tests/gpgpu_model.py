@@ -20,7 +20,9 @@ for the whole warp, with the hardware's rules:
   winner is unspecified (spec section 5.6), so different values are rejected.
 * Each DDR store instruction issues one AXI write burst per distinct group
   (DDRBackendPkg::GROUP_BYTES): all lanes present together, so the group
-  former takes every member of a group at once.
+  former takes every member of a group at once. A DDR load instruction issues
+  one AXI read burst per distinct group the same way, from the group's first
+  to its last requested beat (DDRBackendPkg::BEAT_LSB).
 
 Every constant comes from the RTL packages, as read by the
 tests:rtl:constants task ("pkg::NAME=value" lines).
@@ -40,7 +42,7 @@ CONSTANTS = (
     "gpu_pkg::FB0_BASE", "gpu_pkg::FB1_BASE", "gpu_pkg::FB_SIZE",
     "gpu_pkg::TEX_BASE", "gpu_pkg::TEX_SIZE",
     "gpu_pkg::STACK_P_INIT", "gpu_pkg::TXD_REGISTER", "gpu_pkg::REG_COUNT",
-    "DDRBackendPkg::GROUP_BYTES",
+    "DDRBackendPkg::GROUP_BYTES", "DDRBackendPkg::BEAT_LSB",
     "MemorySubsystemPkg::ST_OK", "MemorySubsystemPkg::ST_UNMAPPED",
     "MemorySubsystemPkg::ST_PERMISSION", "MemorySubsystemPkg::ST_MISALIGNED",
 )
@@ -233,6 +235,9 @@ class Result:
     instructions: int  # warp instructions executed, RET included
     ddr_bursts: int
     ddr_lane_stores: int  # lane stores to DDR
+    ddr_lane_loads: int  # lane loads from DDR
+    ddr_read_bursts: int  # AXI read bursts
+    ddr_read_beats: int  # AXI read beats, first to last requested beat of each burst
     dmem_lane_accesses: int  # lane loads and stores to DMEM
     divergent_pcs: list[int] = field(default_factory=list)
 
@@ -266,8 +271,10 @@ class Warp:
     def run(self, max_instructions: int) -> Result:
         imem = self.c["gpu_pkg::IMEM_ENTRIES"]
         group_bytes = self.c["DDRBackendPkg::GROUP_BYTES"]
+        beat_lsb = self.c["DDRBackendPkg::BEAT_LSB"]
         lanes = range(self.num_lanes)
         executed = bursts = ddr_lane_stores = dmem_lane_accesses = 0
+        ddr_lane_loads = read_bursts = read_beats = 0
         divergent: list[int] = []
         fault = None
         while True:
@@ -332,6 +339,14 @@ class Warp:
                     bursts += len({addr // group_bytes for addr in ddr_words})
                     ddr_lane_stores += sum(1 for lane in lanes if decoded[lane][0] == "ddr")
                 else:
+                    read_groups: dict[int, set[int]] = {}
+                    for lane in lanes:
+                        if decoded[lane][0] == "ddr":
+                            group, offset = divmod(addrs[lane], group_bytes)
+                            read_groups.setdefault(group, set()).add(offset >> beat_lsb)
+                    ddr_lane_loads += sum(1 for lane in lanes if decoded[lane][0] == "ddr")
+                    read_bursts += len(read_groups)
+                    read_beats += sum(max(beats) - min(beats) + 1 for beats in read_groups.values())
                     values = [self.memory.read(decoded[lane][0], addrs[lane]) for lane in lanes]
                     for lane in lanes:
                         self._write(lane, inst.rd, values[lane])
@@ -350,6 +365,9 @@ class Warp:
             instructions=executed,
             ddr_bursts=bursts,
             ddr_lane_stores=ddr_lane_stores,
+            ddr_lane_loads=ddr_lane_loads,
+            ddr_read_bursts=read_bursts,
+            ddr_read_beats=read_beats,
             dmem_lane_accesses=dmem_lane_accesses,
             divergent_pcs=divergent,
         )

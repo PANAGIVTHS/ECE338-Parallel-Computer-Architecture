@@ -9,7 +9,7 @@ package PerfPkg;
     typedef logic [PERF_COUNTER_W-1:0] perf_count_t;
 
     //! Global counters, one each for the whole GPU. The run partition (the
-    //! run's cycles), the AW and the W partitions each sum to
+    //! run's cycles), the AW, W, AR and R partitions each sum to
     //! PERF_KERNEL_CYCLES; the rest are events and accumulators.
     (* host *) typedef enum logic [$clog2(ControlPkg::PERF_GLOBAL_SLOTS)-1:0] {
         // Run: every cycle from START to IDLE, and its reset and drain leaves
@@ -34,8 +34,23 @@ package PerfPkg;
         PERF_WR_OWED_SUM,     // + bursts sent on W, B not yet arrived
         PERF_WR_RING_FULL,    // cycles with no free slot
 
+        // DDR AR channel partition
+        PERF_AR_TRANSFER, // valid & ready: also the number of read bursts
+        PERF_AR_BLOCKED,  // valid & ~ready
+        PERF_AR_IDLE,     // ~valid
+
+        // DDR R channel partition
+        PERF_R_TRANSFER,  // valid & ready: one 64-bit beat
+        PERF_R_BLOCKED,   // valid & ~ready
+        PERF_R_WAIT,      // ~valid, a burst's AR accepted and its RLAST not yet arrived
+        PERF_R_IDLE,      // ~valid, no burst owed
+
+        // DDR read ring (occupied slots = RD_OWED_SUM + AR_TRANSFER + AR_BLOCKED)
+        PERF_RD_OWED_SUM,     // + bursts whose AR is accepted, RLAST not yet arrived
+
         // Coalescing
         PERF_WR_LANE_STORES,  // + lane stores admitted to the DDR write path
+        PERF_RD_LANE_LOADS,   // + lane loads admitted to the DDR read path
 
         // BRAM data memory
         PERF_BRAM_ACCESSES,   // + lane accesses issued
@@ -52,7 +67,9 @@ package PerfPkg;
         PERF_WARP_ST_RING_FULL, // store stall: a lane not admitted, no free slot
         PERF_WARP_ST_ADMIT,     // store stall: a lane not admitted, a slot free
         PERF_WARP_ST_DATA,      // store stall: all admitted, data not yet sent
-        PERF_WARP_LD_DDR,       // load stall: a DDR load not yet answered
+        PERF_WARP_LD_RING_FULL, // load stall: a lane not admitted, no free slot
+        PERF_WARP_LD_ADMIT,     // load stall: a lane not admitted, a slot free
+        PERF_WARP_LD_DATA,      // load stall: all admitted, data not yet received
         PERF_WARP_BRAM,         // memory stall on BRAM lanes only
         PERF_WARP_PIPE_FILL,    // not enabled, or decode not yet enabled
         PERF_WARP_BRANCH,       // taken-branch flush
@@ -76,7 +93,9 @@ package PerfPkg;
         PERF_WARP_ST_RING_FULL: PERF_GROUP_MEMORY,
         PERF_WARP_ST_ADMIT:     PERF_GROUP_MEMORY,
         PERF_WARP_ST_DATA:      PERF_GROUP_MEMORY,
-        PERF_WARP_LD_DDR:       PERF_GROUP_MEMORY,
+        PERF_WARP_LD_RING_FULL: PERF_GROUP_MEMORY,
+        PERF_WARP_LD_ADMIT:     PERF_GROUP_MEMORY,
+        PERF_WARP_LD_DATA:      PERF_GROUP_MEMORY,
         PERF_WARP_BRAM:         PERF_GROUP_MEMORY,
         PERF_WARP_PIPE_FILL:    PERF_GROUP_PIPELINE,
         PERF_WARP_BRANCH:       PERF_GROUP_PIPELINE,
@@ -94,11 +113,14 @@ package PerfPkg;
     } perf_kind_t;
 
     //! The groups the host reports the global counters in
-    (* host *) typedef enum logic [2:0] {
+    (* host *) typedef enum logic [3:0] {
         PERF_GLOBAL_GROUP_RUN,
         PERF_GLOBAL_GROUP_AW,
         PERF_GLOBAL_GROUP_W,
         PERF_GLOBAL_GROUP_WRITE_RING,
+        PERF_GLOBAL_GROUP_AR,
+        PERF_GLOBAL_GROUP_R,
+        PERF_GLOBAL_GROUP_READ_RING,
         PERF_GLOBAL_GROUP_COALESCING,
         PERF_GLOBAL_GROUP_BRAM
     } perf_global_group_t;
@@ -118,7 +140,16 @@ package PerfPkg;
         PERF_WR_INFLIGHT_SUM: PERF_GLOBAL_GROUP_WRITE_RING,
         PERF_WR_OWED_SUM:     PERF_GLOBAL_GROUP_WRITE_RING,
         PERF_WR_RING_FULL:    PERF_GLOBAL_GROUP_WRITE_RING,
+        PERF_AR_TRANSFER:     PERF_GLOBAL_GROUP_AR,
+        PERF_AR_BLOCKED:      PERF_GLOBAL_GROUP_AR,
+        PERF_AR_IDLE:         PERF_GLOBAL_GROUP_AR,
+        PERF_R_TRANSFER:      PERF_GLOBAL_GROUP_R,
+        PERF_R_BLOCKED:       PERF_GLOBAL_GROUP_R,
+        PERF_R_WAIT:          PERF_GLOBAL_GROUP_R,
+        PERF_R_IDLE:          PERF_GLOBAL_GROUP_R,
+        PERF_RD_OWED_SUM:     PERF_GLOBAL_GROUP_READ_RING,
         PERF_WR_LANE_STORES:  PERF_GLOBAL_GROUP_COALESCING,
+        PERF_RD_LANE_LOADS:   PERF_GLOBAL_GROUP_COALESCING,
         PERF_BRAM_ACCESSES:   PERF_GLOBAL_GROUP_BRAM,
         PERF_BRAM_BUSY:       PERF_GLOBAL_GROUP_BRAM,
         PERF_BRAM_DEFERRED:   PERF_GLOBAL_GROUP_BRAM
@@ -140,7 +171,16 @@ package PerfPkg;
         PERF_WR_INFLIGHT_SUM: PERF_KIND_ACCUMULATOR,
         PERF_WR_OWED_SUM:     PERF_KIND_ACCUMULATOR,
         PERF_WR_RING_FULL:    PERF_KIND_LEAF,
+        PERF_AR_TRANSFER:     PERF_KIND_LEAF,
+        PERF_AR_BLOCKED:      PERF_KIND_LEAF,
+        PERF_AR_IDLE:         PERF_KIND_LEAF,
+        PERF_R_TRANSFER:      PERF_KIND_LEAF,
+        PERF_R_BLOCKED:       PERF_KIND_LEAF,
+        PERF_R_WAIT:          PERF_KIND_LEAF,
+        PERF_R_IDLE:          PERF_KIND_LEAF,
+        PERF_RD_OWED_SUM:     PERF_KIND_ACCUMULATOR,
         PERF_WR_LANE_STORES:  PERF_KIND_EVENT,
+        PERF_RD_LANE_LOADS:   PERF_KIND_EVENT,
         PERF_BRAM_ACCESSES:   PERF_KIND_EVENT,
         PERF_BRAM_BUSY:       PERF_KIND_LEAF,
         PERF_BRAM_DEFERRED:   PERF_KIND_EVENT

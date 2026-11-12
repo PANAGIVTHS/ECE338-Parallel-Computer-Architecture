@@ -25,6 +25,10 @@ module DDRBackend
     output logic o_perf_w_pending,
     output logic [$clog2(AXI_MAX_OUTSTANDING_WRITES):0] o_perf_wr_inflight,
     output logic [$clog2(AXI_MAX_OUTSTANDING_WRITES):0] o_perf_wr_owed,
+    // and the read ring has a free slot, and bursts whose AR is accepted and
+    // whose RLAST has not arrived
+    output logic o_rd_slot_free,
+    output logic [$clog2(AXI_MAX_OUTSTANDING_READS):0] o_perf_rd_owed,
     output logic o_fatal,
     output mem_fatal_t o_fatal_code
 );
@@ -191,6 +195,7 @@ module DDRBackend
         .rd_cmd       (rd_cmd),
         // Group formation
         .free         (rd_ring_free),
+        .slot_free    (o_rd_slot_free),
         .rd_alloc     (rd_alloc),
         .push_rd      (push_rd),
         .group_address(group_address),
@@ -206,7 +211,9 @@ module DDRBackend
         // Ring state
         .busy         (rd_busy),
         .fatal        (rd_fatal),
-        .fatal_code   (rd_fatal_code)
+        .fatal_code   (rd_fatal_code),
+        // Performance counters
+        .perf_owed    (o_perf_rd_owed)
     );
 
     //& =============================================

@@ -353,6 +353,10 @@
                      name, perf_g(PerfPkg::PERF_WR_INFLIGHT_SUM), perf_g(PerfPkg::PERF_WR_OWED_SUM),
                      perf_g(PerfPkg::PERF_WR_LANE_STORES), perf_g(PerfPkg::PERF_BRAM_ACCESSES),
                      perf_g(PerfPkg::PERF_BRAM_BUSY), perf_g(PerfPkg::PERF_BRAM_DEFERRED));
+            $display("  [PERF] %0s: AR transfer %0d blocked %0d idle %0d; R transfer %0d blocked %0d wait %0d idle %0d; read owed sum %0d, lane loads %0d",
+                     name, perf_g(PerfPkg::PERF_AR_TRANSFER), perf_g(PerfPkg::PERF_AR_BLOCKED), perf_g(PerfPkg::PERF_AR_IDLE),
+                     perf_g(PerfPkg::PERF_R_TRANSFER), perf_g(PerfPkg::PERF_R_BLOCKED), perf_g(PerfPkg::PERF_R_WAIT),
+                     perf_g(PerfPkg::PERF_R_IDLE), perf_g(PerfPkg::PERF_RD_OWED_SUM), perf_g(PerfPkg::PERF_RD_LANE_LOADS));
             if (perf_g(PerfPkg::PERF_AW_TRANSFER) + perf_g(PerfPkg::PERF_AW_BLOCKED) + perf_g(PerfPkg::PERF_AW_IDLE) != kernel) begin
                 $display("  [ERROR] %0s: the AW partition does not sum to KERNEL_CYCLES", name);
                 csr_errors = csr_errors + 1;
@@ -360,6 +364,20 @@
             if (perf_g(PerfPkg::PERF_W_TRANSFER) + perf_g(PerfPkg::PERF_W_BLOCKED) + perf_g(PerfPkg::PERF_W_WAIT_AW)
                     + perf_g(PerfPkg::PERF_W_IDLE) != kernel) begin
                 $display("  [ERROR] %0s: the W partition does not sum to KERNEL_CYCLES", name);
+                csr_errors = csr_errors + 1;
+            end
+            if (perf_g(PerfPkg::PERF_AR_TRANSFER) + perf_g(PerfPkg::PERF_AR_BLOCKED) + perf_g(PerfPkg::PERF_AR_IDLE) != kernel) begin
+                $display("  [ERROR] %0s: the AR partition does not sum to KERNEL_CYCLES", name);
+                csr_errors = csr_errors + 1;
+            end
+            if (perf_g(PerfPkg::PERF_R_TRANSFER) + perf_g(PerfPkg::PERF_R_BLOCKED) + perf_g(PerfPkg::PERF_R_WAIT)
+                    + perf_g(PerfPkg::PERF_R_IDLE) != kernel) begin
+                $display("  [ERROR] %0s: the R partition does not sum to KERNEL_CYCLES", name);
+                csr_errors = csr_errors + 1;
+            end
+            if (perf_g(PerfPkg::PERF_AR_TRANSFER) > perf_g(PerfPkg::PERF_R_TRANSFER)) begin
+                $display("  [ERROR] %0s: AR_TRANSFER %0d exceeds R_TRANSFER %0d", name,
+                         perf_g(PerfPkg::PERF_AR_TRANSFER), perf_g(PerfPkg::PERF_R_TRANSFER));
                 csr_errors = csr_errors + 1;
             end
             if (ring_full_leaves > perf_g(PerfPkg::PERF_WR_RING_FULL)) begin
@@ -511,6 +529,7 @@
         string prog_file, data_file, ddr_seed_file, ddr_file, perf_file;
         string perf_key;
         longint unsigned model_instructions, model_ddr_lane_stores, model_dmem_lane_accesses;
+        longint unsigned model_ddr_lane_loads, model_ddr_read_bursts, model_ddr_read_beats;
 
         `REQUIRE_PLUSARG("TEST_ROOT=%s", test_root)
         `REQUIRE_PLUSARG("TEST_IDX=%d", test_idx)
@@ -682,6 +701,12 @@
                 $fatal(1, "[ERROR] %0s: expected 'ddr_lane_stores <count>' second", perf_file);
             if ($fscanf(fd, "%s %d", perf_key, model_dmem_lane_accesses) != 2 || perf_key != "dmem_lane_accesses")
                 $fatal(1, "[ERROR] %0s: expected 'dmem_lane_accesses <count>' third", perf_file);
+            if ($fscanf(fd, "%s %d", perf_key, model_ddr_lane_loads) != 2 || perf_key != "ddr_lane_loads")
+                $fatal(1, "[ERROR] %0s: expected 'ddr_lane_loads <count>' fourth", perf_file);
+            if ($fscanf(fd, "%s %d", perf_key, model_ddr_read_bursts) != 2 || perf_key != "ddr_read_bursts")
+                $fatal(1, "[ERROR] %0s: expected 'ddr_read_bursts <count>' fifth", perf_file);
+            if ($fscanf(fd, "%s %d", perf_key, model_ddr_read_beats) != 2 || perf_key != "ddr_read_beats")
+                $fatal(1, "[ERROR] %0s: expected 'ddr_read_beats <count>' sixth", perf_file);
             $fclose(fd);
             if (perf_g(PerfPkg::PERF_WR_LANE_STORES) != model_ddr_lane_stores) begin
                 $display("  [ERROR] WR_LANE_STORES: Expected %0d (the model's DDR lane stores), Found %0d",
@@ -691,6 +716,21 @@
             if (perf_g(PerfPkg::PERF_BRAM_ACCESSES) != model_dmem_lane_accesses) begin
                 $display("  [ERROR] BRAM_ACCESSES: Expected %0d (the model's DMEM lane accesses), Found %0d",
                          model_dmem_lane_accesses, perf_g(PerfPkg::PERF_BRAM_ACCESSES));
+                csr_errors = csr_errors + 1;
+            end
+            if (perf_g(PerfPkg::PERF_RD_LANE_LOADS) != model_ddr_lane_loads) begin
+                $display("  [ERROR] RD_LANE_LOADS: Expected %0d (the model's DDR lane loads), Found %0d",
+                         model_ddr_lane_loads, perf_g(PerfPkg::PERF_RD_LANE_LOADS));
+                csr_errors = csr_errors + 1;
+            end
+            if (perf_g(PerfPkg::PERF_AR_TRANSFER) != model_ddr_read_bursts) begin
+                $display("  [ERROR] AR_TRANSFER: Expected %0d (the model's read bursts), Found %0d",
+                         model_ddr_read_bursts, perf_g(PerfPkg::PERF_AR_TRANSFER));
+                csr_errors = csr_errors + 1;
+            end
+            if (perf_g(PerfPkg::PERF_R_TRANSFER) != model_ddr_read_beats) begin
+                $display("  [ERROR] R_TRANSFER: Expected %0d (the model's read beats), Found %0d",
+                         model_ddr_read_beats, perf_g(PerfPkg::PERF_R_TRANSFER));
                 csr_errors = csr_errors + 1;
             end
             // The instruction at RET's target issues before the controller

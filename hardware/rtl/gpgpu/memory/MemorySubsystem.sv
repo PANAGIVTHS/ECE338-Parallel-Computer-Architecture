@@ -20,12 +20,14 @@ module MemorySubsystem
     output mem_fatal_t o_fatal_code,
 
     // Performance counters, per port: a DDR store not yet admitted to the
-    // write path, one admitted and waiting, and a DDR load not yet answered;
-    // and a free write ring slot
+    // write path and one admitted and waiting, the same for a DDR load and
+    // the read path; and a free write and read ring slot
     output logic [NUM_REQ-1:0] o_perf_st_waiting,
     output logic [NUM_REQ-1:0] o_perf_st_admitted,
-    output logic [NUM_REQ-1:0] o_perf_ld_ddr,
+    output logic [NUM_REQ-1:0] o_perf_ld_waiting,
+    output logic [NUM_REQ-1:0] o_perf_ld_admitted,
     output logic o_perf_wr_slot_free,
+    output logic o_perf_rd_slot_free,
     // The write ring (a slot's beats wait for W, slots occupied, bursts sent
     // whose B has not arrived), lane stores admitted to the DDR write path
     // this cycle, and BRAM accesses issued and picks deferred
@@ -33,6 +35,10 @@ module MemorySubsystem
     output logic [$clog2(AXI_MAX_OUTSTANDING_WRITES):0] o_perf_wr_inflight,
     output logic [$clog2(AXI_MAX_OUTSTANDING_WRITES):0] o_perf_wr_owed,
     output logic [$clog2(NUM_REQ+1)-1:0] o_perf_wr_lane_stores,
+    // The read ring (bursts whose AR is accepted, RLAST not arrived) and lane
+    // loads admitted to the DDR read path this cycle
+    output logic [$clog2(AXI_MAX_OUTSTANDING_READS):0] o_perf_rd_owed,
+    output logic [$clog2(NUM_REQ+1)-1:0] o_perf_rd_lane_loads,
     output logic [$clog2(BRAM_PORTS+1)-1:0] o_perf_bram_accesses,
     output logic [$clog2(BRAM_PORTS+1)-1:0] o_perf_bram_deferred
 );
@@ -62,8 +68,9 @@ module MemorySubsystem
     axi_resp_t   ddr_rd_resp;
     ring_index_t ddr_alloc;
     logic bram_busy, ddr_busy;
-    logic [NUM_REQ-1:0] st_admit;
+    logic [NUM_REQ-1:0] st_admit, ld_admit;
     assign o_perf_wr_lane_stores = $bits(o_perf_wr_lane_stores)'($countones(st_admit));
+    assign o_perf_rd_lane_loads = $bits(o_perf_rd_lane_loads)'($countones(ld_admit));
 
     for (genvar i = 0; i < NUM_REQ; i++) begin : gen_reqs
         assign req[i] = memory_if[i].req;
@@ -93,7 +100,9 @@ module MemorySubsystem
             .o_perf_st_waiting(o_perf_st_waiting[i]),
             .o_perf_st_admitted(o_perf_st_admitted[i]),
             .o_perf_st_admit(st_admit[i]),
-            .o_perf_ld_ddr(o_perf_ld_ddr[i])
+            .o_perf_ld_waiting(o_perf_ld_waiting[i]),
+            .o_perf_ld_admitted(o_perf_ld_admitted[i]),
+            .o_perf_ld_admit(ld_admit[i])
         );
     end
 
@@ -126,6 +135,8 @@ module MemorySubsystem
         .o_perf_w_pending(o_perf_w_pending),
         .o_perf_wr_inflight(o_perf_wr_inflight),
         .o_perf_wr_owed(o_perf_wr_owed),
+        .o_rd_slot_free(o_perf_rd_slot_free),
+        .o_perf_rd_owed(o_perf_rd_owed),
         .o_fatal(o_fatal),
         .o_fatal_code(o_fatal_code)
     );

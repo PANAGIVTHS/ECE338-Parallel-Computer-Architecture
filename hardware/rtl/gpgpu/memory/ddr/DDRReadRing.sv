@@ -24,6 +24,7 @@ module DDRReadRing
 
     // For accepting groups
     output logic free, // AR command register free and a slot is free
+    output logic slot_free, // A slot is free (the AR register aside)
     output ring_index_t rd_alloc, // Next free slot
 
     // Formed group
@@ -44,7 +45,11 @@ module DDRReadRing
     // State
     output logic busy,
     output logic fatal,
-    output mem_fatal_t fatal_code
+    output mem_fatal_t fatal_code,
+
+    // Performance counters: bursts whose AR is accepted and whose RLAST has
+    // not arrived (the occupied slots, less the one in the AR register)
+    output logic [$clog2(AXI_MAX_OUTSTANDING_READS):0] perf_owed
 );
 
     localparam int unsigned RD_DEPTH = AXI_MAX_OUTSTANDING_READS;
@@ -178,6 +183,10 @@ module DDRReadRing
     assign rd_alloc = ring_index_t'(alloc_idx);
     assign busy = ~empty;
     assign free = ~full & (~rd_cmd.valid | ar_ready);
+    assign slot_free = ~full;
+    // The AR register holds the newest slot's burst, so at most one occupied
+    // slot is not owed
+    assign perf_owed = (alloc - head) - rd_ptr_t'(rd_cmd.valid);
 
     // Fatal faults
     logic stray_r, wrong_last, cmd_overrun, push_full, left_behind;
