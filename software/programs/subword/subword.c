@@ -5,11 +5,17 @@
 /*
  * Test of the byte and halfword instructions: LB, LBU, LH, LHU, SB, SH.
  *
- * Each lane runs five small tests in DMEM and checks what it reads back.
- * Every failed check sets one bit in errors[tid], so a correct GPU leaves
- * errors[] all zero.
+ * Each lane runs five small tests in DMEM and a sixth in DDR, and checks
+ * what it reads back. Every failed check sets one bit in errors[tid], so a
+ * correct GPU leaves errors[] all zero.
  *
  * GPGPU_ARGS[0] = DMEM byte address of the test area, e.g. 0x100.
+ * GPGPU_ARGS[1] = byte address of CORES + 31 words in GMEM (the GPU's
+ *                 read-write DDR region) for test 6, aligned to a DDR
+ *                 group (128 bytes), or 0 to skip the test.
+ *                 Test 6 checks the sub-word loads against a word load of the
+ *                 same word, so any contents work; bytes and halfwords with
+ *                 their sign bit both set and clear exercise the extension.
  * CORES must be even (test 5 pairs each lane with lane tid ^ 1).
  *
  * Test area, in words from GPGPU_ARGS[0]:
@@ -34,6 +40,11 @@
  *   12  test 5: neighbour's byte lost in the shared word
  *   13  test 5: shared halfword word wrong
  *   14  test 5: neighbour's halfword lost
+ *   15  test 6: DDR LB  differs from the byte of the word
+ *   16  test 6: DDR LBU differs from the byte of the word
+ *   17  test 6: DDR LH  differs from the half of the word
+ *   18  test 6: DDR LHU differs from the half of the word
+ *   19  test 6: DDR LHU wrong where lanes span two bursts
  */
 
 #define BACKGROUND 0xA5A5A5A5u
@@ -51,7 +62,17 @@
 /* Ends one test. Without it GCC computes every test's addresses and expected
  * values up front, runs out of registers and spills more than the 64 bytes of
  * stack each lane has. */
-#define END_OF_TEST() __asm__ volatile("" : "+r"(errors), "+r"(mine), "+r"(tid) : : "memory")
+#define END_OF_TEST() __asm__ volatile("" : "+r"(errors), "+r"(mine), "+r"(tid), "+r"(gmem) : : "memory")
+
+/* Ends one group of test 6's checks, for the same reason as END_OF_TEST. */
+#define END_OF_GROUP() __asm__ volatile("" : "+r"(word6), "+r"(bytes6) : : "memory")
+
+/* The byte or halfword at byte offset `at` of `word`, sign- or zero-extended,
+ * as LB/LBU/LH/LHU must return it. */
+#define BYTE_S(word, at) ((uint32_t)(int32_t)(int8_t)((word) >> (8 * (at))))
+#define BYTE_U(word, at) (((word) >> (8 * (at))) & 0xFFu)
+#define HALF_S(word, at) ((uint32_t)(int32_t)(int16_t)((word) >> (8 * (at))))
+#define HALF_U(word, at) (((word) >> (8 * (at))) & 0xFFFFu)
 
 #ifdef __riscv
 
@@ -60,6 +81,7 @@ void main(void)
     uint32_t tid = gpgpu_thread_id();
     volatile uint32_t *area = (volatile uint32_t *)(uintptr_t)GPGPU_ARGS[0];
     volatile uint32_t *mine = area + CORES + 4 * tid;  /* this lane's 4 words */
+    const volatile uint32_t *gmem = (const volatile uint32_t *)(uintptr_t)GPGPU_ARGS[1];
     uint32_t errors = 0;
 
     /* ---- Test 1: SB writes one byte and leaves the other three alone ----
@@ -161,6 +183,44 @@ void main(void)
 
     END_OF_TEST();
 
+    /* ---- Test 6: sub-word loads from DDR ----
+     * Lane tid loads GMEM word tid whole, then every byte and halfword of
+     * it, so each load is one read burst whose beats serve all lanes. The
+     * last load reads the high half of word tid + 31, 126 bytes on: lane 0
+     * stays in the first 128-byte group and the others move to the next, so
+     * the lanes of one instruction span two bursts. */
+    if (gmem != 0) {
+        const volatile uint8_t *bytes6 = (const volatile uint8_t *)(gmem + tid);
+        uint32_t word6 = gmem[tid];
+
+        CHECK(15, LOAD("lb", bytes6 + 0), BYTE_S(word6, 0));
+        CHECK(15, LOAD("lb", bytes6 + 1), BYTE_S(word6, 1));
+        CHECK(15, LOAD("lb", bytes6 + 2), BYTE_S(word6, 2));
+        CHECK(15, LOAD("lb", bytes6 + 3), BYTE_S(word6, 3));
+
+        END_OF_GROUP();
+
+        CHECK(16, LOAD("lbu", bytes6 + 0), BYTE_U(word6, 0));
+        CHECK(16, LOAD("lbu", bytes6 + 1), BYTE_U(word6, 1));
+        CHECK(16, LOAD("lbu", bytes6 + 2), BYTE_U(word6, 2));
+        CHECK(16, LOAD("lbu", bytes6 + 3), BYTE_U(word6, 3));
+
+        END_OF_GROUP();
+
+        CHECK(17, LOAD("lh", bytes6 + 0), HALF_S(word6, 0));
+        CHECK(17, LOAD("lh", bytes6 + 2), HALF_S(word6, 2));
+
+        CHECK(18, LOAD("lhu", bytes6 + 0), HALF_U(word6, 0));
+        CHECK(18, LOAD("lhu", bytes6 + 2), HALF_U(word6, 2));
+
+        END_OF_TEST();
+
+        uint32_t far = gmem[tid + 31];
+        CHECK(19, LOAD("lhu", (const volatile uint8_t *)(gmem + tid) + 126), HALF_U(far, 2));
+    }
+
+    END_OF_TEST();
+
     area[tid] = errors;
     return;
 }
@@ -171,7 +231,8 @@ GPGPU_START(main)
 
 #include <stdio.h>
 
-/* Prints the words a correct GPU leaves in the test area (offsets in words). */
+/* Prints the words a correct GPU leaves in the test area (offsets in words).
+ * Test 6 only reads GMEM and leaves no words of its own. */
 int main(void)
 {
     printf("errors[0..%d] = 0\n\n", CORES - 1);

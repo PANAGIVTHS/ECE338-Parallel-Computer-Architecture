@@ -28,10 +28,13 @@ module PortController
 
     // Performance counters: a DDR store presented and not yet admitted to
     // the write path, one admitted and waiting for its response, and one
-    // admitted this cycle
+    // admitted this cycle; the same for a DDR load and the read path
     output logic o_perf_st_waiting,
     output logic o_perf_st_admitted,
-    output logic o_perf_st_admit
+    output logic o_perf_st_admit,
+    output logic o_perf_ld_waiting,
+    output logic o_perf_ld_admitted,
+    output logic o_perf_ld_admit
 );
     typedef enum logic [2:0] {
         IDLE,
@@ -57,6 +60,9 @@ module PortController
     assign o_perf_st_waiting = i_req_valid & req.write & (current_state == IDLE) & (decoded.target == TGT_DDR);
     assign o_perf_st_admitted = current_state == DDR_WR;
     assign o_perf_st_admit = ddr_if.accept & req.write;
+    assign o_perf_ld_waiting = i_req_valid & ~req.write & (current_state == IDLE) & (decoded.target == TGT_DDR);
+    assign o_perf_ld_admitted = current_state == DDR_RD;
+    assign o_perf_ld_admit = ddr_if.accept & ~req.write;
 
     // IMM_RSP status, registered on entry (the decode error, or ST_OK for a
     // BRAM store) so the address decode stays off the requester's fault ->

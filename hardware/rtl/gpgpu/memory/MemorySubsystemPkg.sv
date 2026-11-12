@@ -93,12 +93,9 @@ package MemorySubsystemPkg;
                 d.target = TGT_DDR;
             else
                 d.status = ST_PERMISSION;
-        end else if (in_range(addr, TEX_BASE, TEX_SIZE)) begin
-            if (~write)
-                d.target = TGT_DDR;
-            else
-                d.status = ST_PERMISSION;
-        end else
+        end else if (in_range(addr, GMEM_BASE, GMEM_SIZE))
+            d.target = TGT_DDR;
+        else
             d.status = ST_UNMAPPED;
 
         if (d.target == TGT_DDR && !ddr_enable) begin
@@ -135,16 +132,16 @@ package MemorySubsystemPkg;
 
     function automatic bit ddr_map_aligned();
         return group_aligned(FB0_BASE) && group_aligned(FB1_BASE) && group_aligned(FB_SIZE)
-            && group_aligned(TEX_BASE) && group_aligned(TEX_SIZE);
+            && group_aligned(GMEM_BASE) && group_aligned(GMEM_SIZE);
     endfunction
 
     function automatic bit map_disjoint();
         return disjoint(DMEM_BASE, DMEM_SIZE, FB0_BASE, FB_SIZE)
             && disjoint(DMEM_BASE, DMEM_SIZE, FB1_BASE, FB_SIZE)
-            && disjoint(DMEM_BASE, DMEM_SIZE, TEX_BASE, TEX_SIZE)
+            && disjoint(DMEM_BASE, DMEM_SIZE, GMEM_BASE, GMEM_SIZE)
             && disjoint(FB0_BASE, FB_SIZE, FB1_BASE, FB_SIZE)
-            && disjoint(FB0_BASE, FB_SIZE, TEX_BASE, TEX_SIZE)
-            && disjoint(FB1_BASE, FB_SIZE, TEX_BASE, TEX_SIZE);
+            && disjoint(FB0_BASE, FB_SIZE, GMEM_BASE, GMEM_SIZE)
+            && disjoint(FB1_BASE, FB_SIZE, GMEM_BASE, GMEM_SIZE);
     endfunction
 
 endpackage

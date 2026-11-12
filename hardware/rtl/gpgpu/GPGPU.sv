@@ -102,11 +102,12 @@ module GPGPU
 
     // Performance counters: the SM's warp leaves and the memory state they need
     perf_warp_leaf_t warp_leaf [WARPS_PER_SM];
-    logic [SP_PER_SM-1:0] perf_st_waiting, perf_st_admitted;
-    logic perf_wr_slot_free;
+    logic [SP_PER_SM-1:0] perf_st_waiting, perf_st_admitted, perf_ld_waiting, perf_ld_admitted;
+    logic perf_wr_slot_free, perf_rd_slot_free;
     logic perf_w_pending;
     logic [$clog2(AXI_MAX_OUTSTANDING_WRITES):0] perf_wr_inflight, perf_wr_owed;
-    logic [$clog2(SP_PER_SM+1)-1:0] perf_wr_lane_stores;
+    logic [$clog2(SP_PER_SM+1)-1:0] perf_wr_lane_stores, perf_rd_lane_loads;
+    logic [$clog2(AXI_MAX_OUTSTANDING_READS):0] perf_rd_owed;
     logic [$clog2(BRAM_PORTS+1)-1:0] perf_bram_accesses, perf_bram_deferred;
     logic perf_hit;
     word_t perf_rdata;
@@ -192,7 +193,10 @@ module GPGPU
 
         .i_perf_st_waiting(perf_st_waiting),
         .i_perf_st_admitted(perf_st_admitted),
+        .i_perf_ld_waiting(perf_ld_waiting),
+        .i_perf_ld_admitted(perf_ld_admitted),
         .i_perf_wr_slot_free(perf_wr_slot_free),
+        .i_perf_rd_slot_free(perf_rd_slot_free),
         .o_perf_leaf(warp_leaf)
     );
 
@@ -308,11 +312,16 @@ module GPGPU
         .o_fatal_code(memory_fatal_code),
         .o_perf_st_waiting(perf_st_waiting),
         .o_perf_st_admitted(perf_st_admitted),
+        .o_perf_ld_waiting(perf_ld_waiting),
+        .o_perf_ld_admitted(perf_ld_admitted),
         .o_perf_wr_slot_free(perf_wr_slot_free),
+        .o_perf_rd_slot_free(perf_rd_slot_free),
         .o_perf_w_pending(perf_w_pending),
         .o_perf_wr_inflight(perf_wr_inflight),
         .o_perf_wr_owed(perf_wr_owed),
         .o_perf_wr_lane_stores(perf_wr_lane_stores),
+        .o_perf_rd_owed(perf_rd_owed),
+        .o_perf_rd_lane_loads(perf_rd_lane_loads),
         .o_perf_bram_accesses(perf_bram_accesses),
         .o_perf_bram_deferred(perf_bram_deferred)
     );
@@ -322,6 +331,7 @@ module GPGPU
         .NUM_WARPS(WARPS_PER_SM),
         .SP_PER_SM(SP_PER_SM),
         .WR_SLOTS(AXI_MAX_OUTSTANDING_WRITES),
+        .RD_SLOTS(AXI_MAX_OUTSTANDING_READS),
         .BRAM_PORTS(BRAM_PORTS)
     ) perf (
         .clk(clk),
@@ -337,6 +347,12 @@ module GPGPU
         .i_wr_owed(perf_wr_owed),
         .i_wr_ring_full(!perf_wr_slot_free),
         .i_wr_lane_stores(perf_wr_lane_stores),
+        .i_ar_valid(axi_if.ar_valid),
+        .i_ar_ready(axi_if.ar_ready),
+        .i_r_valid(axi_if.r_valid),
+        .i_r_ready(axi_if.r_ready),
+        .i_rd_owed(perf_rd_owed),
+        .i_rd_lane_loads(perf_rd_lane_loads),
         .i_bram_accesses(perf_bram_accesses),
         .i_bram_deferred(perf_bram_deferred),
         .i_addr(i_req_addr),

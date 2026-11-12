@@ -13,6 +13,7 @@ module PerfCounters
     parameter int unsigned NUM_WARPS,
     parameter int unsigned SP_PER_SM,
     parameter int unsigned WR_SLOTS,   // DDR write ring slots
+    parameter int unsigned RD_SLOTS,   // DDR read ring slots
     parameter int unsigned BRAM_PORTS  // BRAM accesses issued per cycle at most
 ) (
     input logic clk,
@@ -37,6 +38,16 @@ module PerfCounters
     input logic i_wr_ring_full,
     input logic [$clog2(SP_PER_SM+1)-1:0] i_wr_lane_stores, // lanes admitted this cycle
 
+    // DDR read channels
+    input logic i_ar_valid,
+    input logic i_ar_ready,
+    input logic i_r_valid,
+    input logic i_r_ready,
+
+    // DDR read ring
+    input logic [$clog2(RD_SLOTS+1)-1:0] i_rd_owed, // bursts whose AR is accepted, RLAST not arrived
+    input logic [$clog2(SP_PER_SM+1)-1:0] i_rd_lane_loads, // lanes admitted this cycle
+
     // BRAM data memory
     input logic [$clog2(BRAM_PORTS+1)-1:0] i_bram_accesses, // accesses issued
     input logic [$clog2(BRAM_PORTS+1)-1:0] i_bram_deferred, // picks deferred
@@ -57,10 +68,11 @@ module PerfCounters
     end
 
     // Widest per-cycle increment of any counter
-    function automatic int unsigned max3(int unsigned x, int unsigned y, int unsigned z);
-        return (x > y) ? ((x > z) ? x : z) : ((y > z) ? y : z);
+    function automatic int unsigned max2(int unsigned x, int unsigned y);
+        return (x > y) ? x : y;
     endfunction
-    localparam int unsigned INC_W = max3($bits(i_wr_inflight), $bits(i_wr_lane_stores), $bits(i_bram_accesses));
+    localparam int unsigned INC_W = max2(max2($bits(i_wr_inflight), $bits(i_rd_owed)),
+                                        max2($bits(i_wr_lane_stores), $bits(i_bram_accesses)));
     typedef logic [INC_W-1:0] inc_t;
 
     //& =============================================
@@ -70,7 +82,9 @@ module PerfCounters
     perf_warp_leaf_t warp_leaf_q [NUM_WARPS];
     logic aw_valid_q, aw_ready_q, w_valid_q, w_ready_q, w_pending_q, wr_ring_full_q;
     logic [$bits(i_wr_inflight)-1:0] wr_inflight_q, wr_owed_q;
-    logic [$bits(i_wr_lane_stores)-1:0] wr_lane_stores_q;
+    logic [$bits(i_wr_lane_stores)-1:0] wr_lane_stores_q, rd_lane_loads_q;
+    logic ar_valid_q, ar_ready_q, r_valid_q, r_ready_q;
+    logic [$bits(i_rd_owed)-1:0] rd_owed_q;
     logic [$bits(i_bram_accesses)-1:0] bram_accesses_q, bram_deferred_q;
     logic in_run_prev;
 
@@ -101,6 +115,12 @@ module PerfCounters
         wr_owed_q <= i_wr_owed;
         wr_ring_full_q <= i_wr_ring_full;
         wr_lane_stores_q <= i_wr_lane_stores;
+        ar_valid_q <= i_ar_valid;
+        ar_ready_q <= i_ar_ready;
+        r_valid_q <= i_r_valid;
+        r_ready_q <= i_r_ready;
+        rd_owed_q <= i_rd_owed;
+        rd_lane_loads_q <= i_rd_lane_loads;
         bram_accesses_q <= i_bram_accesses;
         bram_deferred_q <= i_bram_deferred;
     end
@@ -128,7 +148,19 @@ module PerfCounters
             PERF_WR_OWED_SUM:     return inc_t'(wr_owed_q);
             PERF_WR_RING_FULL:    return inc_t'(wr_ring_full_q);
 
+            PERF_AR_TRANSFER:     return inc_t'(ar_valid_q && ar_ready_q);
+            PERF_AR_BLOCKED:      return inc_t'(ar_valid_q && !ar_ready_q);
+            PERF_AR_IDLE:         return inc_t'(!ar_valid_q);
+
+            PERF_R_TRANSFER:      return inc_t'(r_valid_q && r_ready_q);
+            PERF_R_BLOCKED:       return inc_t'(r_valid_q && !r_ready_q);
+            PERF_R_WAIT:          return inc_t'(!r_valid_q && rd_owed_q != '0);
+            PERF_R_IDLE:          return inc_t'(!r_valid_q && rd_owed_q == '0);
+
+            PERF_RD_OWED_SUM:     return inc_t'(rd_owed_q);
+
             PERF_WR_LANE_STORES:  return inc_t'(wr_lane_stores_q);
+            PERF_RD_LANE_LOADS:   return inc_t'(rd_lane_loads_q);
 
             PERF_BRAM_ACCESSES:   return inc_t'(bram_accesses_q);
             PERF_BRAM_BUSY:       return inc_t'(bram_accesses_q != '0);

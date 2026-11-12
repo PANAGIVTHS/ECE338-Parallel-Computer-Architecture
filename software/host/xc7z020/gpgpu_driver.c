@@ -55,7 +55,7 @@ static gpgpu_text_t status_kind_text(u32 code)
     case GPGPU_ST_UNMAPPED:
         return (gpgpu_text_t){"unmapped", "the address is in no memory region"};
     case GPGPU_ST_PERMISSION:
-        return (gpgpu_text_t){"permission", "the region does not allow this access (e.g. a store to TEX)"};
+        return (gpgpu_text_t){"permission", "the region does not allow this access (e.g. a load from a framebuffer)"};
     case GPGPU_ST_MISALIGNED:
         return (gpgpu_text_t){"misaligned", "the address is not word-aligned"};
     case GPGPU_ST_SLVERR:
@@ -784,7 +784,13 @@ static u32 perf_check(const gpgpu_perf_t *perf)
     failed += perf_rule(g[GPGPU_PERF_W_TRANSFER] + g[GPGPU_PERF_W_BLOCKED] + g[GPGPU_PERF_W_WAIT_AW] +
                         g[GPGPU_PERF_W_IDLE] == kernel,
                         "the W partition sums to KERNEL_CYCLES");
+    failed += perf_rule(g[GPGPU_PERF_AR_TRANSFER] + g[GPGPU_PERF_AR_BLOCKED] + g[GPGPU_PERF_AR_IDLE] == kernel,
+                        "the AR partition sums to KERNEL_CYCLES");
+    failed += perf_rule(g[GPGPU_PERF_R_TRANSFER] + g[GPGPU_PERF_R_BLOCKED] + g[GPGPU_PERF_R_WAIT] +
+                        g[GPGPU_PERF_R_IDLE] == kernel,
+                        "the R partition sums to KERNEL_CYCLES");
     failed += perf_rule(ring_full_leaves <= g[GPGPU_PERF_WR_RING_FULL], "WARP_ST_RING_FULL <= WR_RING_FULL");
+    failed += perf_rule(g[GPGPU_PERF_AR_TRANSFER] <= g[GPGPU_PERF_R_TRANSFER], "AR_TRANSFER <= R_TRANSFER");
     failed += perf_rule(g[GPGPU_PERF_BRAM_BUSY] <= g[GPGPU_PERF_BRAM_ACCESSES] &&
                         g[GPGPU_PERF_BRAM_ACCESSES] <= GPGPU_BRAM_PORTS * g[GPGPU_PERF_BRAM_BUSY],
                         "BRAM_BUSY <= BRAM_ACCESSES <= BRAM_PORTS x BRAM_BUSY");
@@ -815,6 +821,22 @@ static void perf_derived(u32 group, const u64 *g, u32 khz)
         perf_ratio("Average B latency, cycles (WR_OWED_SUM / AW_TRANSFER)", g[GPGPU_PERF_WR_OWED_SUM],
                    g[GPGPU_PERF_AW_TRANSFER]);
         break;
+    case GPGPU_PERF_GLOBAL_GROUP_R:
+        if (kernel != 0U && khz != 0U)
+            xil_printf("        DDR read bandwidth: %s MB/s\r\n",
+                       perf_u64((g[GPGPU_PERF_R_TRANSFER] * beat_bytes * khz) / (kernel * 1000U), digits));
+        perf_ratio("Beats per burst (R_TRANSFER / AR_TRANSFER)", g[GPGPU_PERF_R_TRANSFER], g[GPGPU_PERF_AR_TRANSFER]);
+        break;
+    case GPGPU_PERF_GLOBAL_GROUP_READ_RING:
+        /* One AR command register: every occupied slot is owed or in it */
+        perf_ratio("Average read slots in use ((RD_OWED_SUM + AR_TRANSFER + AR_BLOCKED) / KERNEL_CYCLES)",
+                   g[GPGPU_PERF_RD_OWED_SUM] + g[GPGPU_PERF_AR_TRANSFER] + g[GPGPU_PERF_AR_BLOCKED], kernel);
+        perf_ratio("Average slot lifetime, cycles ((RD_OWED_SUM + AR_TRANSFER + AR_BLOCKED) / AR_TRANSFER)",
+                   g[GPGPU_PERF_RD_OWED_SUM] + g[GPGPU_PERF_AR_TRANSFER] + g[GPGPU_PERF_AR_BLOCKED],
+                   g[GPGPU_PERF_AR_TRANSFER]);
+        perf_ratio("Average read latency, cycles (RD_OWED_SUM / AR_TRANSFER)", g[GPGPU_PERF_RD_OWED_SUM],
+                   g[GPGPU_PERF_AR_TRANSFER]);
+        break;
     case GPGPU_PERF_GLOBAL_GROUP_COALESCING:
         perf_ratio("Lane stores per burst (WR_LANE_STORES / AW_TRANSFER)", g[GPGPU_PERF_WR_LANE_STORES],
                    g[GPGPU_PERF_AW_TRANSFER]);
@@ -824,6 +846,11 @@ static void perf_derived(u32 group, const u64 *g, u32 khz)
             xil_printf("        Unwritten words in W beats (words per beat x W_TRANSFER - WR_LANE_STORES): %s\r\n",
                        perf_u64(beat_words * g[GPGPU_PERF_W_TRANSFER] - g[GPGPU_PERF_WR_LANE_STORES], digits));
         }
+        perf_ratio("Lane loads per burst (RD_LANE_LOADS / AR_TRANSFER)", g[GPGPU_PERF_RD_LANE_LOADS],
+                   g[GPGPU_PERF_AR_TRANSFER]);
+        /* Lanes loading the same word each count, so this can exceed 100% */
+        perf_percent("Useful bytes read (word x RD_LANE_LOADS / beat x R_TRANSFER)",
+                     GPGPU_BYTES_PER_WORD * g[GPGPU_PERF_RD_LANE_LOADS], beat_bytes * g[GPGPU_PERF_R_TRANSFER]);
         break;
     case GPGPU_PERF_GLOBAL_GROUP_BRAM:
         perf_ratio("Ports used per busy cycle (BRAM_ACCESSES / BRAM_BUSY)", g[GPGPU_PERF_BRAM_ACCESSES],
