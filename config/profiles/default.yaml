@@ -253,6 +253,6 @@ tools:
   scp:
     command: scp
     required: false
-  gtkwave:
-    command: gtkwave
+  surfer:
+    command: surfer
     required: false

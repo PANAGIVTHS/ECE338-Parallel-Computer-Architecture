@@ -27,5 +27,7 @@ def tasks(backend: Backends) -> list[Task]:
             Task(f"rtl:{suite}:run", f"Run {description}.", rtl.run_suite(suite),
                  needs=("rtl:generate", f"rtl:{suite}:build")),
             Task(f"rtl:{suite}:all", f"Generate, build and run {description}.", needs=(f"rtl:{suite}:run",)),
+            Task(f"rtl:{suite}:wave", f"In Surfer, open the waveform of the last traced run of {description}.",
+                 rtl.wave(suite)),
         ]
     return result

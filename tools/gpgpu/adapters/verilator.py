@@ -117,8 +117,12 @@ def _compile(command: list[str], cwd: Path, build: Path, make: str, identity: Pa
     _simulate(command, cwd, build / "build.log", env={**os.environ, "MAKE": make})
 
 
-def _run_bench(command: list[str], test_root: Path, log: Path) -> None:
-    """Keep simulator outputs in the build tree; the bench finds cases/ through a link."""
+def _run_bench(command: list[str], test_root: Path, log: Path, dump: Path) -> None:
+    """Keep simulator outputs in the build tree; the bench finds cases/ through a link.
+
+    The previous run's waveform goes first, so a dump that exists is always this run's.
+    """
+    dump.unlink(missing_ok=True)
     selected = {name: int(arg.split("=", 1)[1]) for arg in command for name in ("+TEST_IDX", "+TEST_END") if arg.startswith(f"{name}=")}
     if len(selected) == 2:
         available = {int(case.name.removeprefix("test")) for case in _test_cases(test_root / "cases")}
@@ -137,6 +141,18 @@ def _run_bench(command: list[str], test_root: Path, log: Path) -> None:
     _simulate(command, runtime, log)
 
 
+def _open_waveform(viewer: str, dump: Path) -> None:
+    """Start the viewer in its own session and return: the window does not hold the command or its lock."""
+    if not dump.is_file():
+        raise FileNotFoundError(f"No waveform at {dump}: run the suite with tests.rtl.trace.enabled set to true")
+    try:
+        subprocess.Popen([viewer, str(dump)], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, start_new_session=True)
+    except FileNotFoundError:
+        raise FileNotFoundError(f"Waveform viewer not found: {viewer} (tools.surfer.command)") from None
+    print(f"Opened {dump} in {viewer}", flush=True)
+
+
 class VerilatorFlow:
     def __init__(self, config: Config) -> None:
         self._config = config
@@ -148,6 +164,7 @@ class VerilatorFlow:
         self._build = config.build_root / "tests/rtl"
         self._rtl_constants = self._build / "rtl_constants.txt"
         self._python = config.tool("python")
+        self._viewer = config.tool("surfer")
 
     def identity(self) -> Step:
         return identity_step(self._config)
@@ -203,7 +220,10 @@ class VerilatorFlow:
         command = [str(build / "main"), *(f"+{name}={value}" for name, value in self._suite(suite).plusargs.items()),
                    *([f"+DUMP_FILE={self._s.trace.dump_file}"] if self._s.trace.enabled else []), *self._range]
         log = build / "simulation.log"
-        return Step(partial(_run_bench, command, self._tests, log), outputs=(log,), always_run=True)
+        return Step(partial(_run_bench, command, self._tests, log, build / self._s.trace.dump_file), outputs=(log,), always_run=True)
+
+    def wave(self, suite: str) -> Step:
+        return Step(partial(_open_waveform, self._viewer, self._build / suite / self._s.trace.dump_file), always_run=True)
 
     def random(self) -> Step:
         build = self._build / "random"

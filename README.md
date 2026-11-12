@@ -20,6 +20,7 @@ used. Python dependencies are initialized by `./gpgpu` (using uv when available)
 ./gpgpu rtl smx:all
 ./gpgpu --set tests.rtl.random.iterations=3 --set tests.rtl.random.seed=12345 rtl random
 ./gpgpu --set tests.rtl.trace.enabled=true rtl smx:all
+./gpgpu rtl smx:wave
 ```
 
 `architecture.num_cores` controls both expected-memory generation and the compiled
@@ -57,12 +58,16 @@ suite. Headers next to a bench (`tb_e2e_host.svh`) are found with `-I` and track
 Generated C++, objects, the native `main` binary, `build.log`, and `simulation.log`
 stay under `<paths.build.root>/tests/rtl/smx/`. Runtime uses this directory with
 a `cases` link to the test inputs, so pipeline timing diagram `trace.csv` files
-remain in `tests/hardware/rtl/cases/test*/`. Enabling `tests.rtl.trace.enabled` (all suites)
+remain in `tests/hardware/rtl/cases/test*/`. `tests.rtl.trace.enabled` (all suites, off
+by default, since it slows builds and runs; set it to true to write waveforms)
 adds `tests.rtl.trace.verilator_flags` at compile time and passes
 `+DUMP_FILE=<tests.rtl.trace.dump_file>` at runtime; the dump lands in the suite's
-build directory. The default flags (`--trace-fst --trace-structs`) split packed
-structs into named fields and keep enum state names; open the dump with Surfer or
-GTKWave. `--plain` keeps console output without the monitor.
+build directory, and every run first removes the previous one. The default flags
+(`--trace-fst --trace-structs`) split packed structs into named fields and keep
+enum state names. `rtl:<suite>:wave` opens the dump of the suite's last traced run
+in Surfer (`tools.surfer.command`) and returns at once, so the window does not
+block other commands; it does not run the suite. `--plain` keeps console output
+without the monitor.
 The build cache tracks sources, headers, compiler command/options, make, C++
 compiler, and core count. Random testing reuses the same compiled executable,
 prints reproducible seeds, logs to `<paths.build.root>/tests/rtl/random/random.log`,

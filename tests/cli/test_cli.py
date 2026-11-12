@@ -2,6 +2,7 @@
 import ast
 import json
 import re
+import time
 from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
@@ -10,6 +11,7 @@ import pytest
 
 from gpgpu.adapters.doit_engine import DoitEngine, _StateCheck
 from gpgpu.adapters.tools import Machine, check_version, version_current
+from gpgpu.adapters.verilator import _open_waveform, _run_bench
 from gpgpu.adapters.vivado.flow import timing_summary
 from gpgpu.adapters.vivado.system_project import canonicalize
 from gpgpu.api import GpgpuError, Step, SyncRefused, SyncReport, SyncState, Task, classify
@@ -259,3 +261,35 @@ def test_check_version_needs_the_configured_release(tmp_path):
     for other in ("2025.1", "2025.21", "025.2"):
         with pytest.raises(RuntimeError, match=f"Vitis {other} required"):
             check_version("Vitis", str(tool), "--version", other)
+
+
+def test_wave_opens_the_dump_without_waiting_for_the_viewer(tmp_path):
+    dump, opened = tmp_path / "dumpfile.fst", tmp_path / "opened"
+    with pytest.raises(FileNotFoundError, match="tests.rtl.trace.enabled"):
+        _open_waveform("surfer", dump)
+    dump.write_bytes(b"")
+    with pytest.raises(FileNotFoundError, match="tools.surfer.command"):
+        _open_waveform(str(tmp_path / "missing-viewer"), dump)
+    viewer = tmp_path / "viewer"
+    viewer.write_text(f'#!/bin/sh\necho "$1" > {opened}\nsleep 60\n')  # a window the command must not wait for
+    viewer.chmod(0o755)
+    started = time.monotonic()
+    _open_waveform(str(viewer), dump)
+    assert time.monotonic() - started < 5
+    while not opened.exists() and time.monotonic() - started < 5:
+        time.sleep(0.05)
+    assert opened.read_text().strip() == str(dump)
+
+
+def test_a_run_removes_the_previous_dump(tmp_path):
+    (tmp_path / "cases").mkdir()
+    build = tmp_path / "build"
+    build.mkdir()
+    dump = build / "dumpfile.fst"
+    dump.write_bytes(b"previous run")
+    simulator = tmp_path / "main"
+    simulator.write_text("#!/bin/sh\necho done\n")  # a run without +DUMP_FILE writes no dump
+    simulator.chmod(0o755)
+    _run_bench([str(simulator)], tmp_path, build / "simulation.log", dump)
+    assert not dump.exists()
+    assert (build / "simulation.log").read_text() == "done\n"
