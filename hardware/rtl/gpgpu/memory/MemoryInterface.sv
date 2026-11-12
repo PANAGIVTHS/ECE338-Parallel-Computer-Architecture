@@ -1,9 +1,9 @@
 // Word-addressed memory signal bundle. ren enables reads AND writes;
 // wen selects a write when ren is asserted. BRAM targets register rdata on
 // clk and hold it when disabled; arbiters preserve their existing routing.
-// wstrb selects the bytes of a write, and only a byte_slave target reads it.
-// Arbitration grants remain separate. The interface itself adds no timing
-// logic and does not imply a variable-latency/DDR transaction handshake.
+// wstrb selects the bytes of a write. Arbitration grants remain separate.
+// The interface itself adds no timing logic and does not imply a
+// variable-latency/DDR transaction handshake.
 interface MemoryInterface #(
     parameter int unsigned ADDR_WIDTH = 32,
     parameter int unsigned DATA_WIDTH = 32
@@ -15,7 +15,6 @@ interface MemoryInterface #(
     logic [DATA_WIDTH-1:0] wdata;
     logic [DATA_WIDTH-1:0] rdata;
 
-    modport master (output addr, ren, wen, wdata, input rdata);
-    modport slave  (input addr, ren, wen, wdata, output rdata);
-    modport byte_slave (input addr, ren, wen, wstrb, wdata, output rdata);
+    modport master (output addr, ren, wen, wstrb, wdata, input rdata);
+    modport slave  (input addr, ren, wen, wstrb, wdata, output rdata);
 endinterface

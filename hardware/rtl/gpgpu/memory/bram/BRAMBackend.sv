@@ -90,8 +90,8 @@ module BRAMBackend
         .INIT_FILE(BRAM_INIT)
     ) dataMemory (
         .clk(clk),
-        .memory_a(port_a.byte_slave),
-        .memory_b(port_b.byte_slave)
+        .memory_a(port_a.slave),
+        .memory_b(port_b.slave)
     );
 
     // Port B is used only if 2 winners are selected or portA is not available

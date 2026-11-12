@@ -10,8 +10,8 @@ module MemoryDualPort #(
 )(
     input logic clk,
 
-    MemoryInterface.byte_slave memory_a,
-    MemoryInterface.byte_slave memory_b
+    MemoryInterface.slave memory_a,
+    MemoryInterface.slave memory_b
 );
 
     (* ram_style = "block" *) 
