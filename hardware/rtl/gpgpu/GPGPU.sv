@@ -219,6 +219,7 @@ module GPGPU
     assign host_req_valid = host_dmem_if.ren;
     assign host_req.write = host_dmem_if.wen;
     assign host_req.addr = word_t'(host_dmem_if.addr) << 2; // DMEM base = 0: word index -> byte address
+    assign host_req.size = MEM_SIZE_WORD;
     assign host_req.wdata = host_dmem_if.wdata;
     assign host_req.wstrb = host_dmem_if.wen ? '1 : '0; // host does full-word writes
     assign host_dmem_if.rdata = dmem_if[0].rsp.rdata;

@@ -420,6 +420,26 @@
         return {offset[11:5], 5'(rs2), 5'(rs1), 3'b010, offset[4:0], 7'b0100011};
     endfunction
 
+    function automatic logic [31:0] rv_lh(input int rd, input int rs1, input int imm);
+        return {12'(imm), 5'(rs1), 3'b001, 5'(rd), 7'b0000011};
+    endfunction
+
+    function automatic logic [31:0] rv_lbu(input int rd, input int rs1, input int imm);
+        return {12'(imm), 5'(rs1), 3'b100, 5'(rd), 7'b0000011};
+    endfunction
+
+    function automatic logic [31:0] rv_sb(input int rs2, input int rs1, input int imm);
+        logic [11:0] offset;
+        offset = 12'(imm);
+        return {offset[11:5], 5'(rs2), 5'(rs1), 3'b000, offset[4:0], 7'b0100011};
+    endfunction
+
+    function automatic logic [31:0] rv_sh(input int rs2, input int rs1, input int imm);
+        logic [11:0] offset;
+        offset = 12'(imm);
+        return {offset[11:5], 5'(rs2), 5'(rs1), 3'b001, offset[4:0], 7'b0100011};
+    endfunction
+
     function automatic logic [31:0] rv_slli(input int rd, input int rs1, input int shamt);
         return {7'd0, 5'(shamt), 5'(rs1), 3'b001, 5'(rd), 7'b0010011};
     endfunction

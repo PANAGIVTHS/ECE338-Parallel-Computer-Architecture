@@ -139,11 +139,13 @@ module BRAMBackend
     assign port_a.ren = portA_valid;
     assign port_a.wen = req[portA_idx].write;
     assign port_a.addr = req[portA_idx].addr[DMEM_AW+1:2];
+    assign port_a.wstrb = req[portA_idx].wstrb;
     assign port_a.wdata = req[portA_idx].wdata;
 
     assign port_b.ren = portB_valid;
     assign port_b.wen = req[portB_idx].write;
     assign port_b.addr = req[portB_idx].addr[DMEM_AW+1:2];
+    assign port_b.wstrb = req[portB_idx].wstrb;
     assign port_b.wdata = req[portB_idx].wdata;
 
     //& =============================================
