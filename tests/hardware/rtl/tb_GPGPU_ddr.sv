@@ -217,14 +217,14 @@ module tb_GPGPU_ddr
         expect_bursts("store loop", LOOP_ITERATIONS * groups(LANE_BYTES));
 
         // --------------------------------------------------------
-        // Loads from the texture (the GPU's read-only DDR region): each
+        // Loads from GMEM (the GPU's read-write DDR region): each
         // lane reads a seeded word and stores it plus one to its own word
         // of a framebuffer, so the backdoor checks what it read.
         // x5: source word, x10: destination word, x6: lane * 4.
         // --------------------------------------------------------
         $display("\n[INFO] ---> Consecutive loads");
         ddr_mem.clear();
-        src = TEX_BASE + 'h10000;
+        src = GMEM_BASE + 'h10000;
         dst = FB1_BASE + 'h20000;
         for (int lane = 0; lane < NUM_CORES; lane++)
             ddr_mem.write_word(src + 4 * lane, 32'hA000_0000 | 32'(lane));
@@ -246,7 +246,7 @@ module tb_GPGPU_ddr
 
         $display("\n[INFO] ---> Same word loaded by every lane");
         ddr_mem.clear();
-        src = TEX_BASE + 'h11000;
+        src = GMEM_BASE + 'h11000;
         dst = FB1_BASE + 'h21000;
         ddr_mem.write_word(src, 32'h5EED_0000);
         run_kernel('{
@@ -267,7 +267,7 @@ module tb_GPGPU_ddr
         // More groups than read slots: the ring fills and refills
         $display("\n[INFO] ---> One read group per lane");
         ddr_mem.clear();
-        src = TEX_BASE + 'h12000;
+        src = GMEM_BASE + 'h12000;
         dst = FB1_BASE + 'h22000;
         for (int lane = 0; lane < NUM_CORES; lane++)
             ddr_mem.write_word(src + GROUP_BYTES * lane, 32'hB000_0000 | 32'(lane));
@@ -291,7 +291,7 @@ module tb_GPGPU_ddr
         // Gaps: beats no lane asked for are read and discarded
         $display("\n[INFO] ---> Every other word loaded");
         ddr_mem.clear();
-        src = TEX_BASE + 'h13000;
+        src = GMEM_BASE + 'h13000;
         dst = FB1_BASE + 'h23000;
         for (int lane = 0; lane < NUM_CORES; lane++) begin
             ddr_mem.write_word(src + 8 * lane, 32'hC000_0000 | 32'(lane));
@@ -317,7 +317,7 @@ module tb_GPGPU_ddr
         // Sustained loads and stores: copy LOOP_ITERATIONS rows, plus one
         $display("\n[INFO] ---> Copy loop");
         ddr_mem.clear();
-        src = TEX_BASE + 'h30000;
+        src = GMEM_BASE + 'h30000;
         dst = FB1_BASE + 'h40000;
         for (int row = 0; row < LOOP_ITERATIONS; row++)
             for (int lane = 0; lane < NUM_CORES; lane++)
@@ -387,7 +387,7 @@ module tb_GPGPU_ddr
         // Read errors: the lanes of the failing beat fault at the load
         // --------------------------------------------------------
         ddr_mem.clear();
-        base = TEX_BASE + 'h60000;
+        base = GMEM_BASE + 'h60000;
         ddr_mem.set_error(base, AXI4FullPkg::AXI_RESP_SLVERR);
         // RRESP is per beat: only the lanes whose word is in the failing beat
         lanes = all_lanes() & 32'((64'd1 << (AXI4FullPkg::AXI_DATA_W / 32)) - 1);
@@ -401,7 +401,7 @@ module tb_GPGPU_ddr
         ddr_mem.set_error(base, AXI4FullPkg::AXI_RESP_OKAY);
 
         ddr_mem.clear();
-        base = TEX_BASE + 'h70000;
+        base = GMEM_BASE + 'h70000;
         error_lane = NUM_CORES - 1;
         ddr_mem.set_error(base + GROUP_BYTES * error_lane, AXI4FullPkg::AXI_RESP_DECERR);
         expect_fault("DECERR on one read burst", '{

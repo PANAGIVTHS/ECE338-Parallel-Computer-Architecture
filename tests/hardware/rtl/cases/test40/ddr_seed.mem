@@ -1,4 +1,4 @@
-// TEX words 0..63: bytes 0x80|i, 0x01+i, 0x7F-i, 0xC0+i (low to high), so each
+// GMEM words 0..63: bytes 0x80|i, 0x01+i, 0x7F-i, 0xC0+i (low to high), so each
 // word has a negative and a positive byte in each half, and its high half is negative
 18800000 c07f0180
 18800004 c17e0281

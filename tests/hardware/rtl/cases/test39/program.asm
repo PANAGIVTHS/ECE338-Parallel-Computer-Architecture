@@ -1,6 +1,6 @@
-# Sustained DDR loads: each lane sums its column of 16 texture rows (one
+# Sustained DDR loads: each lane sums its column of 16 GMEM rows (one
 # burst per row), with the add right after each load.
-lui  x5, 0x18801        # TEX_BASE + 0x1000
+lui  x5, 0x18801        # GMEM_BASE + 0x1000
 slli x6, x31, 2
 add  x5, x5, x6
 addi x8, x0, 16         # rows left

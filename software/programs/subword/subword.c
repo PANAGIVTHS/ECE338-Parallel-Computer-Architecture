@@ -10,8 +10,8 @@
  * correct GPU leaves errors[] all zero.
  *
  * GPGPU_ARGS[0] = DMEM byte address of the test area, e.g. 0x100.
- * GPGPU_ARGS[1] = byte address of CORES + 31 words in the texture region
- *                 (DDR, read-only for the GPU) for test 6, aligned to a DDR
+ * GPGPU_ARGS[1] = byte address of CORES + 31 words in GMEM (the GPU's
+ *                 read-write DDR region) for test 6, aligned to a DDR
  *                 group (128 bytes), or 0 to skip the test.
  *                 Test 6 checks the sub-word loads against a word load of the
  *                 same word, so any contents work; bytes and halfwords with
@@ -62,7 +62,7 @@
 /* Ends one test. Without it GCC computes every test's addresses and expected
  * values up front, runs out of registers and spills more than the 64 bytes of
  * stack each lane has. */
-#define END_OF_TEST() __asm__ volatile("" : "+r"(errors), "+r"(mine), "+r"(tid), "+r"(tex) : : "memory")
+#define END_OF_TEST() __asm__ volatile("" : "+r"(errors), "+r"(mine), "+r"(tid), "+r"(gmem) : : "memory")
 
 /* Ends one group of test 6's checks, for the same reason as END_OF_TEST. */
 #define END_OF_GROUP() __asm__ volatile("" : "+r"(word6), "+r"(bytes6) : : "memory")
@@ -81,7 +81,7 @@ void main(void)
     uint32_t tid = gpgpu_thread_id();
     volatile uint32_t *area = (volatile uint32_t *)(uintptr_t)GPGPU_ARGS[0];
     volatile uint32_t *mine = area + CORES + 4 * tid;  /* this lane's 4 words */
-    const volatile uint32_t *tex = (const volatile uint32_t *)(uintptr_t)GPGPU_ARGS[1];
+    const volatile uint32_t *gmem = (const volatile uint32_t *)(uintptr_t)GPGPU_ARGS[1];
     uint32_t errors = 0;
 
     /* ---- Test 1: SB writes one byte and leaves the other three alone ----
@@ -184,14 +184,14 @@ void main(void)
     END_OF_TEST();
 
     /* ---- Test 6: sub-word loads from DDR ----
-     * Lane tid loads texture word tid whole, then every byte and halfword of
+     * Lane tid loads GMEM word tid whole, then every byte and halfword of
      * it, so each load is one read burst whose beats serve all lanes. The
      * last load reads the high half of word tid + 31, 126 bytes on: lane 0
      * stays in the first 128-byte group and the others move to the next, so
      * the lanes of one instruction span two bursts. */
-    if (tex != 0) {
-        const volatile uint8_t *bytes6 = (const volatile uint8_t *)(tex + tid);
-        uint32_t word6 = tex[tid];
+    if (gmem != 0) {
+        const volatile uint8_t *bytes6 = (const volatile uint8_t *)(gmem + tid);
+        uint32_t word6 = gmem[tid];
 
         CHECK(15, LOAD("lb", bytes6 + 0), BYTE_S(word6, 0));
         CHECK(15, LOAD("lb", bytes6 + 1), BYTE_S(word6, 1));
@@ -215,8 +215,8 @@ void main(void)
 
         END_OF_TEST();
 
-        uint32_t far = tex[tid + 31];
-        CHECK(19, LOAD("lhu", (const volatile uint8_t *)(tex + tid) + 126), HALF_U(far, 2));
+        uint32_t far = gmem[tid + 31];
+        CHECK(19, LOAD("lhu", (const volatile uint8_t *)(gmem + tid) + 126), HALF_U(far, 2));
     }
 
     END_OF_TEST();
@@ -232,7 +232,7 @@ GPGPU_START(main)
 #include <stdio.h>
 
 /* Prints the words a correct GPU leaves in the test area (offsets in words).
- * Test 6 only reads the texture and leaves no words of its own. */
+ * Test 6 only reads GMEM and leaves no words of its own. */
 int main(void)
 {
     printf("errors[0..%d] = 0\n\n", CORES - 1);

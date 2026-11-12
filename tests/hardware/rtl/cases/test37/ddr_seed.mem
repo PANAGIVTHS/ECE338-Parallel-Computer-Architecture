@@ -1,4 +1,4 @@
-// TEX words 0..31 and the 16-byte-strided words from TEX + 0x100
+// GMEM words 0..31 and the 16-byte-strided words from GMEM + 0x100
 18800000 33000000
 18800004 33000003
 18800008 33000006

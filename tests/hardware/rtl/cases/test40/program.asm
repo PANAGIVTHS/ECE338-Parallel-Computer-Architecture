@@ -1,4 +1,4 @@
-# DDR sub-word loads from the texture (ddr_seed.mem): every byte and halfword
+# DDR sub-word loads from GMEM (ddr_seed.mem): every byte and halfword
 # of each lane's own word (one burst per load), each lane its own byte and its
 # own halfword of the same few words, a halfword per lane that straddles two
 # groups (two bursts), and consumers of the loaded values. Each lane stores
@@ -7,8 +7,8 @@ lui   x3, 0x1
 slli  x4, x31, 2
 add   x3, x3, x4        # x3: 0x1000 + lane * 4, one array every 128 bytes
 
-lui   x5, 0x18800       # TEX_BASE
-add   x6, x5, x4        # TEX word `lane`: c0+i 7f-i 01+i 80|i (high to low)
+lui   x5, 0x18800       # GMEM_BASE
+add   x6, x5, x4        # GMEM word `lane`: c0+i 7f-i 01+i 80|i (high to low)
 
 lb    x8, 0(x6)         # 0xFFFFFF80 | i
 lb    x9, 1(x6)         # 0x01 + i
@@ -24,11 +24,11 @@ lhu   x18, 0(x6)
 lhu   x19, 2(x6)
 
 add   x20, x5, x31
-lb    x20, 0(x20)       # byte `lane` of TEX: words 0..7, four lanes per word
+lb    x20, 0(x20)       # byte `lane` of GMEM: words 0..7, four lanes per word
 slli  x21, x31, 1
 add   x21, x5, x21
-lh    x21, 0(x21)       # halfword `lane` of TEX: words 0..15, two lanes per word
-lhu   x22, 126(x6)      # lane 0: TEX word 31 (group 0), lanes 1..31: words 32..62 (group 1)
+lh    x21, 0(x21)       # halfword `lane` of GMEM: words 0..15, two lanes per word
+lhu   x22, 126(x6)      # lane 0: GMEM word 31 (group 0), lanes 1..31: words 32..62 (group 1)
 
 lb    x23, 3(x6)
 add   x23, x23, x23     # load-use on a DDR byte load: 2 * (0xFFFFFFC0 + i)

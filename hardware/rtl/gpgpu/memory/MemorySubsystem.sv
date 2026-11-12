@@ -53,7 +53,7 @@ module MemorySubsystem
     end
 
     if (!map_disjoint()) begin : g_map_overlap_check
-        $fatal(1, "Memory map regions (DMEM, FB0, FB1, TEX) must not overlap");
+        $fatal(1, "Memory map regions (DMEM, FB0, FB1, GMEM) must not overlap");
     end
     
     // Request expansions

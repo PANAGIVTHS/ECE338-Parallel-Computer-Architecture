@@ -162,12 +162,6 @@ module tb_GPGPU_e2e
                 ret_instr
             }, 32'(FAULT_MEMORY) | fault_kind(MemorySubsystemPkg::ST_UNMAPPED), all_lanes(), 32'd8);
 
-        expect_fault("byte store to the read-only texture region", '{
-                rv_lui(5, TEX_BASE),
-                rv_sb(0, 5, 1),
-                ret_instr
-            }, 32'(FAULT_MEMORY) | fault_kind(MemorySubsystemPkg::ST_PERMISSION), all_lanes(), 32'd4);
-
         expect_fault("byte load from the write-only framebuffer", '{
                 rv_lui(5, FB0_BASE),
                 rv_lbu(6, 5, 1),
@@ -187,9 +181,9 @@ module tb_GPGPU_e2e
             }, 32'(FAULT_MEMORY) | fault_kind(MemorySubsystemPkg::ST_UNMAPPED)
                             | fault_kind(MemorySubsystemPkg::ST_MISALIGNED), all_lanes(), 32'd12);
 
-        expect_fault("store to the read-only texture region", '{
-                rv_lui(5, TEX_BASE),
-                rv_sw(0, 5, 0),
+        expect_fault("load from the write-only framebuffer", '{
+                rv_lui(5, FB1_BASE),
+                rv_lw(6, 5, 0),
                 ret_instr
             }, 32'(FAULT_MEMORY) | fault_kind(MemorySubsystemPkg::ST_PERMISSION), all_lanes(), 32'd4);
 

@@ -55,7 +55,7 @@ static gpgpu_text_t status_kind_text(u32 code)
     case GPGPU_ST_UNMAPPED:
         return (gpgpu_text_t){"unmapped", "the address is in no memory region"};
     case GPGPU_ST_PERMISSION:
-        return (gpgpu_text_t){"permission", "the region does not allow this access (e.g. a store to TEX)"};
+        return (gpgpu_text_t){"permission", "the region does not allow this access (e.g. a load from a framebuffer)"};
     case GPGPU_ST_MISALIGNED:
         return (gpgpu_text_t){"misaligned", "the address is not word-aligned"};
     case GPGPU_ST_SLVERR:

@@ -1,4 +1,4 @@
-// TEX words 0..31 (only the odd lanes read theirs)
+// GMEM words 0..31 (only the odd lanes read theirs)
 18800000 34340000
 18800004 34340001
 18800008 34340002
