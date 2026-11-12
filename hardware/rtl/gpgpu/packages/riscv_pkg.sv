@@ -9,6 +9,11 @@ package riscv_pkg;
     localparam logic [2:0] FUNCT3_BGEU = 3'b111;
     localparam logic [2:0] FUNCT3_MEM = 3'b010;
     localparam logic [2:0] FUNCT3_DIV = 3'b100;
+    // RV32M multiplies (funct7 = FUNCT7_MULDIV): funct3[2] = 0 selects a multiply
+    localparam logic [2:0] FUNCT3_MUL = 3'b000;    // product[31:0]
+    localparam logic [2:0] FUNCT3_MULH = 3'b001;   // product[63:32], signed x signed
+    localparam logic [2:0] FUNCT3_MULHSU = 3'b010; // product[63:32], signed x unsigned
+    localparam logic [2:0] FUNCT3_MULHU = 3'b011;  // product[63:32], unsigned x unsigned
     localparam logic [2:0] FUNCT3_SLL = 3'b001;
     localparam logic [2:0] FUNCT3_SRA = 3'b101;
     localparam logic [2:0] FUNCT3_XOR = 3'b100;

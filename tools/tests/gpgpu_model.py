@@ -93,6 +93,7 @@ _R_TYPE = {
     (0, 0x00): "add", (0, 0x20): "sub", (0, 0x01): "mul", (1, 0x00): "sll",
     (2, 0x00): "slt", (3, 0x00): "sltu", (4, 0x00): "xor", (5, 0x00): "srl",
     (5, 0x20): "sra", (6, 0x00): "or", (7, 0x00): "and",
+    (1, 0x01): "mulh", (2, 0x01): "mulhsu", (3, 0x01): "mulhu",
 }
 _I_TYPE = {0: "addi", 2: "slti", 3: "sltiu", 4: "xori", 6: "ori", 7: "andi"}
 _BRANCH = {0: "beq", 1: "bne", 4: "blt", 5: "bge", 6: "bltu", 7: "bgeu"}
@@ -147,6 +148,12 @@ def _alu(op: str, a: int, b: int) -> int:
         return (a - b) & WORD_MASK
     if op == "mul":
         return (a * b) & WORD_MASK
+    if op == "mulh":
+        return ((sa * sb) >> 32) & WORD_MASK
+    if op == "mulhsu":
+        return ((sa * b) >> 32) & WORD_MASK
+    if op == "mulhu":
+        return ((a * b) >> 32) & WORD_MASK
     if op in ("and", "andi"):
         return a & b
     if op in ("or", "ori"):

@@ -16,7 +16,7 @@ RANDOM_TEST_INDEX = 999
 # x1 is reserved as a safe memory base pointer (0)
 # x0 is hardwired 0, x31 is Core ID
 AVAILABLE_REGS = [f"x{i}" for i in range(2, 31)]
-OPCODES = ['add', 'sub', 'addi', 'mul', 'lw', 'sw', 'beq', 'and', 'andi', 'or', 'sll', 'slli', 'sra', 'srai', 'srl', 'srli', 'slt', 'slti', 'sltu', 'sltiu',
+OPCODES = ['add', 'sub', 'addi', 'mul', 'mulh', 'mulhsu', 'mulhu', 'lw', 'sw', 'beq', 'and', 'andi', 'or', 'sll', 'slli', 'sra', 'srai', 'srl', 'srli', 'slt', 'slti', 'sltu', 'sltiu',
            'auipc', 'lb', 'lh', 'lbu', 'lhu', 'sb', 'sh']
 
 def generate_random_assembly(filepath):
@@ -62,7 +62,8 @@ def generate_random_assembly(filepath):
                 
             elif sequence_type == 'mul_trap':
                 rd2 = random.choice(AVAILABLE_REGS)
-                asm.append(f"mul {rd}, {rs}, {rs}")
+                mul_op = random.choice(["mul", "mulh", "mulhsu", "mulhu"])
+                asm.append(f"{mul_op} {rd}, {rs}, {rs}")
                 asm.append(f"addi {rd2}, x0, 5")     # Independent instruction sneaks into pipeline
                 asm.append(f"add {rs}, {rd}, {rd2}") # Dependent instruction traps the pipeline
                 instructions_generated += 3
@@ -103,7 +104,7 @@ def generate_random_assembly(filepath):
                 return random.choice([0, 1, -1, 2047, -2048])
             return random.randint(-50, 50)
 
-        if op in ['add', 'sub', 'mul', 'and', 'or', 'sll', 'srl', 'sra', 'slt', 'sltu']:
+        if op in ['add', 'sub', 'mul', 'mulh', 'mulhsu', 'mulhu', 'and', 'or', 'sll', 'srl', 'sra', 'slt', 'sltu']:
             asm.append(f"{op} {rd}, {rs1}, {rs2}")
             last_dest_reg = rd
             

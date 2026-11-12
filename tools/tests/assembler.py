@@ -61,12 +61,15 @@ def assemble_line(inst, pc, labels):
         return 0x00000013
         
     # R-Type
-    if op in ['add', 'sub', 'mul', 'and', 'or', 'xor', 'sll', 'srl', 'sra', 'slt', 'sltu']:
+    if op in ['add', 'sub', 'mul', 'mulh', 'mulhsu', 'mulhu', 'and', 'or', 'xor', 'sll', 'srl', 'sra', 'slt', 'sltu']:
         rd, rs1, rs2 = parse_reg(parts[1]), parse_reg(parts[2]), parse_reg(parts[3])
         opcode = 0x33
         f3, f7 = 0x0, 0x00
         if op == 'sub': f7 = 0x20
         elif op == 'mul': f7 = 0x01
+        elif op == 'mulh': f3 = 0x1; f7 = 0x01
+        elif op == 'mulhsu': f3 = 0x2; f7 = 0x01
+        elif op == 'mulhu': f3 = 0x3; f7 = 0x01
         elif op == 'sll': f3 = 0x1
         elif op == 'slt': f3 = 0x2
         elif op == 'sltu': f3 = 0x3
