@@ -16,7 +16,8 @@ RANDOM_TEST_INDEX = 999
 # x1 is reserved as a safe memory base pointer (0)
 # x0 is hardwired 0, x31 is Core ID
 AVAILABLE_REGS = [f"x{i}" for i in range(2, 31)]
-OPCODES = ['add', 'sub', 'addi', 'mul', 'lw', 'sw', 'beq', 'and', 'andi', 'or', 'sll', 'slli', 'sra', 'srai', 'srl', 'srli', 'slt', 'slti', 'sltu', 'sltiu']
+OPCODES = ['add', 'sub', 'addi', 'mul', 'lw', 'sw', 'beq', 'and', 'andi', 'or', 'sll', 'slli', 'sra', 'srai', 'srl', 'srli', 'slt', 'slti', 'sltu', 'sltiu',
+           'auipc', 'lb', 'lh', 'lbu', 'lhu', 'sb', 'sh']
 
 def generate_random_assembly(filepath):
     """Generates a highly-biased RISC-V assembly program designed to break hardware pipelines."""
@@ -42,7 +43,8 @@ def generate_random_assembly(filepath):
         # STRATEGY 1: INJECT "EVIL SEQUENCES" (20% chance)
         # ---------------------------------------------------------
         if random.random() < 0.20 and instructions_generated < INSTRUCTIONS_PER_TEST - 3:
-            sequence_type = random.choice(['load_use', 'store_load', 'mul_trap', 'back_to_back_mem'])
+            sequence_type = random.choice(['load_use', 'store_load', 'mul_trap', 'back_to_back_mem',
+                                           'subword_load_use', 'subword_store_load'])
             rd = random.choice(AVAILABLE_REGS)
             rs = random.choice(AVAILABLE_REGS)
             mem_offset = random.choice([0, 4, 8, 12])
@@ -68,6 +70,17 @@ def generate_random_assembly(filepath):
             elif sequence_type == 'back_to_back_mem':
                 asm.append(f"lw {rd}, {mem_offset}(x1)")
                 asm.append(f"lw {rs}, {random.choice([0,4,8,12])}(x1)") # The bug you just fixed!
+                instructions_generated += 2
+
+            elif sequence_type == 'subword_load_use':
+                asm.append(f"{random.choice(['lb', 'lbu'])} {rd}, {mem_offset + random.randint(0, 3)}(x1)")
+                asm.append(f"{random.choice(['lh', 'lhu'])} {rs}, {mem_offset + random.choice([0, 2])}(x1)")
+                asm.append(f"add {rs}, {rd}, {rs}") # The extended values must be what gets forwarded
+                instructions_generated += 3
+
+            elif sequence_type == 'subword_store_load':
+                asm.append(f"{random.choice(['sb', 'sh'])} {rs}, {mem_offset + random.choice([0, 2])}(x1)")
+                asm.append(f"lw {rd}, {mem_offset}(x1)") # The whole word: only the stored bytes changed
                 instructions_generated += 2
                 
             last_dest_reg = rs
@@ -109,6 +122,22 @@ def generate_random_assembly(filepath):
             asm.append(f"{op} {rd}, {offset}(x1)")
             if op == 'lw':
                 last_dest_reg = rd
+
+        elif op in ['lb', 'lbu', 'sb']:
+            # Same hot spot, at any byte of its words
+            asm.append(f"{op} {rd}, {random.randint(0, 19)}(x1)")
+            if op != 'sb':
+                last_dest_reg = rd
+
+        elif op in ['lh', 'lhu', 'sh']:
+            # Same hot spot, at any halfword of its words
+            asm.append(f"{op} {rd}, {random.randrange(0, 20, 2)}(x1)")
+            if op != 'sh':
+                last_dest_reg = rd
+
+        elif op == 'auipc':
+            asm.append(f"auipc {rd}, {random.randint(0, 0xFFFFF)}")
+            last_dest_reg = rd
             
         elif op == 'beq':
             target = f"skip_{label_counter}"

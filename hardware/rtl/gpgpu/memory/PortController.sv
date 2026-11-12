@@ -36,7 +36,7 @@ module PortController
 
     port_ctrl_state_t current_state, next_state;
     decode_t decoded;
-    assign decoded = decode_access(req.addr, req.write, DDR_ENABLE);
+    assign decoded = decode_access(req.addr, req.size, req.write, DDR_ENABLE);
 
     // Claim: a presented request in IDLE becomes a candidate while enabled.
     // o_req_ready is high only when it is actually taken (claim = issue).
