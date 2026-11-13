@@ -319,15 +319,5 @@ class GpgpuUartMonitor:
         self.wait_prompt(timeout=10.0)
         return result
 
-    # Names used by existing demo scripts.
-    def load_imem(self, words: Iterable[int | str], offset: int = 0) -> str:
-        return self.load_imem_bin(words, offset=offset)
-
-    def load_dmem(self, words: Iterable[int | str], offset: int = 0) -> str:
-        return self.load_dmem_bin(words, offset=offset)
-
-    def dump_dmem(self, count: int, offset: int = 0) -> dict[int, str]:
-        return self.dump_dmem_bin(count=count, offset=offset)
-
 
 GpgpuUart = GpgpuUartMonitor

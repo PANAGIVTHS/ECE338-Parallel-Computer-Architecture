@@ -13,6 +13,9 @@ package MemorySubsystemPkg;
         ST_DECERR     = 3'd5  // AXI DECERR; store effect undefined
     } mem_status_t;
 
+    // Accesses the BRAM data memory issues per cycle at most: its two ports
+    (* host *) localparam int unsigned BRAM_PORTS = 2;
+
     // One bit per non-OK status code: bit k-1 is ST code k (fault reporting).
     localparam int unsigned MEM_STATUS_KINDS = (1 << $bits(mem_status_t)) - 1;
     typedef logic [MEM_STATUS_KINDS-1:0] mem_status_kinds_t;
@@ -32,9 +35,19 @@ package MemorySubsystemPkg;
         TGT_DDR = 2'd2
     } mem_target_e;
 
+    // Access size, as bits [1:0] of a RISC-V load/store funct3
+    typedef enum logic [1:0] {
+        MEM_SIZE_BYTE = 2'b00,
+        MEM_SIZE_HALF = 2'b01,
+        MEM_SIZE_WORD = 2'b10
+    } mem_size_t;
+
+    // addr is the access's byte address. wdata holds the store on its byte
+    // lanes in the addressed word and wstrb selects those lanes.
     typedef struct packed {
         logic write;
         word_t addr;
+        mem_size_t size;
         word_t wdata;
         strb_t wstrb;
     } mem_req_t;
@@ -53,16 +66,25 @@ package MemorySubsystemPkg;
         return (a >= base) && (a - base < size);
     endfunction
 
+    // Every access must be aligned to its own size.
+    function automatic logic is_misaligned(word_t addr, mem_size_t size);
+        case (size)
+            MEM_SIZE_BYTE: return 1'b0;
+            MEM_SIZE_HALF: return addr[0];
+            default:       return addr[1:0] != 2'b00;
+        endcase
+    endfunction
+
     // ddr_enable = 0: the DDR backend is absent, so an access the map would
     // send to DDR is unmapped. Permission rules still apply first.
-    function automatic decode_t decode_access(word_t addr, logic write, bit ddr_enable);
+    function automatic decode_t decode_access(word_t addr, mem_size_t size, logic write, bit ddr_enable);
         decode_t d;
         d = '{
             target: TGT_ERR,
             status: ST_OK
         };
 
-        if (addr[1:0] != 2'b00)
+        if (is_misaligned(addr, size))
             d.status = ST_MISALIGNED;
         else if (in_range(addr, DMEM_BASE, DMEM_SIZE))
             d.target = TGT_BRAM;
@@ -71,12 +93,9 @@ package MemorySubsystemPkg;
                 d.target = TGT_DDR;
             else
                 d.status = ST_PERMISSION;
-        end else if (in_range(addr, TEX_BASE, TEX_SIZE)) begin
-            if (~write)
-                d.target = TGT_DDR;
-            else
-                d.status = ST_PERMISSION;
-        end else
+        end else if (in_range(addr, GMEM_BASE, GMEM_SIZE))
+            d.target = TGT_DDR;
+        else
             d.status = ST_UNMAPPED;
 
         if (d.target == TGT_DDR && !ddr_enable) begin
@@ -113,16 +132,16 @@ package MemorySubsystemPkg;
 
     function automatic bit ddr_map_aligned();
         return group_aligned(FB0_BASE) && group_aligned(FB1_BASE) && group_aligned(FB_SIZE)
-            && group_aligned(TEX_BASE) && group_aligned(TEX_SIZE);
+            && group_aligned(GMEM_BASE) && group_aligned(GMEM_SIZE);
     endfunction
 
     function automatic bit map_disjoint();
         return disjoint(DMEM_BASE, DMEM_SIZE, FB0_BASE, FB_SIZE)
             && disjoint(DMEM_BASE, DMEM_SIZE, FB1_BASE, FB_SIZE)
-            && disjoint(DMEM_BASE, DMEM_SIZE, TEX_BASE, TEX_SIZE)
+            && disjoint(DMEM_BASE, DMEM_SIZE, GMEM_BASE, GMEM_SIZE)
             && disjoint(FB0_BASE, FB_SIZE, FB1_BASE, FB_SIZE)
-            && disjoint(FB0_BASE, FB_SIZE, TEX_BASE, TEX_SIZE)
-            && disjoint(FB1_BASE, FB_SIZE, TEX_BASE, TEX_SIZE);
+            && disjoint(FB0_BASE, FB_SIZE, GMEM_BASE, GMEM_SIZE)
+            && disjoint(FB1_BASE, FB_SIZE, GMEM_BASE, GMEM_SIZE);
     endfunction
 
 endpackage

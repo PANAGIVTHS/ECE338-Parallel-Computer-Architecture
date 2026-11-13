@@ -98,29 +98,31 @@ def assemble_line(inst, pc, labels):
         return (imm << 20) | (rs1 << 15) | (f3 << 12) | (rd << 7) | opcode
 
     # U-Type
-    elif op == 'lui':
+    elif op in ['lui', 'auipc']:
         rd = parse_reg(parts[1])
         imm = parse_imm(parts[2])
 
-        opcode = 0x37
+        opcode = 0x37 if op == 'lui' else 0x17
 
-        # LUI stores upper 20 bits directly
+        # LUI and AUIPC store upper 20 bits directly
         imm &= 0xFFFFF
 
         return (imm << 12) | (rd << 7) | opcode
 
     # Load
-    elif op == 'lw':
+    elif op in ['lb', 'lh', 'lw', 'lbu', 'lhu']:
         rd = parse_reg(parts[1])
         imm, rs1 = parse_mem_operand(parts[2])
-        opcode, f3 = 0x03, 0x2
+        opcode = 0x03
+        f3 = {'lb': 0x0, 'lh': 0x1, 'lw': 0x2, 'lbu': 0x4, 'lhu': 0x5}[op]
         return ((imm & 0xFFF) << 20) | (rs1 << 15) | (f3 << 12) | (rd << 7) | opcode
 
     # Store
-    elif op == 'sw':
+    elif op in ['sb', 'sh', 'sw']:
         rs2 = parse_reg(parts[1])
         imm, rs1 = parse_mem_operand(parts[2])
-        opcode, f3 = 0x23, 0x2
+        opcode = 0x23
+        f3 = {'sb': 0x0, 'sh': 0x1, 'sw': 0x2}[op]
         imm &= 0xFFF
         return (((imm >> 5) & 0x7F) << 25) | (rs2 << 20) | (rs1 << 15) | (f3 << 12) | ((imm & 0x1F) << 7) | opcode
 

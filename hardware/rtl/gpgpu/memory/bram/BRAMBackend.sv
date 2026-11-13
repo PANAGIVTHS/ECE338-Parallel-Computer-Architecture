@@ -12,8 +12,17 @@ module BRAMBackend
     input mem_req_t [NUM_REQ-1:0] req,
     BRAMBackendInterface.responder bram_if [NUM_REQ],
 
-    output logic o_busy
+    output logic o_busy,
+
+    // Performance counters: accesses issued, and picks deferred to a later
+    // cycle (port still holding data, or a write to the other pick's word)
+    output logic [$clog2(BRAM_PORTS+1)-1:0] o_perf_accesses,
+    output logic [$clog2(BRAM_PORTS+1)-1:0] o_perf_deferred
 );
+    // This backend drives the two ports A and B
+    if (BRAM_PORTS != 2) begin : g_ports_check
+        $fatal(1, "BRAMBackend drives two BRAM ports; BRAM_PORTS is %0d", BRAM_PORTS);
+    end
 
     //& =============================================
     //& PORT EXPANSION
@@ -73,6 +82,9 @@ module BRAMBackend
     assign win_issue[0] = (available[0] | available[1]) & win_vld[0];
     assign win_issue[1] = (available[0] & available[1]) & win_vld[1] & ~conflict;
 
+    assign o_perf_accesses = $bits(o_perf_accesses)'($countones(win_issue));
+    assign o_perf_deferred = $bits(o_perf_deferred)'($countones(win_vld & ~win_issue));
+
     for (genvar i = 0; i < NUM_REQ; i++) begin : accept_join
         assign bram_if[i].accept = (win_issue[0] ? win_oh[0][i] : '0) | (win_issue[1] ? win_oh[1][i] : '0);
     end
@@ -127,11 +139,13 @@ module BRAMBackend
     assign port_a.ren = portA_valid;
     assign port_a.wen = req[portA_idx].write;
     assign port_a.addr = req[portA_idx].addr[DMEM_AW+1:2];
+    assign port_a.wstrb = req[portA_idx].wstrb;
     assign port_a.wdata = req[portA_idx].wdata;
 
     assign port_b.ren = portB_valid;
     assign port_b.wen = req[portB_idx].write;
     assign port_b.addr = req[portB_idx].addr[DMEM_AW+1:2];
+    assign port_b.wstrb = req[portB_idx].wstrb;
     assign port_b.wdata = req[portB_idx].wdata;
 
     //& =============================================

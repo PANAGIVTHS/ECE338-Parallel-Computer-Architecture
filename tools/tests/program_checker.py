@@ -45,9 +45,9 @@ def analyze_multicore_assembly(source_code, num_cores=4):
         'nop', 
         'add', 'sub', 'mul', 'and', 'or', 'xor', 'sll', 'srl', 'sra', 'slt', 'sltu',
         'addi', 'andi', 'ori', 'xori', 'slli', 'srli', 'srai', 'slti', 'sltiu',
-        'lw', 'sw', 
+        'lb', 'lh', 'lw', 'lbu', 'lhu', 'sb', 'sh', 'sw',
         'beq', 'bne', 'blt', 'bge', 'bltu', 'bgeu', 
-        'jal', 'jalr', 'lui', 'ecall'
+        'jal', 'jalr', 'lui', 'auipc', 'ecall'
     }
 
     # 1. Clean code, validate support, and extract labels
@@ -145,14 +145,20 @@ def analyze_multicore_assembly(source_code, num_cores=4):
                 set_reg(cores[c], rd, imm << 12)
             pc += 1
 
-        elif op == 'lw':
+        elif op == 'auipc':
+            rd, imm = parts[1], parse_imm(parts[2])
+            for c in range(num_cores):
+                set_reg(cores[c], rd, (pc * 4) + (imm << 12))
+            pc += 1
+
+        elif op in ['lb', 'lh', 'lw', 'lbu', 'lhu']:
             rd = parts[1]
             imm, rs1 = parse_mem_operand(parts[2])
             for c in range(num_cores):
                 set_reg(cores[c], rd, 0)
             pc += 1
 
-        elif op == 'sw':
+        elif op in ['sb', 'sh', 'sw']:
             rs2 = parts[1]
             imm, rs1 = parse_mem_operand(parts[2])
             

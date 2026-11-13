@@ -1,0 +1,20 @@
+// FB0 + 0x2080: the bytes around test36's byte stores
+18002080 a5a5a5a0
+18002084 a5a5a5a1
+18002088 a5a5a5a2
+1800208c a5a5a5a3
+18002090 a5a5a5a4
+18002094 a5a5a5a5
+18002098 a5a5a5a6
+1800209c a5a5a5a7
+// FB0 + 0x2100: the lower halves around test36's halfword stores
+18002100 c3c3c3c0
+18002104 c3c3c3c1
+18002108 c3c3c3c2
+1800210c c3c3c3c3
+18002110 c3c3c3c4
+18002114 c3c3c3c5
+18002118 c3c3c3c6
+1800211c c3c3c3c7
+// FB0 + 0x2200: the bytes around the store every lane makes
+18002200 96969696

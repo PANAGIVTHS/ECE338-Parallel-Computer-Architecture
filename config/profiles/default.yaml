@@ -1,6 +1,6 @@
 architecture:
   num_cores: 32
-  interface_version: 2
+  interface_version: 3
   # DDR backend of the memory subsystem (reported in INFO_FEATURES). Without
   # it, framebuffer and texture accesses complete as ST_UNMAPPED. The DDR read
   # path is not implemented yet: a texture load never completes.
@@ -20,9 +20,6 @@ hardware:
     upload:
       destination: njason@192.168.1.13
       directory: /home/njason/upload
-  serial:
-    port: /dev/ttyACM0
-    baud: 115200
   # RTL source discovery shared by every consumer (RTL test suites, Vivado IP):
   # all `extensions` files under paths.rtl.sources.gpgpu, minus the consumer's
   # own `exclude_sources` list. An entry is a bare directory/file name matched
@@ -48,6 +45,7 @@ hardware:
       - memory/MemorySubsystemPkg.sv
       - memory/MemorySubsystemInterface.sv
       - control/ControlPkg.sv
+      - control/PerfPkg.sv
   vivado:
     ip_project_name: gpgpu_ip_dev
     project_name: gpgpu_system
@@ -76,7 +74,7 @@ hardware:
     # processor. `memory_init` (repo-relative) is staged before all HDL; its
     # file name must match the RTL's default $readmemh name.
     exclude_sources: [experimental, HostControllerProcessor.sv]
-    memory_init: tools/hardware/vivado/ip/empty.mem
+    memory_init: tools/gpgpu/adapters/vivado/tcl/ip/empty.mem
     # Other IP published beside the packaged GPGPU in the IP repository
     # (<paths.build.root>/hardware/vivado/ip_repo): every directory under
     # `root` except those named in `exclude`, copied as is. The block design
@@ -92,7 +90,7 @@ hardware:
     domain: standalone_ps7_cortexa9_0
     os: standalone
     template: empty_application
-    default_archive: tools/hardware/vitis/default-project.zip
+    default_archive: tools/gpgpu/adapters/vitis/default-project.zip
     host_sources:
       - software/host/xc7z020/gpgpu_driver.c
       - software/host/xc7z020/main.c
@@ -128,6 +126,11 @@ software:
       # platform_header such as GPGPU_FB0_BASE. Unlisted words are 0.
       args: [GPGPU_FB0_BASE, GPGPU_FB_WIDTH, GPGPU_FB_HEIGHT, 0]
       display: 0
+  # Every build of a program, RISC-V kernel and native x86 alike, so both
+  # builds of a program are compiled the same way: -O0, -O1, -O2, -O3, -Os
+  # or -Og.
+  programs:
+    optimization: "-O2"
   riscv:
     march: rv32im
     abi: ilp32
@@ -194,6 +197,7 @@ tests:
           DATA_FILE: data.mem
           DDR_SEED_FILE: ddr_seed.mem # optional per case: loaded into the DDR model
           DDR_FILE: ddr.mem           # per DDR case: expected DDR words and bursts
+          PERF_FILE: perf.mem         # per case: the model's counts for the perf counters
     ddr:
       testbench: tests/hardware/rtl/tb_GPGPU_ddr.sv
       top: tb_GPGPU_ddr
@@ -250,6 +254,6 @@ tools:
   scp:
     command: scp
     required: false
-  gtkwave:
-    command: gtkwave
+  surfer:
+    command: surfer
     required: false

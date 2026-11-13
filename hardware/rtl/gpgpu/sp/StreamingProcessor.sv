@@ -46,6 +46,7 @@ module StreamingProcessor
     word_t ex_imm_i_type, ex_imm_s_type, ex_imm_u_type;
     word_t ex_reg_a, ex_reg_b;
     word_t forwarded_rs2;
+    word_t ex_store_data;
     word_t ex_actual_alu_in_a;
     word_t ex_actual_alu_in_b;
     forward_sel_t forward_alu_a, forward_alu_b;
@@ -72,8 +73,20 @@ module StreamingProcessor
                            (forward_alu_b == MEMWB_EXALU_DEP)  ? wb_wdata : 
                             ex_reg_b;
 
+    //? --- Store Data ---
+    //! Repeat a byte or halfword across the word, so it is on the lanes that
+    //! wstrb selects at any aligned address.
+    always_comb begin
+        case (i_idex.funct3)
+            FUNCT3_SB: ex_store_data = {4{forwarded_rs2[7:0]}};
+            FUNCT3_SH: ex_store_data = {2{forwarded_rs2[15:0]}};
+            default:   ex_store_data = forwarded_rs2;
+        endcase
+    end
+
     //? --- Forwarding Multiplexer A ---
-    assign ex_actual_alu_in_a = (i_idex.opcode == OP_JAL) ? i_idex.program_counter :
+    //! U-type instructions have no rs1: JAL and AUIPC add to the PC, LUI ignores A.
+    assign ex_actual_alu_in_a = (i_idex.instr_type == INSTR_TYPE_U) ? i_idex.program_counter :
                                 (forward_alu_a == EXALU_MEMALU_DEP) ? exmem.alu_out :
                                 (forward_alu_a == MEMWB_EXALU_DEP)  ? wb_wdata :
                                  ex_reg_a;
@@ -186,9 +199,10 @@ module StreamingProcessor
         end else begin
             exmem <= '{
                 alu_out: (ex_is_jalr) ? ex_branch_target_addr : ex_alu_out,
-                reg_b: forwarded_rs2,
+                reg_b: ex_store_data,
                 mul_valid: mul_out.hazard.valid,
                 rd: mul_out.hazard.valid ? mul_out.hazard.rd : i_idex.rd,
+                funct3: i_idex.funct3,
                 opcode: mul_out.hazard.valid ? OP_R_TYPE : i_idex.opcode,
                 wen: mul_out.hazard.valid ? (mul_out.hazard.rd != '0) : (i_idex.wen && i_idex.rd != '0),
                 program_counter: mul_out.hazard.valid ? mul_out.program_counter : i_idex.program_counter,
@@ -202,15 +216,31 @@ module StreamingProcessor
     //! =========================================================================
     logic mem_is_load, mem_is_store;
     word_t temp_memory;
+    logic [1:0] mem_offset;
+    MemorySubsystemPkg::mem_size_t mem_size;
+    strb_t mem_wstrb;
     assign mem_is_load = (exmem.opcode == OP_LW);
     assign mem_is_store = (exmem.opcode == OP_SW);
     assign mem_is_mem = mem_is_load | mem_is_store;
+    assign mem_offset = exmem.alu_out[1:0];
+    assign mem_size = MemorySubsystemPkg::mem_size_t'(exmem.funct3[1:0]);
+
+    //! The bytes a store writes. A misaligned store faults before it writes,
+    //! so a lane lost to the shift does not matter.
+    always_comb begin
+        case (mem_size)
+            MemorySubsystemPkg::MEM_SIZE_BYTE: mem_wstrb = strb_t'(4'b0001 << mem_offset);
+            MemorySubsystemPkg::MEM_SIZE_HALF: mem_wstrb = strb_t'(4'b0011 << mem_offset);
+            default:                           mem_wstrb = '1;
+        endcase
+    end
 
     assign memory_if.req_valid = !mem_response_received && (mem_is_load | mem_is_store);
     assign memory_if.req.addr = exmem.alu_out;
+    assign memory_if.req.size = mem_size;
     assign memory_if.req.write = mem_is_store;
     assign memory_if.req.wdata = exmem.reg_b;
-    assign memory_if.req.wstrb = '1; // Full word write currently
+    assign memory_if.req.wstrb = mem_wstrb;
 
     assign memory_if.rsp_ready = 'b1;
 
@@ -225,6 +255,24 @@ module StreamingProcessor
         end else if (!i_stall) begin
             mem_response_received <= 'b0;
         end
+    end
+
+    //? --- Load Data ---
+    //! Bring the addressed bytes down, then extend. A halfword is at offset 0
+    //! or 2 and a word at offset 0: the rest faults before it gets here.
+    logic [7:0] mem_load_byte0, mem_load_byte1;
+    word_t mem_load_data;
+    assign mem_load_byte0 = temp_memory[{mem_offset, 3'b000} +: 8];
+    assign mem_load_byte1 = mem_offset[1] ? temp_memory[31:24] : temp_memory[15:8];
+
+    always_comb begin
+        case (exmem.funct3)
+            FUNCT3_LB:  mem_load_data = {{24{mem_load_byte0[7]}}, mem_load_byte0};
+            FUNCT3_LBU: mem_load_data = {24'b0, mem_load_byte0};
+            FUNCT3_LH:  mem_load_data = {{16{mem_load_byte1[7]}}, mem_load_byte1, mem_load_byte0};
+            FUNCT3_LHU: mem_load_data = {16'b0, mem_load_byte1, mem_load_byte0};
+            default:    mem_load_data = temp_memory;
+        endcase
     end
 
     //! =========================================================================
@@ -246,7 +294,7 @@ module StreamingProcessor
                 alu_out: exmem.alu_out,
                 wen: exmem.wen,
                 program_counter: exmem.program_counter,
-                rdata: temp_memory,
+                rdata: mem_load_data,
                 exit_requested: exmem.exit_requested
             };
         end

@@ -40,6 +40,7 @@ package pipeline_pkg;
         gpu_pkg::pc_t program_counter;
         riscv_pkg::opcode_t opcode;
         gpu_pkg::reg_addr_t rd;
+        logic [2:0] funct3;
         logic mul_valid;
         logic wen;
         logic exit_requested;

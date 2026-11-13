@@ -1,0 +1,201 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 1290" width="1100" height="1290" role="img" aria-label="The layers of the gpgpu CLI. cli calls app. app collects tasks from plugins. app and plugins depend only on the contract in api. adapters implement the contract and are the only layer that starts tools. bootstrap wires adapters to the contract.">
+  <style>
+    text { font-family: -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "DejaVu Sans", sans-serif; fill: #1f2933; font-size: 14.5px; }
+    .mono { font-family: ui-monospace, "SF Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace; font-size: 13.5px; }
+    .small { font-size: 13px; }
+    .muted { fill: #52606d; }
+    .title { font-size: 26px; font-weight: 700; }
+    .layer { font-family: ui-monospace, "SF Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace; font-size: 18px; font-weight: 700; }
+    .card { font-family: ui-monospace, "SF Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace; font-size: 13.5px; font-weight: 700; }
+    .label { font-family: ui-monospace, "SF Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace; font-size: 12.5px; fill: #323f4b; }
+    .num { font-size: 13px; font-weight: 700; fill: #ffffff; text-anchor: middle; }
+    .box { stroke-width: 1.5; }
+    .arrow { fill: none; stroke: #323f4b; stroke-width: 1.8; marker-end: url(#head); }
+    .implements { fill: none; stroke: #b7791f; stroke-width: 2; stroke-dasharray: 7 5; marker-end: url(#head-amber); }
+    .dot { fill: #2b6cb0; }
+  </style>
+  <defs>
+    <marker id="head" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#323f4b"/></marker>
+    <marker id="head-amber" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#b7791f"/></marker>
+  </defs>
+  <rect width="1100" height="1290" fill="#ffffff"/>
+
+  <text x="30" y="44" class="title">The gpgpu CLI: layers and how they communicate</text>
+  <text x="30" y="70" class="muted">Every layer depends only on the contract in api/, never on what is behind it. Only adapters/ knows a tool.</text>
+
+  <!-- You -->
+  <rect x="250" y="92" width="820" height="54" rx="8" fill="#f5f7fa" stroke="#9aa5b1" class="box"/>
+  <text x="270" y="124" class="mono" style="font-weight:700">./gpgpu vitis build:all</text>
+  <text x="490" y="124" class="muted small">The launcher keeps .venv in sync, then starts the CLI.</text>
+
+  <!-- cli -->
+  <line x1="660" y1="146" x2="660" y2="178" class="arrow"/>
+  <text x="672" y="167" class="label">arguments, Tab</text>
+  <rect x="250" y="178" width="820" height="88" rx="8" fill="#ebf4ff" stroke="#4c8bd0" class="box"/>
+  <text x="270" y="206" class="layer">cli/</text>
+  <text x="330" y="206" class="muted small">knows the terminal</text>
+  <text x="270" y="231">Parses arguments, prints results, turns errors into exit codes.</text>
+  <text x="270" y="252">Builds its commands and tab completion from the plugins, so it names no category.</text>
+
+  <!-- app -->
+  <line x1="450" y1="266" x2="450" y2="316" class="arrow"/>
+  <circle cx="436" cy="290" r="10" class="dot"/><text x="436" y="294.5" class="num">1</text>
+  <text x="462" y="287" class="label">workspace.run(task)</text>
+  <text x="462" y="303" class="label">status() pull() push() open()</text>
+  <rect x="250" y="316" width="400" height="190" rx="8" fill="#eef2ff" stroke="#6875d6" class="box"/>
+  <text x="270" y="344" class="layer">app/</text>
+  <text x="330" y="344" class="muted small">knows the rules</text>
+  <text x="270" y="370" class="mono">workspace.py</text>
+  <text x="380" y="370">every use case</text>
+  <text x="270" y="392" class="mono">registry.py</text>
+  <text x="380" y="392">loads plugins; a broken one only</text>
+  <text x="380" y="411">costs its own commands</text>
+  <text x="270" y="438">A command holds a lock per category, never ignores</text>
+  <text x="270" y="458">edits to a design it builds, and only checks another</text>
+  <text x="270" y="478">category's builds (requires), never starts them.</text>
+
+  <!-- plugins -->
+  <rect x="790" y="316" width="280" height="190" rx="8" fill="#effaf3" stroke="#3f9d68" class="box"/>
+  <text x="810" y="344" class="layer">plugins/</text>
+  <text x="905" y="344" class="muted small">knows the tasks</text>
+  <text x="810" y="372" class="mono">vivado  vitis  rtl</text>
+  <text x="810" y="392" class="mono">software  fpga</text>
+  <text x="810" y="420">One file per category: which</text>
+  <text x="810" y="440">tasks exist, their order, and</text>
+  <text x="810" y="460">what each needs or requires.</text>
+  <text x="810" y="484" class="muted small">Never looks inside a Step.</text>
+
+  <!-- app to plugins -->
+  <path d="M650 396 H790" class="arrow"/>
+  <circle cx="720" cy="396" r="10" class="dot"/><text x="720" y="400.5" class="num">2</text>
+  <text x="720" y="378" class="label" text-anchor="middle">tasks(backend)</text>
+  <path d="M790 436 H650" class="arrow"/>
+  <text x="720" y="456" class="label" text-anchor="middle">list[Task]</text>
+
+  <!-- api -->
+  <rect x="250" y="576" width="820" height="150" rx="8" fill="#fffaf0" stroke="#b7791f" class="box" style="stroke-width:2.5"/>
+  <text x="270" y="604" class="layer">api/</text>
+  <text x="330" y="604" class="muted small">the contract: knows no tool, engine or configuration</text>
+  <rect x="266" y="616" width="300" height="96" rx="6" fill="#ffffff" stroke="#d9b36b"/>
+  <text x="280" y="637" class="card">model.py</text>
+  <text x="358" y="637" class="muted small">the vocabulary</text>
+  <text x="280" y="659" class="mono">Task  Step</text>
+  <text x="280" y="679" class="mono">GpgpuError  SyncReport</text>
+  <text x="280" y="700" class="muted small">A Step: how it runs, when it can be skipped.</text>
+  <rect x="578" y="616" width="476" height="96" rx="6" fill="#ffffff" stroke="#d9b36b"/>
+  <text x="592" y="637" class="card">ports.py</text>
+  <text x="670" y="637" class="muted small">the black boxes, as Protocols</text>
+  <text x="592" y="659" class="muted small">the app needs</text>
+  <text x="692" y="659" class="mono">TaskEngine Environment</text>
+  <text x="692" y="677" class="mono">Settings DesignProject</text>
+  <text x="592" y="699" class="muted small">plugins need</text>
+  <text x="692" y="699" class="mono" style="font-size:12.5px">HardwareFlow PlatformFlow RtlFlow …</text>
+
+  <!-- to api -->
+  <line x1="450" y1="506" x2="450" y2="576" class="arrow"/>
+  <circle cx="436" cy="541" r="10" class="dot"/><text x="436" y="545.5" class="num">4</text>
+  <text x="462" y="536" class="label">environment.exclusive()</text>
+  <text x="462" y="552" class="label">engine.stale() engine.run()</text>
+  <line x1="930" y1="506" x2="930" y2="576" class="arrow"/>
+  <circle cx="916" cy="541" r="10" class="dot"/><text x="916" y="545.5" class="num">3</text>
+  <text x="900" y="536" class="label" text-anchor="end">backend(PlatformFlow)</text>
+  <text x="900" y="552" class="label" text-anchor="end">.build_host() returns a Step</text>
+
+  <!-- adapters implement -->
+  <line x1="660" y1="786" x2="660" y2="726" class="implements"/>
+  <text x="674" y="750" class="label" style="fill:#975a16;font-weight:700">implement the ports</text>
+  <text x="674" y="768" class="label" style="fill:#975a16">a call to a port reaches the adapter behind it</text>
+
+  <!-- adapters -->
+  <rect x="250" y="786" width="820" height="226" rx="8" fill="#f0f4f8" stroke="#627d98" class="box"/>
+  <text x="270" y="814" class="layer">adapters/</text>
+  <text x="378" y="814" class="muted small">the only code that knows tools: how each step runs, and when it is stale</text>
+  <g>
+    <rect x="264" y="826" width="190" height="82" rx="6" fill="#ffffff" stroke="#9fb3c8"/>
+    <text x="276" y="846" class="card">vivado/</text>
+    <text x="276" y="866" class="small muted">HardwareFlow</text>
+    <text x="276" y="886" class="small">Batch Tcl stages; the ip and</text>
+    <text x="276" y="902" class="small">system DesignProjects</text>
+
+    <rect x="464" y="826" width="190" height="82" rx="6" fill="#ffffff" stroke="#9fb3c8"/>
+    <text x="476" y="846" class="card">vitis/</text>
+    <text x="476" y="866" class="small muted">PlatformFlow</text>
+    <text x="476" y="886" class="small">Runs inside Vitis's</text>
+    <text x="476" y="902" class="small">own Python</text>
+
+    <rect x="664" y="826" width="190" height="82" rx="6" fill="#ffffff" stroke="#9fb3c8"/>
+    <text x="676" y="846" class="card">verilator.py</text>
+    <text x="676" y="866" class="small muted">RtlFlow</text>
+    <text x="676" y="886" class="small">Benches, expected results,</text>
+    <text x="676" y="902" class="small">random programs</text>
+
+    <rect x="864" y="826" width="190" height="82" rx="6" fill="#ffffff" stroke="#9fb3c8"/>
+    <text x="876" y="846" class="card">gcc.py</text>
+    <text x="876" y="866" class="small muted">Toolchain</text>
+    <text x="876" y="886" class="small">Program builds and the</text>
+    <text x="876" y="902" class="small">host driver's headers</text>
+
+    <rect x="264" y="918" width="190" height="82" rx="6" fill="#ffffff" stroke="#9fb3c8"/>
+    <text x="276" y="938" class="card">board/</text>
+    <text x="276" y="958" class="small muted">Board</text>
+    <text x="276" y="978" class="small">Upload and program over</text>
+    <text x="276" y="994" class="small">SSH; the UART driver</text>
+
+    <rect x="464" y="918" width="190" height="82" rx="6" fill="#ffffff" stroke="#9fb3c8"/>
+    <text x="476" y="938" class="card">doit_engine.py</text>
+    <text x="476" y="958" class="small muted">TaskEngine</text>
+    <text x="476" y="978" class="small">Skips what is fresh; run</text>
+    <text x="476" y="994" class="small">logs and the live monitor</text>
+
+    <rect x="664" y="918" width="190" height="82" rx="6" fill="#ffffff" stroke="#9fb3c8"/>
+    <text x="676" y="938" class="card">config.py</text>
+    <text x="676" y="958" class="small muted">Settings</text>
+    <text x="676" y="978" class="small">YAML layers and --set,</text>
+    <text x="676" y="994" class="small">validated with pydantic</text>
+
+    <rect x="864" y="918" width="190" height="82" rx="6" fill="#ffffff" stroke="#9fb3c8"/>
+    <text x="876" y="938" class="card">tools.py</text>
+    <text x="876" y="958" class="small muted">Environment</text>
+    <text x="876" y="978" class="small">Tool checks and the lock</text>
+    <text x="876" y="994" class="small">per category</text>
+  </g>
+
+  <!-- outside world -->
+  <line x1="450" y1="1012" x2="450" y2="1054" class="arrow"/>
+  <circle cx="436" cy="1033" r="10" class="dot"/><text x="436" y="1037.5" class="num">5</text>
+  <text x="462" y="1038" class="label">starts programs; reads and writes files</text>
+  <rect x="250" y="1054" width="820" height="46" rx="8" fill="#e4e7eb" stroke="#9aa5b1" class="box"/>
+  <text x="660" y="1082" text-anchor="middle" class="small" style="font-weight:600">Vivado  ·  Vitis  ·  Verilator  ·  GCC  ·  SSH and SCP to the board  ·  pydoit  ·  git  ·  YAML</text>
+
+  <!-- bootstrap -->
+  <path d="M250 222 H105 V316" class="arrow"/>
+  <text x="178" y="212" class="label" text-anchor="middle">open_workspace()</text>
+  <rect x="30" y="316" width="150" height="190" rx="8" fill="#faf5ff" stroke="#9f7aea" class="box"/>
+  <text x="44" y="344" class="card" style="font-size:14.5px">bootstrap.py</text>
+  <text x="44" y="372" class="small">The one module that</text>
+  <text x="44" y="390" class="small">knows which adapter</text>
+  <text x="44" y="408" class="small">implements which</text>
+  <text x="44" y="426" class="small">port.</text>
+  <text x="44" y="456" class="small muted">To swap a tool, write</text>
+  <text x="44" y="474" class="small muted">a new adapter and</text>
+  <text x="44" y="492" class="small muted">change one line here.</text>
+  <path d="M180 414 H250" class="arrow"/>
+  <text x="215" y="404" class="label" text-anchor="middle">builds</text>
+  <path d="M105 506 V900 H250" class="arrow"/>
+  <text x="117" y="870" class="label">picks an adapter</text>
+  <text x="117" y="888" class="label">for each port</text>
+
+  <!-- walkthrough -->
+  <rect x="30" y="1122" width="1040" height="154" rx="8" fill="#f5f7fa" stroke="#cbd2d9"/>
+  <text x="46" y="1146" style="font-weight:700">What happens on <tspan class="mono" style="font-weight:700">gpgpu vitis build:all</tspan></text>
+  <circle cx="56" cy="1165" r="9" class="dot"/><text x="56" y="1169.5" class="num" style="font-size:12px">1</text>
+  <text x="74" y="1170" class="small">The CLI asks the Workspace to run it.</text>
+  <circle cx="56" cy="1189" r="9" class="dot"/><text x="56" y="1193.5" class="num" style="font-size:12px">2</text>
+  <text x="74" y="1194" class="small">The Registry asks each plugin for its tasks.</text>
+  <circle cx="56" cy="1213" r="9" class="dot"/><text x="56" y="1217.5" class="num" style="font-size:12px">3</text>
+  <text x="74" y="1218" class="small">A plugin asks a port for each step, and gets back a Step it never looks inside.</text>
+  <circle cx="56" cy="1237" r="9" class="dot"/><text x="56" y="1241.5" class="num" style="font-size:12px">4</text>
+  <text x="74" y="1242" class="small">The Workspace takes the lock and checks requires: no hardware platform means stop and name <tspan class="mono" style="font-size:12.5px">gpgpu vivado system:build</tspan>.</text>
+  <circle cx="56" cy="1261" r="9" class="dot"/><text x="56" y="1265.5" class="num" style="font-size:12px">5</text>
+  <text x="74" y="1266" class="small">Otherwise the engine gets this run's tasks only, skips the fresh ones and runs the rest: a step's action starts Vitis.</text>
+</svg>

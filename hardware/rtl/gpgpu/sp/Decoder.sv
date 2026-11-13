@@ -103,6 +103,10 @@ module Decoder
                 o_decoded.alu_op = ALU_OP_LUI;
                 o_decoded.instr_type = INSTR_TYPE_U;
             end
+            OP_AUIPC: begin
+                o_decoded.alu_op = ALU_OP_ADD;
+                o_decoded.instr_type = INSTR_TYPE_U;
+            end
             OP_INVALID: begin
                 o_decoded.alu_op = ALU_OP_INVALID;
                 o_decoded.instr_type = INSTR_TYPE_R;
