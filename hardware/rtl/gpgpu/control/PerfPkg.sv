@@ -71,7 +71,7 @@ package PerfPkg;
         PERF_WARP_LD_ADMIT,     // load stall: a lane not admitted, a slot free
         PERF_WARP_LD_DATA,      // load stall: all admitted, data not yet received
         PERF_WARP_BRAM,         // memory stall on BRAM lanes only
-        PERF_WARP_PIPE_FILL,    // not enabled, or decode not yet enabled
+        PERF_WARP_PIPE_FILL,    // not enabled, decode not yet enabled, or draining after the exit ECALL
         PERF_WARP_BRANCH,       // taken-branch flush
         PERF_WARP_LOAD_USE,     // load-use bubble
         PERF_WARP_MUL,          // multiplier hazard

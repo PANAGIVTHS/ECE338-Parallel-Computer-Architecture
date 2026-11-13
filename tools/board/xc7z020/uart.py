@@ -19,7 +19,6 @@ try:
 except ImportError:
     serial = None  # Parsing helpers work without pyserial installed.
 
-RET_INSTR = "00008067"
 DEPTH = 2048
 PROMPT = "gpgpu>"
 WORD_BYTES = struct.calcsize("<I")
