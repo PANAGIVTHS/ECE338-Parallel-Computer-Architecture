@@ -1,4 +1,4 @@
-# Nested JAL/RET, ordinary a7 arithmetic, unsupported and mixed ECALL.
+# Nested JAL/RET, ordinary a7 arithmetic and an unsupported ECALL.
 # Subroutines deliberately follow the exit and must remain in the image.
 addi x20, x0, 0
 addi x17, x0, 41
@@ -8,8 +8,6 @@ addi x20, x20, 4     # Both ordinary returns must reach this continuation.
 addi x17, x0, 7
 ecall               # Unsupported service: continue, do not exit.
 addi x20, x20, 8
-addi x17, x31, 0
-ecall               # Mixed selectors (lane 0 = 0, others nonzero): no-op.
 addi x20, x20, 16
 sw   x20, 0(x0)     # Expected 31 = 1 + 2 + 4 + 8 + 16.
 sw   x18, 4(x0)     # Expected 42.

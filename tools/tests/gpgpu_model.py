@@ -272,7 +272,7 @@ class Warp:
         fault = None
         while True:
             if executed >= max_instructions:
-                raise ModelError(f"no RET within {max_instructions} instructions (PC {self.pc * 4:#x})")
+                raise ModelError(f"no halt ECALL within {max_instructions} instructions (PC {self.pc * 4:#x})")
             word = self.program[self.pc] if self.pc < len(self.program) else 0
             try:
                 inst = decode(word)
@@ -284,8 +284,12 @@ class Warp:
             op = inst.op
 
             if op == "ecall":
-                # Every lane must request service 0; other values are no-ops.
-                if all(self.regs[lane][17] == 0 for lane in lanes):
+                # Like a branch, lane 0 decides: service 0 (a7 = 0) halts the
+                # warp, other services are no-ops. The runtime only halts where
+                # the warp is converged, so disagreeing lanes are divergence.
+                if any(self.regs[lane][17] != self.regs[0][17] for lane in lanes):
+                    divergent.append(pc_bytes)
+                if self.regs[0][17] == 0:
                     break
             elif op in _BRANCH.values():
                 taken = [_branch_taken(op, self.regs[lane][inst.rs1], self.regs[lane][inst.rs2])

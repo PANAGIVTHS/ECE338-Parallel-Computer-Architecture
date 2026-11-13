@@ -88,7 +88,7 @@ def generate_case(test_dir, num_cores, constants, max_instructions):
             f"the kernel faults at PC {result.fault.pc:#x} (lanes {result.fault.lanes:#x}, "
             f"status {sorted(result.fault.statuses)}); test cases must complete cleanly")
     for pc in result.divergent_pcs:
-        print(f"  [WARNING] lanes disagree on the branch at PC {pc:#x}; "
+        print(f"  [WARNING] lanes disagree on the branch or ECALL at PC {pc:#x}; "
               f"the hardware follows lane 0 and so does the model")
 
     for stale in test_dir.glob('regfile_c*.mem'):

@@ -217,7 +217,13 @@ def analyze_multicore_assembly(source_code, num_cores=4):
             pc = targets[0] // 4
 
         elif op == 'ecall':
-            if all(get_reg(core, 'x17') == 0 for core in cores):
+            # The hardware follows lane 0, so the selector must agree like a branch.
+            selectors = [get_reg(core, 'x17') for core in cores]
+            if len(set(selectors)) != 1:
+                print(f"[FAIL] DIVERGENCE DETECTED at PC {pc}: '{inst_str}'")
+                print(f"       ECALL selectors (a7) across cores: {selectors}")
+                return False
+            if selectors[0] == 0:
                 break
             pc += 1
 
