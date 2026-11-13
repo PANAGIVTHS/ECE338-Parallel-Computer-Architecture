@@ -8,23 +8,13 @@ GUI export/application-settings input, not a hardware bootstrap prerequisite.
 ## Dependency graph and configuration
 
 ```text
-vitis:project -> vitis:build:platform -> vitis:build:host -> vitis:build:all
+vitis project -> build:platform -> build:host -> build:all
 ```
 
-The Vitis tasks never run Vivado. They consume the XSA that
-`vivado:system:build` has already published, so the complete flow is two
-invocations:
-
-```bash
-./gpgpu run vivado:system:build
-./gpgpu run vitis:build:all
-```
-
-Without a published XSA, `vitis:project` and `vitis:build:platform` stop with
-an error before any Vitis call. The XSA is tracked by content (SHA-256), not as
-a `file_dep`: a `file_dep` on a Vivado target would make pydoit infer the
-Vivado dependency again. A newly published XSA rebuilds every Vitis stage; RTL
-changes that have not been built into a new XSA do not.
+These commands use the XSA from `./gpgpu vivado system:build` and never start
+Vivado. If it is missing they stop and say so; if the hardware is out of date they
+warn, and build on the XSA that exists. `build:host` also regenerates the driver's
+headers, which takes well under a second.
 `hardware.vivado.xsa_name` derives the same validated XSA filename for both
 producers and consumers; changing it does not silently select a cached default.
 Defaults: SDK 2025.2, `ps7_cortexa9_0`, standalone domain
@@ -33,14 +23,17 @@ Configured host sources are `software/host/xc7z020/gpgpu_driver.c` and `main.c`,
 with adjacent headers as real build dependencies.
 
 Provide the licensed SDK environment or set `tools.vitis.command` in ignored
-`config/local.yaml`. No SDK is downloaded by this flow. Use a new build root to
-avoid pre-existing reference projects:
+`config/local.yaml`. No SDK is downloaded by this flow. Every task that runs
+Vitis first checks that `vitis --version` reports `hardware.vitis.version`, and
+stops if it does not, as the Vivado stages do. Use a new build root to avoid
+pre-existing reference projects:
 
 ```bash
-./gpgpu --set paths.build.root=build-axi-2025-2 run vitis:project
-./gpgpu --set paths.build.root=build-axi-2025-2 run vitis:build:platform
-./gpgpu --set paths.build.root=build-axi-2025-2 run vitis:build:host
-./gpgpu --set paths.build.root=build-axi-2025-2 run vitis:build:all --plain
+./gpgpu --set paths.build.root=build-axi-2025-2 vivado system:build
+./gpgpu --set paths.build.root=build-axi-2025-2 vitis project
+./gpgpu --set paths.build.root=build-axi-2025-2 vitis build:platform
+./gpgpu --set paths.build.root=build-axi-2025-2 vitis build:host
+./gpgpu --set paths.build.root=build-axi-2025-2 vitis build:all --plain
 ```
 
 ## What each stage owns
@@ -57,8 +50,8 @@ avoid pre-existing reference projects:
   paths to the configured driver/main/headers. The configured AXI base is passed
   as `GPGPU_BASEADDR`, overriding the driver's fallback consistently with BD.
   No driver/UART/application protocol is redesigned and IRQ operation stays on.
-- **build:all:** the aggregate depends on the host, thus the full hardware and
-  platform-before-host graph.
+- **build:all:** the aggregate depends on the host, thus the platform-before-host
+  graph.
 
 Existing app-owned files/settings are preserved across hardware regeneration;
 previous generated components are backed up. Normal builds do not rewrite
@@ -91,7 +84,7 @@ missing-output failures propagate to the CLI.
 Save/close the GUI before explicit synchronization:
 
 ```bash
-./gpgpu --set paths.build.root=build-axi-2025-2 run vitis:export
+./gpgpu --set paths.build.root=build-axi-2025-2 vitis export
 ```
 
 Export remains outside the build graph. It atomically replaces the portable
@@ -100,6 +93,4 @@ Review that intentional source change before committing. Builds consume only
 portable application settings from the archive; stale platform/BSP/SDT is never
 used as a substitute for regeneration from the new XSA.
 
-SDK API recorders/fake-vendor tests demonstrate orchestration and freshness,
-**not a real 2025.2 platform or ELF build**. Real SDK validation is required.
 See [Vivado flow](vivado-cli.md) for packaging/system safety and reference state.
