@@ -34,6 +34,17 @@ module StreamingMultiprocessor
     // Memory stall signal
     logic stall;
 
+    //! Halt: once the exit ECALL leaves EX nothing younger may issue, so the
+    //! stages behind it fill with bubbles while the older ones retire.
+    logic exit_now, exiting, issue_enabled;
+    assign exit_now = sp_feedback[0].exit_in_ex && !stall;
+    assign issue_enabled = !exiting && !exit_now;
+
+    always_ff @(posedge clk) begin
+        if (!rst_n) exiting <= 1'b0;
+        else if (exit_now) exiting <= 1'b1;
+    end
+
     //! =========================================================================
     //! STAGE 1: INSTRUCTION FETCH
     //! =========================================================================
@@ -41,10 +52,10 @@ module StreamingMultiprocessor
     imem_idx_t instr_idx;
 
     GUCounter #(.BITS(IMEM_AW)) 
-        programCounter (.clk(clk), .i_set_reset({rst_n, ex_branch_taken}), .i_count_enable(!data_hazard && !stall), .i_count_set(ex_beq_target_idx + 1'b1), .o_count_cur(instr_idx));
+        programCounter (.clk(clk), .i_set_reset({rst_n, ex_branch_taken}), .i_count_enable(issue_enabled && !data_hazard && !stall), .i_count_set(ex_beq_target_idx + 1'b1), .o_count_cur(instr_idx));
 
     assign program_counter = {instr_idx, 2'b00};
-    assign o_imem_ren = ((!data_hazard && !stall) | flush);
+    assign o_imem_ren = issue_enabled && ((!data_hazard && !stall) | flush);
     assign o_imem_addr = flush ? ex_beq_target_idx : instr_idx; // TODO Change when flush happens for multiple reasons
 
     //* =========================================================================
@@ -58,7 +69,7 @@ module StreamingMultiprocessor
             // Retain state during memory stall
         end else if (flush) begin 
             ifid_program_counter <= {ex_beq_target_idx, 2'b00};
-        end else if (!data_hazard) begin
+        end else if (issue_enabled && !data_hazard) begin
             ifid_program_counter <= program_counter;
         end
     end
@@ -95,7 +106,7 @@ module StreamingMultiprocessor
             idex.program_counter <= INITIAL_PC;
         end else if (stall) begin
             // Retain state during memory stall
-        end else if (!decode_enabled || data_hazard) begin
+        end else if (!issue_enabled || !decode_enabled || data_hazard) begin
             idex <= '0;
             idex.program_counter <= ifid_program_counter;
             idex.alu_op <= ALU_OP_INVALID;

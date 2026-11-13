@@ -61,6 +61,7 @@ package pipeline_pkg;
         logic branch_taken;
         gpu_pkg::imem_idx_t branch_target_idx;
         gpu_pkg::pc_t mem_program_counter;
+        logic exit_in_ex;
         logic exit_requested;
     } sp_feedback_t;
 

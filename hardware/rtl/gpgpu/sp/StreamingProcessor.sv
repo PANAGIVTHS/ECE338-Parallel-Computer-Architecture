@@ -138,6 +138,8 @@ module StreamingProcessor
         end
     end
 
+    assign o_feedback.exit_in_ex = i_idex.is_ecall && (ex_actual_alu_in_a == '0);
+
     assign ex_is_branch = (i_idex.opcode == OP_BEQ);
     assign ex_is_jal = (i_idex.opcode == OP_JAL);
     assign ex_is_jalr = (i_idex.opcode == OP_JALR);
@@ -190,7 +192,7 @@ module StreamingProcessor
                 opcode: mul_out.hazard.valid ? OP_R_TYPE : i_idex.opcode,
                 wen: mul_out.hazard.valid ? (mul_out.hazard.rd != '0) : (i_idex.wen && i_idex.rd != '0),
                 program_counter: mul_out.hazard.valid ? mul_out.program_counter : i_idex.program_counter,
-                exit_requested: i_idex.is_ecall && (ex_actual_alu_in_a == '0)
+                exit_requested: o_feedback.exit_in_ex
             };
         end
     end
