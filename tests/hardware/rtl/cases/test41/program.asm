@@ -63,4 +63,5 @@ sw    x16, 512(x3)
 sw    x17, 640(x3)
 sw    x19, 768(x3)
 sw    x22, 896(x3)
-jalr  x0, 0(x1)
+addi  x17, x0, 0
+ecall

@@ -72,4 +72,5 @@ sw    x9, -1024(x13)    # x13: 0x2000 + lane * 4, arrays below it
 sw    x10, -896(x13)
 sw    x11, -768(x13)
 sw    x12, -640(x13)
-jalr  x0, 0(x1)
+addi  x17, x0, 0
+ecall

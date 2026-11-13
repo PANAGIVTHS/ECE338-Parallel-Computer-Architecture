@@ -736,13 +736,11 @@
                          model_ddr_read_beats, perf_g(PerfPkg::PERF_R_TRANSFER));
                 csr_errors = csr_errors + 1;
             end
-            // The instruction at RET's target issues before the controller
-            // sees the completion: one more than the kernel executes, until
-            // the halt instruction changes.
+            // The exit ECALL is the last instruction issued: the drain behind it is PIPE_FILL.
             for (int unsigned w = 0; w < warp_pkg::WARPS_PER_SM; w++) begin
-                if (perf_warp[w][PerfPkg::PERF_WARP_ISSUED] != model_instructions + 1) begin
-                    $display("  [ERROR] Warp %0d WARP_ISSUED: Expected %0d (the model's %0d + 1), Found %0d", w,
-                             model_instructions + 1, model_instructions, perf_warp[w][PerfPkg::PERF_WARP_ISSUED]);
+                if (perf_warp[w][PerfPkg::PERF_WARP_ISSUED] != model_instructions) begin
+                    $display("  [ERROR] Warp %0d WARP_ISSUED: Expected %0d (the model's instructions), Found %0d", w,
+                            model_instructions, perf_warp[w][PerfPkg::PERF_WARP_ISSUED]);
                     csr_errors = csr_errors + 1;
                 end
             end

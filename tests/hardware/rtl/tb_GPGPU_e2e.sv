@@ -136,7 +136,7 @@ module tb_GPGPU_e2e
         // lanes 2, 6, ... complete where a word load would fault.
         expect_fault("odd lanes misaligned halfword load", '{
                 rv_lh(5, 31, 0),
-                ret_instr
+                riscv_pkg::ECALL_INSTR
             }, 32'(FAULT_MEMORY) | fault_kind(MemorySubsystemPkg::ST_MISALIGNED),
             all_lanes() & 32'hAAAA_AAAA, 32'd0);
 
@@ -145,7 +145,7 @@ module tb_GPGPU_e2e
         expect_fault("misaligned halfword store", '{
                 rv_addi(6, 0, 'h5A),
                 rv_sh(6, 0, 1),
-                ret_instr
+                riscv_pkg::ECALL_INSTR
             }, 32'(FAULT_MEMORY) | fault_kind(MemorySubsystemPkg::ST_MISALIGNED), all_lanes(), 32'd4);
         read_dmem(0, captured_word);
         if (captured_word !== 32'hDEAD_BEEF) begin
@@ -159,13 +159,13 @@ module tb_GPGPU_e2e
                 rv_lui(5, gpu_pkg::DMEM_BASE + gpu_pkg::DMEM_SIZE),
                 rv_lbu(6, 5, -1),
                 rv_lbu(6, 5, 0),
-                ret_instr
+                riscv_pkg::ECALL_INSTR
             }, 32'(FAULT_MEMORY) | fault_kind(MemorySubsystemPkg::ST_UNMAPPED), all_lanes(), 32'd8);
 
         expect_fault("byte load from the write-only framebuffer", '{
                 rv_lui(5, FB0_BASE),
                 rv_lbu(6, 5, 1),
-                ret_instr
+                riscv_pkg::ECALL_INSTR
             }, 32'(FAULT_MEMORY) | fault_kind(MemorySubsystemPkg::ST_PERMISSION), all_lanes(), 32'd4);
 
         // One store, two kinds: from the first 4 KiB boundary after DMEM
