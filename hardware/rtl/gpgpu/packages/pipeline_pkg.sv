@@ -32,6 +32,7 @@ package pipeline_pkg;
     typedef struct packed {
         gpu_pkg::pc_t program_counter;
         mul_hazard_t hazard;
+        logic high; // MULH, MULHSU, MULHU: the result is product[63:32]
     } mul_stage_t; 
 
     typedef struct packed {

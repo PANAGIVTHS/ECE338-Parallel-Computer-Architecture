@@ -35,7 +35,7 @@ static inline __attribute__((always_inline)) unsigned int gpgpu_thread_id(void)
  * the top of DMEM, calls kernel_main(), then requests completion with ECALL
  * service 0 (x17/a7 = 0). Ordinary RET/JALR instructions remain function returns.
  * a7 is caller-saved, not reserved: load the selector after kernel_main returns.
- * Other ECALL services currently do (nops)
+ * Other ECALL services are currently no-ops.
  */
 #define GPGPU_START(kernel_fn)                                                 \
     __attribute__((naked, noreturn, section(".text.start"))) void _start(void) \

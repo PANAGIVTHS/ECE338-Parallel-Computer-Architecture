@@ -54,7 +54,7 @@ module StreamingProcessor
     mem_wb_t memwb;
     word_t wb_wdata;
 
-    assign ex_is_mul = (i_idex.opcode == OP_R_TYPE) && (i_idex.imm_31_25 == FUNCT7_MULDIV); //! WARNING when adding DIV mul would be confused with div 
+    assign ex_is_mul = (i_idex.opcode == OP_R_TYPE) && (i_idex.imm_31_25 == FUNCT7_MULDIV) && !i_idex.funct3[2];
     assign ex_imm_i_type = {{20{i_idex.imm_31_20[11]}}, i_idex.imm_31_20};
     assign ex_imm_s_type = {{20{i_idex.imm_31_25[6]}}, i_idex.imm_31_25, i_idex.rd};
     assign ex_imm_u_type = {i_idex.imm_31_12, 12'b0};
@@ -122,13 +122,15 @@ module StreamingProcessor
         hazard: '{
             valid: ex_is_mul && (i_idex.rd != '0),
             rd: ex_is_mul ? i_idex.rd : '0
-        }
+        },
+        high: ex_is_mul && (i_idex.funct3 != FUNCT3_MUL)
     };
 
     (* dont_touch = `DEBUG *)
     Multiplier #(.LATENCY(MUL_LATENCY)) multiplier (
         .clk(clk), .rst(rst_n),
         .i_operand_a(ex_actual_alu_in_a), .i_operand_b(ex_actual_alu_in_b),
+        .i_funct3(i_idex.funct3),
         .i_global_stall(i_stall), .i_stage(mul_in),
         .o_result(mul_res), .o_stage(mul_out), .o_hazards(o_mul_hazards)
     );

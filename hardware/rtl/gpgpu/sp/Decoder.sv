@@ -36,7 +36,10 @@ module Decoder
                 case ({funct7, funct3}) 
                     {FUNCT7_ADD, FUNCT3_ADD_SUB_MUL}: o_decoded.alu_op = ALU_OP_ADD;
                     {FUNCT7_SUB, FUNCT3_ADD_SUB_MUL}: o_decoded.alu_op = ALU_OP_SUB;
-                    {FUNCT7_MULDIV, FUNCT3_ADD_SUB_MUL}: o_decoded.alu_op = ALU_OP_MUL;
+                    {FUNCT7_MULDIV, FUNCT3_MUL},
+                    {FUNCT7_MULDIV, FUNCT3_MULH},
+                    {FUNCT7_MULDIV, FUNCT3_MULHSU},
+                    {FUNCT7_MULDIV, FUNCT3_MULHU}: o_decoded.alu_op = ALU_OP_MUL;
                     {FUNCT7_MULDIV, FUNCT3_DIV}: o_decoded.alu_op = ALU_OP_DIV;
                     {FUNCT7_ADD, FUNCT3_XOR}: o_decoded.alu_op = ALU_OP_XOR;
                     {FUNCT7_ADD, FUNCT3_OR}:  o_decoded.alu_op = ALU_OP_OR;
