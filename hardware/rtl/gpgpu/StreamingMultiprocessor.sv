@@ -29,31 +29,10 @@ module StreamingMultiprocessor
     logic ex_branch_taken;
     imem_idx_t ex_beq_target_idx;
     logic data_hazard, flush;
+    sp_feedback_t sp_feedback [0:NUM_CORES-1];
 
     // Memory stall signal
     logic stall;
-
-    //? ===============================
-    //? WARP SHUTDOWN LOGIC
-    //? ===============================
-    warp_state_t warp_state;
-    logic exit_accept, issue_enabled;
-    logic [NUM_CORES-1:0] exit_requests, pipeline_busy;
-
-    assign exit_accept = (warp_state == WARP_RUNNING) && !stall && (&exit_requests);
-    assign issue_enabled = i_enable && (warp_state == WARP_RUNNING) && !exit_accept;
-
-    always_ff @(posedge clk) begin
-        if (!rst_n) begin
-            warp_state <= WARP_RUNNING;
-        end else if (!stall) begin
-            case (warp_state)
-                WARP_RUNNING: if (exit_accept) warp_state <= WARP_DRAINING;
-                WARP_DRAINING: if (!(|pipeline_busy)) warp_state <= WARP_FINISHED;
-                default: warp_state <= WARP_FINISHED;
-            endcase
-        end
-    end
 
     //! =========================================================================
     //! STAGE 1: INSTRUCTION FETCH
@@ -62,11 +41,11 @@ module StreamingMultiprocessor
     imem_idx_t instr_idx;
 
     GUCounter #(.BITS(IMEM_AW)) 
-        programCounter (.clk(clk), .i_set_reset({rst_n, ex_branch_taken}), .i_count_enable(issue_enabled && !data_hazard && !stall), .i_count_set(ex_beq_target_idx + 1'b1), .o_count_cur(instr_idx));
+        programCounter (.clk(clk), .i_set_reset({rst_n, ex_branch_taken}), .i_count_enable(!data_hazard && !stall), .i_count_set(ex_beq_target_idx + 1'b1), .o_count_cur(instr_idx));
 
     assign program_counter = {instr_idx, 2'b00};
-    assign o_imem_ren = issue_enabled && ((!data_hazard && !stall) | flush);
-    assign o_imem_addr = flush ? ex_beq_target_idx : instr_idx;
+    assign o_imem_ren = ((!data_hazard && !stall) | flush);
+    assign o_imem_addr = flush ? ex_beq_target_idx : instr_idx; // TODO Change when flush happens for multiple reasons
 
     //* =========================================================================
     //* PIPELINE REGISTER 1: INSTRUCTION FETCH -> INSTRUCTION DECODE
@@ -79,7 +58,7 @@ module StreamingMultiprocessor
             // Retain state during memory stall
         end else if (flush) begin 
             ifid_program_counter <= {ex_beq_target_idx, 2'b00};
-        end else if (issue_enabled && !data_hazard) begin
+        end else if (!data_hazard) begin
             ifid_program_counter <= program_counter;
         end
     end
@@ -116,7 +95,7 @@ module StreamingMultiprocessor
             idex.program_counter <= INITIAL_PC;
         end else if (stall) begin
             // Retain state during memory stall
-        end else if (!issue_enabled || !decode_enabled || data_hazard) begin
+        end else if (!decode_enabled || data_hazard) begin
             idex <= '0;
             idex.program_counter <= ifid_program_counter;
             idex.alu_op <= ALU_OP_INVALID;
@@ -135,7 +114,6 @@ module StreamingMultiprocessor
     assign sm_ex_is_mul = (idex.opcode == OP_R_TYPE) && (idex.imm_31_25 == FUNCT7_MULDIV);
     
     //! SP wires
-    sp_feedback_t sp_feedback [0:NUM_CORES-1];
     mul_hazard_t sp_mul_hazards [0:NUM_CORES-1][0:MUL_LATENCY-1];
 
     HazardUnit #(.MUL_LATENCY(MUL_LATENCY)) hazardUnit (
@@ -157,9 +135,9 @@ module StreamingMultiprocessor
     //& ===============
 
     // Since execution is lockstep, use Core 0 for shared hazard tracking
-    assign ex_branch_taken = sp_feedback[0].branch_taken && !stall && (warp_state == WARP_RUNNING);
+    assign ex_branch_taken = sp_feedback[0].branch_taken && !stall;
     assign ex_beq_target_idx = sp_feedback[0].branch_target_idx;
-    assign o_kernel_complete = (warp_state == WARP_FINISHED);
+    assign o_kernel_complete = !stall && (sp_feedback[0].exit_requested);
 
     logic [NUM_CORES-1:0] mem_response_received;
     logic [NUM_CORES-1:0] mem_is_mem_vec;
@@ -215,10 +193,6 @@ module StreamingMultiprocessor
 
     generate
         for (genvar i = 0; i < NUM_CORES; i = i + 1) begin : cores
-
-            assign exit_requests[i] = sp_feedback[i].exit_requested;
-            assign pipeline_busy[i] = sp_feedback[i].pipeline_busy;
-
             StreamingProcessor #(.CORE_ID(i)) core (
                 .clk(clk),
                 .rst_n(rst_n),

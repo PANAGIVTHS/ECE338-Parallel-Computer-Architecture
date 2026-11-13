@@ -42,6 +42,7 @@ package pipeline_pkg;
         gpu_pkg::reg_addr_t rd;
         logic mul_valid;
         logic wen;
+        logic exit_requested;
     } ex_mem_t;
 
     typedef struct packed {
@@ -52,6 +53,7 @@ package pipeline_pkg;
         logic wen;
         gpu_pkg::pc_t program_counter;
         gpu_pkg::word_t rdata;
+        logic exit_requested;
     } mem_wb_t;
 
     //! SP -> SM feedback signals
@@ -60,7 +62,6 @@ package pipeline_pkg;
         gpu_pkg::imem_idx_t branch_target_idx;
         gpu_pkg::pc_t mem_program_counter;
         logic exit_requested;
-        logic pipeline_busy;
     } sp_feedback_t;
 
 endpackage
