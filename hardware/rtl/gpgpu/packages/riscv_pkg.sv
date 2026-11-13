@@ -1,5 +1,8 @@
 package riscv_pkg;
 
+    localparam logic [31:0] ECALL_INSTR = 32'h0000_0073;
+    localparam gpu_pkg::reg_addr_t ECALL_SERVICE_REGISTER = 5'd17;
+
     localparam logic [2:0] FUNCT3_ADD_SUB_MUL = 3'b000;
     localparam logic [2:0] FUNCT3_BEQ = 3'b000;
     localparam logic [2:0] FUNCT3_BNE = 3'b001;
@@ -43,6 +46,7 @@ package riscv_pkg;
         OP_JAL = 7'b1101111,
         OP_JALR = 7'b1100111,
         OP_LUI = 7'b0110111,
+        OP_SYSTEM = 7'b1110011,
         OP_AUIPC = 7'b0010111,
         OP_INVALID = 7'b0
     } opcode_t;

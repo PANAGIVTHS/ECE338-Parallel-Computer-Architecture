@@ -46,9 +46,21 @@ module StreamingMultiprocessor
     logic ex_branch_taken;
     imem_idx_t ex_beq_target_idx;
     logic data_hazard, flush, load_use, mul_hazard;
+    sp_feedback_t sp_feedback [0:NUM_CORES-1];
 
     // Memory stall signal
     logic stall;
+
+    //! Halt: once the exit ECALL leaves EX nothing younger may issue, so the
+    //! stages behind it fill with bubbles while the older ones retire.
+    logic exit_now, exiting, issue_enabled;
+    assign exit_now = sp_feedback[0].exit_in_ex && !stall;
+    assign issue_enabled = !exiting && !exit_now;
+
+    always_ff @(posedge clk) begin
+        if (!rst_n) exiting <= 1'b0;
+        else if (exit_now) exiting <= 1'b1;
+    end
 
     //! =========================================================================
     //! STAGE 1: INSTRUCTION FETCH
@@ -57,11 +69,11 @@ module StreamingMultiprocessor
     imem_idx_t instr_idx;
 
     GUCounter #(.BITS(IMEM_AW)) 
-        programCounter (.clk(clk), .i_set_reset({rst_n, ex_branch_taken}), .i_count_enable(!data_hazard && !stall), .i_count_set(ex_beq_target_idx + 1'b1), .o_count_cur(instr_idx));
+        programCounter (.clk(clk), .i_set_reset({rst_n, ex_branch_taken}), .i_count_enable(issue_enabled && !data_hazard && !stall), .i_count_set(ex_beq_target_idx + 1'b1), .o_count_cur(instr_idx));
 
     assign program_counter = {instr_idx, 2'b00};
-    assign o_imem_ren = (!data_hazard && !stall) | flush;
-    assign o_imem_addr = flush ? ex_beq_target_idx : instr_idx;
+    assign o_imem_ren = issue_enabled && ((!data_hazard && !stall) | flush);
+    assign o_imem_addr = flush ? ex_beq_target_idx : instr_idx; // TODO Change when flush happens for multiple reasons
 
     //* =========================================================================
     //* PIPELINE REGISTER 1: INSTRUCTION FETCH -> INSTRUCTION DECODE
@@ -74,7 +86,7 @@ module StreamingMultiprocessor
             // Retain state during memory stall
         end else if (flush) begin 
             ifid_program_counter <= {ex_beq_target_idx, 2'b00};
-        end else if (!data_hazard) begin
+        end else if (issue_enabled && !data_hazard) begin
             ifid_program_counter <= program_counter;
         end
     end
@@ -111,7 +123,7 @@ module StreamingMultiprocessor
             idex.program_counter <= INITIAL_PC;
         end else if (stall) begin
             // Retain state during memory stall
-        end else if (!decode_enabled || data_hazard) begin
+        end else if (!issue_enabled || !decode_enabled || data_hazard) begin
             idex <= '0;
             idex.program_counter <= ifid_program_counter;
             idex.alu_op <= ALU_OP_INVALID;
@@ -130,9 +142,7 @@ module StreamingMultiprocessor
     assign sm_ex_is_mul = (idex.opcode == OP_R_TYPE) && (idex.imm_31_25 == FUNCT7_MULDIV);
     
     //! SP wires
-    sp_feedback_t sp_feedback [0:NUM_CORES-1];
     mul_hazard_t sp_mul_hazards [0:NUM_CORES-1][0:MUL_LATENCY-1];
-    logic [NUM_CORES-1:0] core_complete;
 
     HazardUnit #(.MUL_LATENCY(MUL_LATENCY)) hazardUnit (
         .i_id_rs1(decoded.rs1),
@@ -155,9 +165,9 @@ module StreamingMultiprocessor
     //& ===============
 
     // Since execution is lockstep, use Core 0 for shared hazard tracking
-    assign ex_branch_taken = sp_feedback[0].branch_taken;
+    assign ex_branch_taken = sp_feedback[0].branch_taken && !stall;
     assign ex_beq_target_idx = sp_feedback[0].branch_target_idx;
-    assign o_kernel_complete = core_complete[0]; //! Assign first_n one since divergence isnt supported
+    assign o_kernel_complete = !stall && (sp_feedback[0].exit_requested);
 
     logic [NUM_CORES-1:0] mem_response_received;
     logic [NUM_CORES-1:0] mem_is_mem_vec;
@@ -186,7 +196,7 @@ module StreamingMultiprocessor
         for (int unsigned i = 0; i < NUM_CORES; i++) begin
             lane_fault[i] = rsp_valid_vec[i] && (rsp_status_vec[i] != ST_OK);
             if (lane_fault[i]) begin
-                lane_kinds[rsp_status_vec[i] - 1] = 1'b1;
+                lane_kinds[rsp_status_vec[i] - mem_status_t'(1)] = 1'b1;
             end
         end
     end
@@ -241,7 +251,7 @@ module StreamingMultiprocessor
         end else if (mem_wait) begin
             // Only BRAM lanes are left
             o_perf_leaf[0] = PERF_WARP_BRAM;
-        end else if (stall || !decode_enabled) begin
+        end else if (stall || !decode_enabled || !issue_enabled) begin
             o_perf_leaf[0] = PERF_WARP_PIPE_FILL;
         end else if (flush) begin
             o_perf_leaf[0] = PERF_WARP_BRANCH;
@@ -256,7 +266,6 @@ module StreamingMultiprocessor
 
     generate
         for (genvar i = 0; i < NUM_CORES; i = i + 1) begin : cores
-
             StreamingProcessor #(.CORE_ID(i)) core (
                 .clk(clk),
                 .rst_n(rst_n),
@@ -278,8 +287,7 @@ module StreamingMultiprocessor
                 .mem_is_mem(mem_is_mem_vec[i]),
 
                 //! Control Pins
-                .i_stall(stall),
-                .o_core_complete(core_complete[i])
+                .i_stall(stall)
             );
         end
     endgenerate

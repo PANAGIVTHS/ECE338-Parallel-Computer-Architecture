@@ -53,4 +53,5 @@ sw    x20, 1536(x3)
 sw    x21, 1664(x3)
 sw    x22, 1792(x3)
 sw    x23, 1920(x3)
-jalr  x0, 0(x1)
+addi  x17, x0, 0
+ecall

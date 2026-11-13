@@ -29,7 +29,7 @@ module Decoder
         o_decoded.imm_31_25 = i_instr[31:25];
         o_decoded.imm_31_20 = i_instr[31:20];
         o_decoded.funct3 = funct3;
-        o_decoded.wen = (i_instr[11:7] != 5'b0) && (opcode != OP_SW) && (opcode != OP_BEQ);
+        o_decoded.wen = (i_instr[11:7] != 5'b0); 
 
         case (opcode)
             OP_R_TYPE: begin
@@ -79,6 +79,7 @@ module Decoder
             OP_SW: begin 
                 o_decoded.alu_op = ALU_OP_ADD;
                 o_decoded.instr_type = INSTR_TYPE_S;
+                o_decoded.wen = 0;
             end
             OP_BEQ: begin 
                 o_decoded.instr_type = INSTR_TYPE_S;
@@ -91,6 +92,7 @@ module Decoder
                     FUNCT3_BGEU: o_decoded.alu_op = ALU_OP_SLTU;
                     default: o_decoded.alu_op = ALU_OP_SUB;
                 endcase
+                o_decoded.wen = 0;
             end
             OP_JAL: begin
                 o_decoded.alu_op = ALU_OP_ADD;
@@ -111,6 +113,17 @@ module Decoder
             OP_INVALID: begin
                 o_decoded.alu_op = ALU_OP_INVALID;
                 o_decoded.instr_type = INSTR_TYPE_R;
+            end
+            OP_SYSTEM: begin
+                o_decoded.is_ecall = (i_instr == ECALL_INSTR);
+
+                //! Set ecall service register as it is not encoded by ECALL itself
+                o_decoded.rs1 = o_decoded.is_ecall ? ECALL_SERVICE_REGISTER : '0; 
+                o_decoded.rs2 = '0;
+                o_decoded.rd = '0;
+                o_decoded.wen = 1'b0;
+                o_decoded.alu_op = ALU_OP_ADD;
+                o_decoded.instr_type = INSTR_TYPE_I;
             end
             default: begin
                 o_decoded.alu_op = ALU_OP_ADD; 

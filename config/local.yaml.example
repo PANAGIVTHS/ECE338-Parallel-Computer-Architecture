@@ -3,8 +3,9 @@
 #
 # Example:
 # hardware:
-#   serial:
-#     port: /dev/ttyUSB1
+#   fpga:
+#     uart:
+#       port: /dev/ttyUSB1
 # paths:
 #   build:
 #     root: /mnt/fast/gpgpu-build

@@ -1,11 +1,11 @@
 # GPGPU Build Monitor
 
-`./gpgpu run TASK` automatically shows a live build monitor in an interactive
+`./gpgpu <category> <task>` automatically shows a live build monitor in an interactive
 terminal. It uses the same task graph and logging infrastructure as plain runs;
 it does not change dependency ordering, rebuild decisions, or task commands.
 
 ```bash
-./gpgpu run vitis:build:all
+./gpgpu vivado system:build
 ```
 
 The display contains:
@@ -34,13 +34,13 @@ streaming plain-log format without an animated dashboard. To select that format
 explicitly even in an interactive terminal:
 
 ```bash
-./gpgpu run vitis:build:all --plain
+./gpgpu vivado system:build --plain
 ```
 
 To save a combined console transcript, for example:
 
 ```bash
-./gpgpu run vitis:build:all --plain 2>&1 | tee build-console.log
+./gpgpu vivado system:build --plain 2>&1 | tee build-console.log
 ```
 
 Both display modes write the full Python and subprocess stdout/stderr into the

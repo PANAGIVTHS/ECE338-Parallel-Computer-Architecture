@@ -11,4 +11,5 @@ lw   x11, 256(x10)      # GMEM[64 + 4 * lane]
 add  x12, x8, x11       # load-use on a DDR load
 lw   x13, 0(x5)         # GMEM[0] on every lane
 sub  x14, x12, x13
-jalr x0, 0(x1)
+addi  x17, x0, 0
+ecall

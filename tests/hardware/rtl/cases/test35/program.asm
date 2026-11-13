@@ -50,4 +50,5 @@ andi  x18, x31, 2
 sh    x16, 1416(x18)    # two halves of one word, lanes sharing each half
 sw    x7, 1424(x0)
 sb    x0, 1425(x0)      # a byte of x0 clears only that byte: 0xAAAA00AA
-jalr  x0, 0(x1)
+addi  x17, x0, 0
+ecall

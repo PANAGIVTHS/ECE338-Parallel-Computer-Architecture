@@ -99,13 +99,12 @@ def write_mem_file(path: str | Path, words: dict[int, int | str] | Iterable[int 
 
 
 def trim_program_at_ret(words: Iterable[str]) -> list[str]:
-    result: list[str] = []
-    for word in words:
-        w = normalize_word(word)
-        result.append(w)
-        if w == RET_INSTR:
-            break
-    return result
+    """Legacy helper name: normalize the FULL image without trimming.
+
+    Functions may be linked after either RET or the runtime's ECALL. Neither
+    instruction marks the end of an image, so truncation is never safe.
+    """
+    return [normalize_word(word) for word in words]
 
 
 def _check_index(index: int) -> None:
@@ -319,16 +318,6 @@ class GpgpuUartMonitor:
                   for i in range(count)}
         self.wait_prompt(timeout=10.0)
         return result
-
-    # Names used by existing demo scripts.
-    def load_imem(self, words: Iterable[int | str], offset: int = 0) -> str:
-        return self.load_imem_bin(words, offset=offset)
-
-    def load_dmem(self, words: Iterable[int | str], offset: int = 0) -> str:
-        return self.load_dmem_bin(words, offset=offset)
-
-    def dump_dmem(self, count: int, offset: int = 0) -> dict[int, str]:
-        return self.dump_dmem_bin(count=count, offset=offset)
 
 
 GpgpuUart = GpgpuUartMonitor

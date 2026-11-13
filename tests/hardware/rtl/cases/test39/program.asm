@@ -11,4 +11,5 @@ add  x12, x12, x7
 addi x5, x5, 128        # next row
 addi x8, x8, -1
 bne  x8, x0, loop
-jalr x0, 0(x1)
+addi  x17, x0, 0
+ecall

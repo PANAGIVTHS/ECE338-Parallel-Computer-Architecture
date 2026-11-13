@@ -59,6 +59,10 @@ def assemble_line(inst, pc, labels):
     
     if op == 'nop':
         return 0x00000013
+    if op == 'ecall':
+        if len(parts) != 1:
+            raise ValueError("ECALL has no explicit operands")
+        return 0x00000073
         
     # R-Type
     if op in ['add', 'sub', 'mul', 'mulh', 'mulhsu', 'mulhu', 'and', 'or', 'xor', 'sll', 'srl', 'sra', 'slt', 'sltu']:
