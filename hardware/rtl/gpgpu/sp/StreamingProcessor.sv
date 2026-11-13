@@ -142,15 +142,6 @@ module StreamingProcessor
         mul_not_ready &= !mul_out.hazard.valid;
     end
 
-    // Check if at least one mul stage is busy
-    logic mul_busy;
-    always_comb begin
-        mul_busy = 1'b0;
-        for (int stage = 0; stage < MUL_LATENCY; stage++) begin
-            mul_busy |= o_mul_hazards[stage].valid;
-        end
-    end
-
     assign o_feedback.exit_in_ex = i_idex.is_ecall && (ex_actual_alu_in_a == '0);
 
     assign ex_is_branch = (i_idex.opcode == OP_BEQ);
