@@ -38,7 +38,7 @@ code on the GPGPU model (`tools/tests/gpgpu_model.py`) to produce the expected
 rules: lockstep lanes that branch with lane 0, the kernel ending at lane 0's
 RET, the memory map and permissions of `MemorySubsystemPkg::decode_access`,
 ascending-lane order for same-word DMEM stores, and one AXI burst per group per
-store instruction. A case must end with RET without a fault; a branch the lanes
+store instruction. A case must end with a halt ecall without a fault; a branch the lanes
 disagree on or lanes storing different values to one DDR word in one
 instruction is reported. Every constant comes from the RTL packages:
 `rtl:constants` elaborates them with pyslang into
@@ -91,7 +91,7 @@ DDR case, the DDR model's contents and burst count with `ddr.mem`. Register file
 not host-visible, so they are checked only by the SMX suite. Its
 `tests.rtl.e2e.exclude_sources` keeps `interfaces/` (the AXI wrapper) that the SMX suite
 excludes. Every bench setting (case root, case prefix and first index, program
-and data file names, clock period, reset length, timeouts, RET encoding, unmapped
+and data file names, clock period, reset length, timeouts, unmapped
 address, INFO version) is a required plusarg taken from `tests.rtl.e2e.plusargs`.
 The bench has no defaults and stops if any is missing; add `TEST_END` to stop
 early. The aggregate
@@ -123,6 +123,31 @@ For a one-off selection:
 The range is passed as `+TEST_IDX` / `+TEST_END` at runtime, without recompiling
 the bench. Explicit ranges with missing case sources fail before simulation.
 Shared input generation still prepares all cases; random testing is unaffected.
+
+### Kernel termination (ECALL)
+
+`GPGPU_START(kernel_main)` initializes each lane's stack, calls the C kernel,
+then executes `li a7, 0; ecall` after its normal return. `a7` (`x17`) is not
+reserved; it is read through the usual forwarding and hazard paths at ECALL.
+Only service 0 requests termination. Unsupported or mixed lane service values
+currently act as non-terminating no-ops. Normal RET/JALR instructions never
+signal completion, and loaders retain linked functions after RET or ECALL.
+
+On an accepted exit, the resident warp stops fetching/issuing and discards
+younger instructions. Older lane writeback and memory responses drain before
+the existing completion/status/IRQ path fires. No divergence or additional
+resident warps are implemented; exit state is warp-scoped for future extension.
+
+Run the focused host-driven, compiled-C, directed SMX/AXI, and seeded random
+regressions with Verilator and a RISC-V bare-metal GCC on `PATH`:
+
+```bash
+python tests/hardware/rtl/ecall/run.py --cores 4 32
+```
+
+Build products, copied cases, disassembly, logs, and `results.json` stay under
+`build/tests/ecall-current/`. See `tests/hardware/rtl/ecall/README.md` for coverage
+and verification limits.
 
 ## Running programs on FPGA
 

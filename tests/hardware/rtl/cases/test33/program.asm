@@ -62,4 +62,5 @@ sw    x23, 1920(x3)
 sw    x24, 0(x4)
 sw    x25, 128(x4)
 sw    x26, 256(x4)
-jalr  x0, 0(x1)
+addi  x17, x0, 0
+ecall

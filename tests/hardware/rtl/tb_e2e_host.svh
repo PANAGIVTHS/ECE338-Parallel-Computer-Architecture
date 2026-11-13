@@ -52,7 +52,6 @@
     integer reset_cycles;
     integer test_timeout_cycles;
     integer axi_timeout_cycles;
-    reg [31:0] ret_instr;
     bit settings_ready = 1'b0;
 
     // ============================================================
@@ -130,7 +129,6 @@
         `REQUIRE_PLUSARG("RESET_CYCLES=%d", reset_cycles)
         `REQUIRE_PLUSARG("TEST_TIMEOUT_CYCLES=%d", test_timeout_cycles)
         `REQUIRE_PLUSARG("AXI_TIMEOUT_CYCLES=%d", axi_timeout_cycles)
-        `REQUIRE_PLUSARG("RET_INSTR=%h", ret_instr)
         settings_ready = 1'b1;
     endtask
 
@@ -542,7 +540,6 @@
         int unsigned ddr_errors;
         integer cycle_count;
         integer program_words;
-        bit found_ret;
         bit has_ddr;
         reg [31:0] captured_word;
         string test_root, case_prefix, program_name, data_name, ddr_seed_name, ddr_name, perf_name;
@@ -614,22 +611,8 @@
             $readmemh(prog_file, expected_imem);
             $readmemh(data_file, expected_dmem);
 
-            // Only load up to (and including) the kernel's RET.
+            // Load the full linked image: functions may follow RET or ECALL.
             program_words = IMEM_ENTRIES;
-            found_ret = 0;
-            for (i = 0; i < IMEM_ENTRIES; i = i + 1) begin
-                if (!found_ret && expected_imem[i] == ret_instr) begin
-                    program_words = i + 1;
-                    found_ret = 1;
-                end
-            end
-
-            if (!found_ret)
-                $display("[WARNING] No RET instruction 0x%08h found in %0s. Loading full IMEM.",
-                         ret_instr, prog_file);
-            else
-                $display("[INFO]  Program length detected: %0d words. RET at IMEM[%0d].",
-                         program_words, program_words - 1);
 
             // ----------------------------------------------------
             // Reset (BRAM contents survive reset)
@@ -753,13 +736,11 @@
                          model_ddr_read_beats, perf_g(PerfPkg::PERF_R_TRANSFER));
                 csr_errors = csr_errors + 1;
             end
-            // The instruction at RET's target issues before the controller
-            // sees the completion: one more than the kernel executes, until
-            // the halt instruction changes.
+            // The exit ECALL is the last instruction issued: the drain behind it is PIPE_FILL.
             for (int unsigned w = 0; w < warp_pkg::WARPS_PER_SM; w++) begin
-                if (perf_warp[w][PerfPkg::PERF_WARP_ISSUED] != model_instructions + 1) begin
-                    $display("  [ERROR] Warp %0d WARP_ISSUED: Expected %0d (the model's %0d + 1), Found %0d", w,
-                             model_instructions + 1, model_instructions, perf_warp[w][PerfPkg::PERF_WARP_ISSUED]);
+                if (perf_warp[w][PerfPkg::PERF_WARP_ISSUED] != model_instructions) begin
+                    $display("  [ERROR] Warp %0d WARP_ISSUED: Expected %0d (the model's instructions), Found %0d", w,
+                            model_instructions, perf_warp[w][PerfPkg::PERF_WARP_ISSUED]);
                     csr_errors = csr_errors + 1;
                 end
             end

@@ -20,4 +20,5 @@ sh    x6, 384(x9)       # FB0 + 0x2180: lanes share words, each its own half
 
 addi  x10, x0, 0x5A
 sb    x10, 515(x5)      # FB0 + 0x2200: every lane the same byte and value, over the seed
-jalr  x0, 0(x1)
+addi  x17, x0, 0
+ecall

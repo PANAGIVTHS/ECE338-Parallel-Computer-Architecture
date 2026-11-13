@@ -52,7 +52,7 @@ CONSTANTS = (
 
 class ModelError(Exception):
     """The program cannot be modelled: an unsupported instruction, an
-    ambiguous DDR store, or no RET within the instruction limit."""
+    ambiguous DDR store, or no halt ECALL within the instruction limit."""
 
 
 def read_constants(path: Path) -> dict[str, int]:
@@ -136,6 +136,8 @@ def decode(word: int) -> Instruction:
         return Instruction("jal", rd, imm=_signed(offset, 21))
     if opcode == 0x67 and funct3 == 0:
         return Instruction("jalr", rd, rs1, imm=_signed(word >> 20, 12))
+    if word == 0x00000073:
+        return Instruction("ecall")
     raise ModelError(f"unsupported instruction {word:08x}")
 
 
@@ -299,7 +301,7 @@ class Warp:
         fault = None
         while True:
             if executed >= max_instructions:
-                raise ModelError(f"no RET within {max_instructions} instructions (PC {self.pc * 4:#x})")
+                raise ModelError(f"no halt ECALL within {max_instructions} instructions (PC {self.pc * 4:#x})")
             word = self.program[self.pc] if self.pc < len(self.program) else 0
             try:
                 inst = decode(word)
@@ -310,9 +312,15 @@ class Warp:
             next_pc = (self.pc + 1) % imem
             op = inst.op
 
-            if op == "jalr" and inst.rd == 0 and inst.rs1 == 1 and inst.imm == 0:
-                break  # RET: lane 0 completes the kernel
-            if op in _BRANCH.values():
+            if op == "ecall":
+                # Like a branch, lane 0 decides: service 0 (a7 = 0) halts the
+                # warp, other services are no-ops. The runtime only halts where
+                # the warp is converged, so disagreeing lanes are divergence.
+                if any(self.regs[lane][17] != self.regs[0][17] for lane in lanes):
+                    divergent.append(pc_bytes)
+                if self.regs[0][17] == 0:
+                    break
+            elif op in _BRANCH.values():
                 taken = [_branch_taken(op, self.regs[lane][inst.rs1], self.regs[lane][inst.rs2])
                          for lane in lanes]
                 if any(t != taken[0] for t in taken):

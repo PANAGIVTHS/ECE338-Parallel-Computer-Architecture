@@ -5,12 +5,12 @@
 # - negative immediates for backward indirect jumps
 # - jalr x0 without clobbering registers
 # - forwarding a freshly computed JALR base register
-# - jalr x0, 0(x1) only as the final kernel-completion marker
+# - ordinary jalr x0, 0(x1) returns; ECALL service 0 completes the kernel
 
 jal  x0, main
 return_subroutine:
 addi x13, x13, 1024
-jalr x31, 0(x1)     # return without using the reserved completion encoding
+jalr x0, 0(x1)      # Ordinary RET: return to after_return, not kernel completion
 
 main:
 addi x20, x0, 0      # success signature
@@ -21,8 +21,8 @@ addi x9,  x0, 0
 addi x10, x0, 0
 addi x11, x0, 0
 
-# Exercise an indirect return without using jalr x0, 0(x1), which is reserved
-# by this project as the kernel-completion marker.
+# Exercise an ordinary RET back to the caller; only ECALL service 0 completes
+# the kernel, so the formerly reserved return encoding must not halt execution.
 jal  x1, return_subroutine
 after_return:
 addi x20, x20, 1
@@ -95,5 +95,6 @@ sw   x9,  16(x0)     # link from backward JALR
 sw   x10, 20(x0)     # expected 77; proves jalr x0 did not clobber x10
 sw   x11, 24(x0)     # link from forwarded-base JALR
 
-# Let all stores drain before halting.
-jalr x0, 0(x1)
+# ECALL service 0 completes the kernel after older stores drain.
+addi x17, x0, 0  # Kernel complete: ECALL service 0
+ecall

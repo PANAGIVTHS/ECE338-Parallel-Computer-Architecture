@@ -4,4 +4,5 @@ lui  x5, 0x18002
 lui  x6, 0x5
 addi x6, x6, 90         # 0x505A
 sw   x6, 0(x5)
-jalr x0, 0(x1)
+addi x17, x0, 0  # Kernel complete: ECALL service 0
+ecall

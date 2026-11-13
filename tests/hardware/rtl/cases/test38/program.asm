@@ -11,4 +11,5 @@ lw   x11, 0(x10)
 lui  x5, 0x18004        # FB0 + 0x4000
 add  x5, x5, x6
 sw   x11, 0(x5)
-jalr x0, 0(x1)
+addi  x17, x0, 0
+ecall

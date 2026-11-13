@@ -139,6 +139,7 @@ sw   x5,  8(x0)      # expected JAL link address (PC + 4)
 sw   x12, 12(x0)     # expected equality operand: 3
 sw   x11, 16(x0)     # proves JAL x0 did not clobber x11
 
-# Give all cores enough cycles to retire their queued stores before core 0 halts.
+# ECALL service 0 completes the warp after every lane's older stores drain.
 
-jalr x0, 0(x1)
+addi x17, x0, 0  # Kernel complete: ECALL service 0
+ecall

@@ -28,8 +28,7 @@ module StreamingProcessor
     output logic mem_is_mem,
 
     //! Control
-    input i_stall,
-    output logic o_core_complete
+    input i_stall
 );
 
     ex_mem_t exmem;
@@ -143,6 +142,8 @@ module StreamingProcessor
         mul_not_ready &= !mul_out.hazard.valid;
     end
 
+    assign o_feedback.exit_in_ex = i_idex.is_ecall && (ex_actual_alu_in_a == '0);
+
     assign ex_is_branch = (i_idex.opcode == OP_BEQ);
     assign ex_is_jal = (i_idex.opcode == OP_JAL);
     assign ex_is_jalr = (i_idex.opcode == OP_JALR);
@@ -195,11 +196,8 @@ module StreamingProcessor
                 funct3: i_idex.funct3,
                 opcode: mul_out.hazard.valid ? OP_R_TYPE : i_idex.opcode,
                 wen: mul_out.hazard.valid ? (mul_out.hazard.rd != '0) : (i_idex.wen && i_idex.rd != '0),
-                core_complete: ex_is_jalr &&
-                               (i_idex.rd == '0) &&
-                               (i_idex.rs1 == 5'd1) &&
-                               (ex_imm_i_type == '0),
-                program_counter: mul_out.hazard.valid ? mul_out.program_counter : i_idex.program_counter
+                program_counter: mul_out.hazard.valid ? mul_out.program_counter : i_idex.program_counter,
+                exit_requested: o_feedback.exit_in_ex
             };
         end
     end
@@ -237,7 +235,6 @@ module StreamingProcessor
 
     assign memory_if.rsp_ready = 'b1;
 
-    assign o_core_complete = exmem.core_complete;
 
     always_ff @(posedge clk) begin
         if (!rst_n) begin
@@ -288,7 +285,8 @@ module StreamingProcessor
                 alu_out: exmem.alu_out,
                 wen: exmem.wen,
                 program_counter: exmem.program_counter,
-                rdata: mem_load_data
+                rdata: mem_load_data,
+                exit_requested: exmem.exit_requested
             };
         end
     end
@@ -298,6 +296,7 @@ module StreamingProcessor
     //! =========================================================================
 
     assign wb_wdata = memwb.is_load ? memwb.rdata : memwb.alu_out;
+    assign o_feedback.exit_requested = memwb.exit_requested;
 
     //& ===============
     //& FORWARDING

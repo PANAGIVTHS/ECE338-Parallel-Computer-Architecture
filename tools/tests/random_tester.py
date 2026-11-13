@@ -154,8 +154,9 @@ def generate_random_assembly(filepath):
     for lbl in pending_labels:
         asm.append(f"{lbl}:")
         
-    asm.append("\n# KERNEL COMPLETE TRAP")
-    asm.append("jalr x0, 0(x1)")
+    asm.append("\n# KERNEL COMPLETE: ECALL service 0 (a7 remains allocatable above)")
+    asm.append("addi x17, x0, 0")
+    asm.append("ecall")
     
     with open(filepath, 'w') as f:
         f.write("\n".join(asm) + "\n")
