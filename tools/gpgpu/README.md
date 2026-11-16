@@ -40,6 +40,7 @@ tools/gpgpu/
     design.py           facts shared between adapters: RTL files, output locations
     doit_engine.py      runs the graph (pydoit); run_log.py and run_monitor.py report it
     gcc.py              Toolchain: program builds; host_headers.py, slang.py: generated headers
+    games.py            GameFlow: game manifests, fetched sources, generated files, PC simulation
     verilator.py        RtlFlow: identity, expected results, benches
     vivado/             HardwareFlow, its Tcl scripts, and the ip and system projects
     vitis/              PlatformFlow, and the script that runs inside Vitis's Python

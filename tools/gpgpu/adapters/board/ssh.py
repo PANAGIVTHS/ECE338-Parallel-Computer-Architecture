@@ -19,6 +19,7 @@ from gpgpu.api import Step
 
 from ..config import Config, Section
 from ..design import bitstream_path, program_names, program_output, vitis_workspace
+from ..games import game_names
 from ..tools import run
 
 _NAME = r"[A-Za-z0-9_][A-Za-z0-9_.-]*"
@@ -73,17 +74,30 @@ class SshBoard:
         self._ssh, self._scp = commands.ssh, commands.scp
         self._platform = str(config.get("hardware.vitis.platform_name"))
         self._host = str(config.get("hardware.vitis.host_name"))
-        self._names = (f"{self._platform}.bit", "ps7_init.tcl", f"{self._host}.elf")
+        self._names = self._uploads(self._host)
+
+    def _uploads(self, host: str) -> tuple[str, str, str]:
+        """The remote names of what a host application runs from: bitstream, PS init script and its ELF."""
+        return (f"{self._platform}.bit", "ps7_init.tcl", f"{host}.elf")
 
     def programs(self) -> list[str]:
         return program_names(self._config)
 
-    def upload(self) -> Step:
+    def games(self) -> list[str]:
+        return game_names(self._config)
+
+    def _upload(self, host: str) -> Step:
         workspace = vitis_workspace(self._config)
         files = (bitstream_path(self._config),
                  workspace / self._platform / "export" / self._platform / "hw/sdt/ps7_init.tcl",
-                 workspace / self._host / "build" / f"{self._host}.elf")
-        return Step(partial(self._copy, tuple(zip(files, self._names))), always_run=True)
+                 workspace / host / "build" / f"{host}.elf")
+        return Step(partial(self._copy, tuple(zip(files, self._uploads(host)))), always_run=True)
+
+    def upload(self) -> Step:
+        return self._upload(self._host)
+
+    def upload_game(self, game: str) -> Step:
+        return self._upload(f"{game}_host")
 
     def upload_program(self, program: str) -> Step:
         memory = program_output(self._config, program, "_instructions.mem")
@@ -139,26 +153,32 @@ class SshBoard:
     def set_mode(self, mode: str) -> Step:
         return Step(partial(self._shell, shlex.join(["fm", mode])), always_run=True)
 
-    def _preflight(self) -> None:
+    def _preflight(self, names: tuple[str, str, str]) -> None:
         """Read-only check of the uploaded files. Proves nothing about what the agent can see."""
-        paths = [str(PurePosixPath(self._s.upload.directory) / name) for name in self._names]
+        paths = [str(PurePosixPath(self._s.upload.directory) / name) for name in names]
         self._shell("missing=0; for artifact in " + shlex.join(paths) + "; do "
                     'if test -f "$artifact"; then :; else '
                     'printf "Missing FPGA uploaded artifact (not a file): %s\\n" "$artifact"; '
                     'missing=1; fi; done; exit "$missing"', select_device=False)
 
     def preflight(self) -> Step:
-        return Step(self._preflight, always_run=True)
+        return Step(partial(self._preflight, self._names), always_run=True)
 
-    def _program(self) -> None:
+    def preflight_game(self, game: str) -> Step:
+        return Step(partial(self._preflight, self._uploads(f"{game}_host")), always_run=True)
+
+    def _program(self, names: tuple[str, str, str]) -> None:
         # Separate checked sessions: an agent error from PL must stop PS.
         directory = PurePosixPath(self._s.agent.directory or self._s.upload.directory)
-        bit, init, elf = (str(directory / name) for name in self._names)
+        bit, init, elf = (str(directory / name) for name in names)
         self._shell(shlex.join(["fpl", bit]), check_response=True)
         self._shell(shlex.join(["fps", init, elf]), check_response=True)
 
     def program(self) -> Step:
-        return Step(self._program, always_run=True)
+        return Step(partial(self._program, self._names), always_run=True)
+
+    def program_game(self, game: str) -> Step:
+        return Step(partial(self._program, self._uploads(f"{game}_host")), always_run=True)
 
     def _uart(self, program: str, operation: str) -> None:
         """Stream the shared UART client and driver to Python on the board's machine."""

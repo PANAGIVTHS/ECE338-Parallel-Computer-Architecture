@@ -10,8 +10,8 @@
  * and MUL.
  */
 
-/* Every helper must be inlined: a call needs AUIPC, which the core does not
- * decode, and a function's RET (jalr x0, 0(x1)) would end the kernel. */
+/* Every helper is inlined: a lane has 64 bytes of stack (gpgpu_runtime.h),
+ * and a call would take a frame of it. */
 #define INLINE static inline __attribute__((always_inline))
 
 /* ~0 when cond is nonzero, else 0. The empty asm hides the mask from the

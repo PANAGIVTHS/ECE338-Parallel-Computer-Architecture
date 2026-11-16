@@ -17,6 +17,10 @@ from .tools import run
 
 _RISCV_CFLAGS = ("-ffreestanding", "-fno-builtin", "-fomit-frame-pointer", "-ffixed-x31", "-ffunction-sections",
                  "-fdata-sections", "-msmall-data-limit=0", "-mno-relax")
+# What a bare-metal compiler does by itself and one built for Linux (riscv64-linux-gnu-gcc) does not:
+# no position-independent code, no unwind tables (gpgpu.ld has no place for .eh_frame), a static link.
+_RISCV_BARE_CFLAGS = ("-fno-pic", "-fno-asynchronous-unwind-tables", "-fno-unwind-tables")
+_RISCV_BARE_LDFLAGS = ("-static", "-no-pie")
 _INSTRUCTION = re.compile(r"^\s*[0-9a-fA-F]+:\s+(\S+)(?:\s+(.*))?$")
 
 
@@ -102,7 +106,8 @@ class GccToolchain:
         elf, link_map = self._out(program, ".elf"), self._out(program, ".map")
         linker_script = self._root / "gpgpu.ld"
         command = [self._riscv_cc, self._optimization, f"-march={self._riscv.march}", f"-mabi={self._riscv.abi}",
-                   f"-DGPGPU_NUM_CORES={self._cores}", *_RISCV_CFLAGS, "-o", str(elf), str(source), "-nostdlib", "-nostartfiles",
+                   f"-DGPGPU_NUM_CORES={self._cores}", *_RISCV_CFLAGS, *_RISCV_BARE_CFLAGS, "-o", str(elf), str(source),
+                   "-nostdlib", "-nostartfiles", *_RISCV_BARE_LDFLAGS,
                    f"-Wl,-T,{linker_script}", f"-Wl,-Map,{link_map}", "-Wl,--build-id=none"]
         # The whole command: a change of compiler, flags, march/abi or core count rebuilds.
         return Step(partial(run, command, creates=elf.parent), inputs=(source, linker_script, *headers),

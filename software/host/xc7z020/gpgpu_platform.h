@@ -18,7 +18,7 @@
 #define GPGPU_FB_WIDTH                     1280U
 #define GPGPU_FB_HEIGHT                    720U
 #define GPGPU_FB_SIZE                      3686400U
-#define GPGPU_GMEM_SIZE                    8388608U
+#define GPGPU_GMEM_SIZE                    67108864U
 
 /* warp_pkg */
 #define GPGPU_WARPS_PER_SM                 1U

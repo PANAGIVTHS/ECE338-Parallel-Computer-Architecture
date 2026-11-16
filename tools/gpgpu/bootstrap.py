@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 import gpgpu.plugins
-from gpgpu.api import Board, HardwareFlow, PlatformFlow, PluginFailure, RtlFlow, Toolchain
+from gpgpu.api import Board, GameFlow, HardwareFlow, PlatformFlow, PluginFailure, RtlFlow, Toolchain
 from gpgpu.app.registry import Registry
 from gpgpu.app.workspace import Workspace
 
@@ -21,6 +21,7 @@ _BACKENDS = {
     PlatformFlow: "gpgpu.adapters.vitis.flow:VitisFlow",
     RtlFlow: "gpgpu.adapters.verilator:VerilatorFlow",
     Toolchain: "gpgpu.adapters.gcc:GccToolchain",
+    GameFlow: "gpgpu.adapters.games:Games",
     Board: "gpgpu.adapters.board.ssh:SshBoard",
 }
 

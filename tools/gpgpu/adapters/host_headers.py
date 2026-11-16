@@ -86,7 +86,7 @@ def platform_step(config: Config) -> Step:
                 inputs=(*sources, *headers, Path(__file__)), outputs=(output,), fingerprint=settings)
 
 
-def _args_window(nm_command: list[str]) -> tuple[int, int]:
+def args_window(nm_command: list[str]) -> tuple[int, int]:
     """(first DMEM word, word count) of GPGPU_ARGS, from the program's symbols."""
     listing = subprocess.run(nm_command, check=True, capture_output=True, text=True).stdout
     symbols = {fields[2]: int(fields[0], 16) for fields in map(str.split, listing.splitlines())
@@ -113,7 +113,7 @@ def _write_autorun(settings: dict[str, Any], nm_command: list[str] | None, memor
         define("AUTORUN", "0")
     else:
         image = [int(line, 16) for line in memory.read_text(encoding="utf-8").split()]
-        args_word, args_words = _args_window(nm_command)
+        args_word, args_words = args_window(nm_command)
         args = settings["args"]
         if len(args) > args_words:
             raise ValueError(f"software.host.autorun.args has {len(args)} values; GPGPU_ARGS holds {args_words} words")

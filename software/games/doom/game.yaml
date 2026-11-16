@@ -1,0 +1,141 @@
+# DOOM: the game's logic on the ARM, its 3D view drawn by the GPU.
+#
+# The game is doomgeneric, fetched at the commit below and compiled as it is.
+# This directory adds the port: the files in port/ replace the ones of
+# doomgeneric that are tied to a desktop, and receive, through the linker's
+# --wrap, the calls of the functions listed under `wrap`.
+# See README.md here, and ../README.md for what a manifest holds.
+
+description: DOOM (doomgeneric), with the 3D view drawn by the GPU
+
+# The GPU side: software/programs/doom.
+kernel: doom
+
+upstream:
+  url: https://github.com/ozkl/doomgeneric.git
+  commit: e257a09527062bfb986b6e5e0780839b6cbd5b71
+  directory: doomgeneric
+  # doomgeneric's own Makefile list, without what port/ replaces (i_system.c,
+  # i_video.c, w_file.c, w_file_stdc.c, doomgeneric.c) and its window systems.
+  sources:
+    - am_map.c
+    - d_event.c
+    - d_items.c
+    - d_iwad.c
+    - d_loop.c
+    - d_main.c
+    - d_mode.c
+    - d_net.c
+    - doomdef.c
+    - doomstat.c
+    - dstrings.c
+    - dummy.c
+    - f_finale.c
+    - f_wipe.c
+    - g_game.c
+    - hu_lib.c
+    - hu_stuff.c
+    - i_cdmus.c
+    - i_endoom.c
+    - i_input.c
+    - i_joystick.c
+    - i_scale.c
+    - i_sound.c
+    - i_timer.c
+    - info.c
+    - m_argv.c
+    - m_bbox.c
+    - m_cheat.c
+    - m_config.c
+    - m_controls.c
+    - m_fixed.c
+    - m_menu.c
+    - m_misc.c
+    - m_random.c
+    - memio.c
+    - p_ceilng.c
+    - p_doors.c
+    - p_enemy.c
+    - p_floor.c
+    - p_inter.c
+    - p_lights.c
+    - p_map.c
+    - p_maputl.c
+    - p_mobj.c
+    - p_plats.c
+    - p_pspr.c
+    - p_saveg.c
+    - p_setup.c
+    - p_sight.c
+    - p_spec.c
+    - p_switch.c
+    - p_telept.c
+    - p_tick.c
+    - p_user.c
+    - r_bsp.c
+    - r_data.c
+    - r_draw.c
+    - r_main.c
+    - r_plane.c
+    - r_segs.c
+    - r_sky.c
+    - r_things.c
+    - s_sound.c
+    - sha1.c
+    - sounds.c
+    - st_lib.c
+    - st_stuff.c
+    - statdump.c
+    - tables.c
+    - v_video.c
+    - w_checksum.c
+    - w_main.c
+    - w_wad.c
+    - wi_stuff.c
+    - z_zone.c
+
+sources:
+  - port/doom_game.c
+  - port/doom_render.c
+  - port/doom_system.c
+  - port/doom_video.c
+  - port/doom_wad.c
+
+include:
+  - port
+
+# Functions of doomgeneric whose calls go to __wrap_<name> in port/, which
+# reaches the original as __real_<name>.
+wrap:
+  # The view: where a frame's drawing starts and ends, and where the sprites start.
+  - R_RenderPlayerView
+  - R_DrawMasked
+  # The two pixel loops the kernel runs, and their variants it does not.
+  - R_DrawColumn
+  - R_DrawSpan
+  - R_DrawColumnLow
+  - R_DrawSpanLow
+  - R_DrawFuzzColumn
+  - R_DrawFuzzColumnLow
+  - R_DrawTranslatedColumn
+  - R_DrawTranslatedColumnLow
+  # Wall textures built in the heap: kept, and shown to the GPU.
+  - R_GetColumn
+  # The WAD is a built-in file, not one on a disk.
+  - M_FileExists
+
+assets:
+  wad:
+    description: >-
+      DOOM needs an IWAD, which is not part of this repository: the shareware
+      doom1.wad (4 MB, freely distributable), doom.wad or doom2.wad from a copy
+      of the game, or a Freedoom WAD (freedoom.github.io).
+
+# {wad} is the file name of the asset `wad`; DOOM tells the games apart by it.
+arguments: ["-iwad", "{wad}"]
+
+# Runs of the kernel in the simulation that `gpgpu software games:doom:verify`
+# replays on the GPGPU model: one that scales the picture and one that draws
+# the 3D view, both from the demo that starts after the title screen.
+verify:
+  runs: [601, 602]

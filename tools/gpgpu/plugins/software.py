@@ -1,5 +1,5 @@
-"""Build programs for the GPGPU and generate the host driver's headers."""
-from gpgpu.api import Backends, Task, Toolchain
+"""Build programs for the GPGPU, the host driver's headers, and games with their PC simulation."""
+from gpgpu.api import Backends, GameFlow, Task, Toolchain
 
 
 def tasks(backend: Backends) -> list[Task]:
@@ -28,5 +28,27 @@ def tasks(backend: Backends) -> list[Task]:
             Task(f"{prefix}:riscv:build", "Build the RISC-V program and its assembly.", needs=(f"{prefix}:assembly",)),
             Task(f"{prefix}:all", "Build both the native executable and the RISC-V program.",
                  needs=(f"{prefix}:riscv:build", f"{prefix}:x86:build")),
+        ]
+    games = backend(GameFlow)
+    for game in games.games():
+        prefix, kernel = f"software:games:{game}", f"software:programs:{games.kernel(game)}"
+        result += [
+            Task(f"{prefix}:clean", "Remove everything built or fetched for the game.", games.clean(game)),
+            Task(f"{prefix}:fetch", "Fetch the game's upstream source at the commit its manifest pins.", games.fetch(game)),
+            Task(f"{prefix}:configure", "Generate the game's settings header from its manifest and the configuration.",
+                 games.configure(game)),
+            Task(f"{prefix}:assets", "Generate the file that links the game's data files into it.", games.assets(game)),
+            Task(f"{prefix}:kernel", "Build the game's kernel and generate its IMEM image for the board build.",
+                 games.kernel_image(game), needs=(f"{kernel}:riscv:build", f"{kernel}:mem")),
+            Task(f"{prefix}:sim:build", "Build the game for this PC, with its kernel run natively on every lane.",
+                 games.build_simulation(game),
+                 needs=("software:host:platform", f"{prefix}:fetch", f"{prefix}:configure", f"{prefix}:assets")),
+            Task(f"{prefix}:sim", "Run the game on this PC and write frames as pictures.",
+                 games.run_simulation(game), needs=(f"{prefix}:sim:build",)),
+            Task(f"{prefix}:verify", "Replay kernel runs captured from the simulation on the GPGPU model: "
+                 "no divergence, no fault, the same picture.",
+                 games.verify(game), needs=(f"{prefix}:sim:build", f"{kernel}:mem"), requires=("rtl:constants",)),
+            Task(f"{prefix}:all", "Fetch, generate and build everything of the game that needs no board tools.",
+                 needs=(f"{prefix}:kernel", f"{prefix}:sim:build")),
         ]
     return result

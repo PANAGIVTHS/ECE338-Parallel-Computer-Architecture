@@ -16,6 +16,7 @@ from gpgpu.api import Step
 
 from ..config import Config, Section
 from ..design import axi_address, vitis_workspace, xsa_path
+from ..games import game_build, game_output
 from ..tools import check_version, version_current
 
 _VENDOR_FLOW = Path(__file__).with_name("vendor_flow.py")
@@ -146,6 +147,7 @@ def _export(workspace: Path, archive: Path, repo: Path, platform: str, host: str
 class VitisFlow:
     def __init__(self, config: Config) -> None:
         s = self._s = config.section("hardware.vitis", _Vitis)
+        self._config = config
         self._repo = config.repo_root
         self._workspace = vitis_workspace(config)
         self._archive = self._repo / s.default_archive
@@ -187,6 +189,40 @@ class VitisFlow:
                     inputs=(_VENDOR_FLOW, self._archive, *self._platform_outputs, *sources, *headers), outputs=outputs,
                     fingerprint={"command": command, "range": self._range},
                     checks=(self._version_current, _EditableHost(self._host_root)))
+
+    def build_game(self, game: str) -> Step:
+        """The game's own application component, <game>_host, beside the monitor's.
+
+        Its sources, include directories, definitions and link flags all come from the game's
+        manifest and the configuration. The fetched upstream files do not exist before
+        `software:games:<game>:fetch`, so its marker stands for them as an input.
+        """
+        s, build, name = self._s, game_build(self._config, game), f"{game}_host"
+        root = self._workspace / name
+        sources = [*build.upstream, *build.sources, *build.generated, *build.board]
+        link_flags = [*build.link_flags, f"-Wl,--defsym=_HEAP_SIZE={build.heap_bytes:#x}",
+                      f"-Wl,--defsym=_STACK_SIZE={build.stack_bytes:#x}"]
+        variables = {"USER_COMPILE_OPTIMIZATION_LEVEL": str(self._config.get("software.programs.optimization")),
+                     # The upstream code was not written for today's warnings; the port's own
+                     # files are checked by the simulation build.
+                     "USER_COMPILE_WARNINGS_ALL": "", "USER_COMPILE_WARNINGS_EXTRA": "",
+                     "USER_LINK_OTHER_FLAGS": " ".join(link_flags)}
+        command = [*self._prefix, "host", "--workspace", str(self._workspace), "--component", name,
+                   "--platform", s.platform_name, "--domain", s.domain, "--template", s.template, "--base-address", self._base,
+                   "--archive", str(self._archive), "--repo-root", str(self._repo)]
+        command += [argument for source in sources for argument in ("--source", str(source))]
+        command += [argument for directory in build.include for argument in ("--include", str(directory))]
+        command += [argument for define in build.defines for argument in ("--define", define)]
+        command += [argument for variable, value in variables.items() for argument in ("--variable", f"{variable}={value}")]
+        outputs = (root / f"build/{name}.elf", root / "vitis-comp.json")
+        committed = [path for path in (*build.sources, *build.board) if game_output(self._config, game) not in path.parents]
+        generated = [path for path in (*build.generated, *build.board) if game_output(self._config, game) in path.parents]
+        return Step(partial(_run_vitis, command, self._repo, outputs, s.version),
+                    inputs=(_VENDOR_FLOW, *self._platform_outputs, *committed, *build.headers, *generated,
+                            game_output(self._config, game, "generated", "gp_config.h"),
+                            *((build.fetched,) if build.fetched else ())),
+                    outputs=outputs, fingerprint={"command": command, "range": self._range},
+                    checks=(self._version_current, _EditableHost(root)))
 
     def export_project(self) -> Step:
         return Step(partial(_export, self._workspace, self._archive, self._repo, self._s.platform_name, self._s.host_name),

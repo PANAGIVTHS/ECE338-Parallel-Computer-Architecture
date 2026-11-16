@@ -35,6 +35,12 @@ Assembly and IMEM generation retain the complete linked instruction listing,
 including subroutines after RET or ECALL instructions; neither instruction is
 an image boundary.
 
+A kernel that a host program drives through descriptors in GMEM takes 32-bit GPU addresses.
+Its native build gets memory below 4 GiB from `gpgpu_native.h`, and, for a host simulation
+(software/games), defines `gpgpu_kernel_run()` when compiled with `-DGPGPU_NATIVE_LIB`: the kernel
+on every lane. `blit` and `doom` are such kernels. `gpgpu_blit.h` is the scaling of an indexed
+picture to the display, for any kernel to include.
+
 ## Build
 
 Use the task runner so compiler settings, `architecture.num_cores`, and `paths.build.root` come from the resolved configuration:

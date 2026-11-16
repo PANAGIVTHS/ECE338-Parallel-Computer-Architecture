@@ -7,6 +7,23 @@
 tasks. See [tools/gpgpu/README.md](tools/gpgpu/README.md) for its structure, tab completion
 and how to add a command.
 
+## Games
+
+A game is a program on the ARM CPU that draws with a kernel on the GPU. DOOM is the first: its
+logic runs on the ARM and its 3D view is drawn by the GPU. A game runs on the board, and also on
+a PC, where its kernel runs natively and frames are written as pictures.
+
+```bash
+./gpgpu software games:doom:sim       # on this PC
+./gpgpu software games:doom:verify    # the kernel's RISC-V image on the GPGPU model
+./gpgpu vitis build:games:doom        # the game's host application
+./gpgpu fpga games:doom:deploy        # start it on the board
+```
+
+See [software/games/README.md](software/games/README.md) for the platform every game shares and
+how to add one, and [software/games/doom/README.md](software/games/doom/README.md) for DOOM: the
+data file it needs, its keys, and how the work is split between the ARM and the GPU.
+
 ## SMX RTL simulation (Verilator)
 
 The CLI SMX flow requires Verilator, GNU make, and a C++ compiler. Configure

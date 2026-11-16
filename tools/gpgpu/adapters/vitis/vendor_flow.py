@@ -132,8 +132,15 @@ def create_project(workspace: Path, xsa: Path, platform_name: str,
             raise FileNotFoundError(f"Vitis did not create platform metadata: {root}")
 
 
-def configure_host(host_root: Path, sources: list[Path], base_address: str) -> None:
-    """Edit the SDK's actual CMake input (2025.2 root or older src layout)."""
+def configure_host(host_root: Path, sources: list[Path], base_address: str, includes: list[Path] | None = None,
+                   definitions: list[str] | None = None, variables: dict[str, str] | None = None) -> None:
+    """Edit the SDK's actual CMake input (2025.2 root or older src layout).
+
+    The monitor passes only its sources, and what a user added to the include
+    directories and definitions in the IDE is kept. A game passes all three
+    extras: its manifest decides them, so they replace what the file had.
+    `variables` sets other USER_* variables to one value each, or to nothing.
+    """
     candidates = [host_root / "UserConfig.cmake", host_root / "src/UserConfig.cmake"]
     existing = [path for path in candidates if path.is_file()]
     if len(existing) != 1:
@@ -148,26 +155,41 @@ def configure_host(host_root: Path, sources: list[Path], base_address: str) -> N
         if count != 1:
             raise ValueError(f"Missing {variable} in {path}")
     replace_variable("USER_COMPILE_SOURCES", [str(source.resolve()) for source in sources])
-    match = re.search(r"set\(USER_INCLUDE_DIRECTORIES\b([^)]*)\)", text, re.DOTALL)
-    if match is None:
-        raise ValueError(f"Missing USER_INCLUDE_DIRECTORIES in {path}")
-    includes = match.group(1).strip()
     directories = list(dict.fromkeys(str(source.parent.resolve()) for source in sources))
-    extra = "".join(f'\n"{directory}"' for directory in directories if f'"{directory}"' not in includes)
-    text = text[:match.start(1)] + "\n" + (includes + extra).strip() + "\n" + text[match.end(1):]
-    match = re.search(r"set\(USER_COMPILE_DEFINITIONS\b([^)]*)\)", text, re.DOTALL)
-    if match is None:
-        raise ValueError(f"Missing USER_COMPILE_DEFINITIONS in {path}")
-    definitions = '\n' + re.sub(r'"?GPGPU_BASEADDR=[^\s";)]+"?', '', match.group(1)).strip()
-    definitions += f'\n"GPGPU_BASEADDR={base_address}"\n'
-    text = text[:match.start(1)] + definitions + text[match.end(1):]
+    if includes is not None:
+        replace_variable("USER_INCLUDE_DIRECTORIES",
+                         list(dict.fromkeys([*(str(directory.resolve()) for directory in includes), *directories])))
+    else:
+        match = re.search(r"set\(USER_INCLUDE_DIRECTORIES\b([^)]*)\)", text, re.DOTALL)
+        if match is None:
+            raise ValueError(f"Missing USER_INCLUDE_DIRECTORIES in {path}")
+        kept = match.group(1).strip()
+        extra = "".join(f'\n"{directory}"' for directory in directories if f'"{directory}"' not in kept)
+        text = text[:match.start(1)] + "\n" + (kept + extra).strip() + "\n" + text[match.end(1):]
+    if definitions is not None:
+        replace_variable("USER_COMPILE_DEFINITIONS", [f"GPGPU_BASEADDR={base_address}", *definitions])
+    else:
+        match = re.search(r"set\(USER_COMPILE_DEFINITIONS\b([^)]*)\)", text, re.DOTALL)
+        if match is None:
+            raise ValueError(f"Missing USER_COMPILE_DEFINITIONS in {path}")
+        kept = '\n' + re.sub(r'"?GPGPU_BASEADDR=[^\s";)]+"?', '', match.group(1)).strip()
+        kept += f'\n"GPGPU_BASEADDR={base_address}"\n'
+        text = text[:match.start(1)] + kept + text[match.end(1):]
+    for variable, value in (variables or {}).items():
+        # One quoted value: CMake appends these lists to the flags without
+        # a separator, so several flags must be one string. A ")" or a quote
+        # would end the set() early.
+        if not re.fullmatch(r"USER_[A-Z_]+", variable) or re.search(r'[()"\\\n]', value):
+            raise ValueError(f"Cannot set {variable} to {value!r} in {path}")
+        replace_variable(variable, [value] if value else [])
     if text != path.read_text(encoding="utf-8"):
         path.write_text(text, encoding="utf-8")
 
 
 def build_host(workspace: Path, host_name: str, platform_name: str, domain: str,
                template: str, sources: list[Path], base_address: str, archive: Path,
-               repo_root: Path | None = None) -> None:
+               repo_root: Path | None = None, includes: list[Path] | None = None,
+               definitions: list[str] | None = None, variables: dict[str, str] | None = None) -> None:
     xpfm = workspace / platform_name / f"export/{platform_name}/{platform_name}.xpfm"
     if not xpfm.is_file():
         raise FileNotFoundError(f"Build platform before host: {xpfm}")
@@ -228,7 +250,7 @@ def build_host(workspace: Path, host_name: str, platform_name: str, domain: str,
             config_text = config_text.replace(marker, value)
         if config_text != config.read_text(encoding="utf-8"):
             config.write_text(config_text, encoding="utf-8")
-        configure_host(root, sources, base_address)
+        configure_host(root, sources, base_address, includes, definitions, variables)
         prepare_bsp_output_directories(workspace / platform_name)
         if component.build() is False:
             raise RuntimeError(f"Vitis build failed for component {host_name!r}")
@@ -277,6 +299,10 @@ def main() -> None:
     host.add_argument("--base-address", required=True)
     host.add_argument("--archive", type=Path, required=True)
     host.add_argument("--repo-root", type=Path, required=True)
+    # A game's build (software/games): all three replace what UserConfig.cmake holds.
+    host.add_argument("--include", type=Path, action="append")
+    host.add_argument("--define", action="append")
+    host.add_argument("--variable", action="append", help="USER_NAME=VALUE; an empty value clears it")
     # The vendor launcher may forward its argument separator to the script.
     argv = sys.argv[1:]
     if argv[:1] == ["--"]:
@@ -289,9 +315,11 @@ def main() -> None:
         create_project(arguments.workspace, arguments.xsa, arguments.platform,
                        arguments.cpu, arguments.os, arguments.domain)
     elif arguments.action == "host":
+        variables = dict(item.split("=", 1) for item in arguments.variable) if arguments.variable else None
         build_host(arguments.workspace, arguments.component, arguments.platform,
                    arguments.domain, arguments.template, arguments.source,
-                   arguments.base_address, arguments.archive, arguments.repo_root)
+                   arguments.base_address, arguments.archive, arguments.repo_root,
+                   arguments.include, arguments.define, variables)
 
 
 if __name__ == "__main__":

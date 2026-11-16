@@ -19,7 +19,9 @@ package gpu_pkg;
     (* host *) localparam int unsigned FB_WIDTH = 1280;
     (* host *) localparam int unsigned FB_HEIGHT = 720;
     (* host *) localparam int unsigned FB_SIZE = FB_WIDTH * FB_HEIGHT * BYTES_PER_WORD;
-    (* host *) localparam int unsigned GMEM_SIZE = 'h0080_0000;
+    // 64 MiB, up to 0x1C80_0000 of the 512 MiB of PS DDR: room for a game's
+    // data file, its heap and its drawing commands (software/games).
+    (* host *) localparam int unsigned GMEM_SIZE = 'h0400_0000;
 
     localparam logic [XLEN-1:0] INITIAL_PC = 32'h0000_0000;
     localparam logic [XLEN-1:0] NOP_INSTR = 32'h0000_0013;

@@ -2,8 +2,8 @@ architecture:
   num_cores: 32
   interface_version: 3
   # DDR backend of the memory subsystem (reported in INFO_FEATURES). Without
-  # it, framebuffer and texture accesses complete as ST_UNMAPPED. The DDR read
-  # path is not implemented yet: a texture load never completes.
+  # it, framebuffer and GMEM accesses complete as ST_UNMAPPED, and no game
+  # (software/games) can run.
   ddr_enable: true
 
 hardware:
@@ -126,6 +126,50 @@ software:
       # platform_header such as GPGPU_FB0_BASE. Unlisted words are 0.
       args: [GPGPU_FB0_BASE, GPGPU_FB_WIDTH, GPGPU_FB_HEIGHT, 0]
       display: 0
+  # Games: a program on the ARM that draws with a kernel on the GPU. Each
+  # directory of software/games with a game.yaml is one; see
+  # software/games/README.md.
+  games:
+    # What every game shares (software/games/platform).
+    platform:
+      # The picture on the 1280x720 display, in pixels, centred. The width is
+      # rounded down to a whole number of GPU lanes. 960x720 shows a 4:3 game
+      # as it was meant; a smaller size is drawn faster.
+      output:
+        width: 960
+        height: 720
+      input:
+        # A UART terminal reports no key release: a key counts as held until
+        # this many milliseconds pass without it repeating.
+        hold_ms: 200
+      # Seconds between the frame-rate reports on the UART; 0 for none.
+      stats_seconds: 5
+      # The board build's C heap and stack (the linker script's _HEAP_SIZE and
+      # _STACK_SIZE). A game's large data belongs in GMEM, not here.
+      memory:
+        heap_mb: 8
+        stack_kb: 1024
+      # `gpgpu software games:<game>:sim` runs the game on this PC: `frames`
+      # frames, writing every `dump_every`-th as a picture; `arguments` go to
+      # the game after its configured ones.
+      simulation:
+        frames: 700
+        dump_every: 100
+        arguments: []
+    # Per game: `assets` are the data files linked into it, by the names its
+    # manifest gives them (set the paths in config/local.yaml, they are not
+    # committed); `args` are added to the game's arguments; `defines` are C
+    # definitions for its build.
+    settings:
+      doom:
+        assets:
+          wad: null
+        # For example ["-warp", "1", "1", "-skill", "3"] to start in a level,
+        # or ["-nogpu"] to draw the view on the ARM, for comparison.
+        args: []
+        defines:
+          # DOOM's heap, in GMEM, in MiB.
+          DOOM_ZONE_MB: 16
   # Every build of a program, RISC-V kernel and native x86 alike, so both
   # builds of a program are compiled the same way: -O0, -O1, -O2, -O3, -Os
   # or -Og.

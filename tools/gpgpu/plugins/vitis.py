@@ -1,9 +1,14 @@
-"""Build the host software: editable project, software platform and host application."""
-from gpgpu.api import Backends, PlatformFlow, Task
+"""Build the host software: editable project, software platform, host application and games."""
+from gpgpu.api import Backends, GameFlow, PlatformFlow, Task
 
 
 def tasks(backend: Backends) -> list[Task]:
     flow = backend(PlatformFlow)
+    games = [
+        Task(f"vitis:build:games:{game}", "Build the game's host application, after the platform.", flow.build_game(game),
+             needs=("vitis:build:platform", "software:host:platform", f"software:games:{game}:fetch",
+                    f"software:games:{game}:configure", f"software:games:{game}:assets", f"software:games:{game}:kernel"))
+        for game in backend(GameFlow).games()]
     return [
         Task("vitis:project", "Create the editable project from the existing hardware platform.",
              flow.create_project(), requires=("vivado:system:build",)),
@@ -15,4 +20,5 @@ def tasks(backend: Backends) -> list[Task]:
              needs=("vitis:build:host",)),
         Task("vitis:export", "Replace the committed default project with a portable snapshot of the editable one.",
              flow.export_project()),
+        *games,
     ]

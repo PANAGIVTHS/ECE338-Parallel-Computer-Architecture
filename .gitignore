@@ -34,3 +34,7 @@ SSOT.md
 
 # Data/log artifacts
 *.csv
+
+# Game data files (software.games.settings.<game>.assets): never committed
+*.wad
+*.WAD

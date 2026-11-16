@@ -68,6 +68,18 @@ def test_the_real_graph_loads_with_valid_categories():
         "ip:create", "ip:build", "system:create", "system:synthesis", "system:implementation", "system:bitstream", "system:build"]
 
 
+def test_every_game_has_its_commands_in_three_categories():
+    """A directory of software/games with a manifest gets a simulation, a host build and a deploy."""
+    tasks = open_workspace()._catalog.tasks
+    games = sorted(path.parent.name for path in (REPO_ROOT / "software/games").glob("*/game.yaml"))
+    assert "doom" in games
+    for game in games:
+        assert {f"software:games:{game}:sim", f"software:games:{game}:verify", f"vitis:build:games:{game}",
+                f"fpga:games:{game}:deploy"} <= tasks.keys()
+        # The board build takes the kernel image and the fetched source from the software tasks.
+        assert {f"software:games:{game}:kernel", f"software:games:{game}:fetch"} <= set(tasks[f"vitis:build:games:{game}"].needs)
+
+
 def test_categories_stay_separate_except_for_quick_software_builds():
     workspace = open_workspace()
     for task in workspace._catalog.tasks.values():

@@ -1,4 +1,4 @@
-"""Operate the board: upload, reset, program, and load and run programs."""
+"""Operate the board: upload, reset, program, load and run programs, and start games."""
 from gpgpu.api import Backends, Board, Task
 
 
@@ -29,5 +29,19 @@ def tasks(backend: Backends) -> list[Task]:
             Task(f"{prefix}:run", "After load-imem, run the kernel once and verify it returns to idle.",
                  board.run_program(program), needs=(f"{prefix}:load-imem",)),
             Task(f"{prefix}:all", "Build, upload, load and run the program.", needs=(f"{prefix}:run",)),
+        ]
+    for game in board.games():
+        prefix = f"fpga:games:{game}"
+        result += [
+            Task(f"{prefix}:upload", "Upload the existing bitstream, PS init script and the game's host application. "
+                 "Builds nothing.", board.upload_game(game), requires=("vivado:system:build", f"vitis:build:games:{game}")),
+            Task(f"{prefix}:preflight", "Check that the game's uploaded files are on the machine connected to the board. "
+                 "Read-only.", board.preflight_game(game)),
+            Task(f"{prefix}:_reset", "Reset the board, once the game's preflight has passed.",
+                 board.reset(), needs=(f"{prefix}:preflight",)),
+            Task(f"{prefix}:program", "Preflight, reset, set PROJECT mode, program the fabric, then start the game.",
+                 board.program_game(game), needs=(f"{prefix}:_reset",), setup=("fpga:mode:project",)),
+            Task(f"{prefix}:deploy", "Upload the game's existing files, then start it on the board. Builds nothing.",
+                 needs=(f"{prefix}:upload",), setup=(f"{prefix}:program",)),
         ]
     return result
