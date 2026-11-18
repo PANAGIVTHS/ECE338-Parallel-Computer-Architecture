@@ -120,6 +120,16 @@ class Toolchain(Protocol):
     def autorun_program(self) -> str | None: ...
 
 
+class DocsFlow(Protocol):
+    """The architecture map: its model validated, served while editing and built as a static site."""
+
+    def validate_map(self) -> Step: ...
+    def build_map(self) -> Step: ...
+    def serve_map(self) -> Step:
+        """Serve the viewer on the live model until it is interrupted."""
+        ...
+
+
 class Board(Protocol):
     """The programmable target. Its steps always run: they act on the outside world."""
 

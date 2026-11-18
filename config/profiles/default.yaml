@@ -219,6 +219,16 @@ paths:
   build:
     root: build
 
+# The architecture map (docs/architecture-map): model.yaml, drawn by the static
+# viewer in viewer/. `gpgpu docs map:build` assembles both under
+# <paths.build.root>/docs/architecture-map; `map:serve` serves them on host:port.
+docs:
+  map:
+    model: docs/architecture-map/model.yaml
+    viewer: docs/architecture-map/viewer
+    host: 127.0.0.1
+    port: 8731
+
 # Commands are names or paths. Machine-specific paths belong in config/local.yaml.
 tools:
   git:

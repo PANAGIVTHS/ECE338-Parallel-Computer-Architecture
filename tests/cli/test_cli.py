@@ -9,6 +9,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from gpgpu.adapters.config import Config
+from gpgpu.adapters.docs import MapSite, check_model, substitute
 from gpgpu.adapters.doit_engine import DoitEngine, _StateCheck
 from gpgpu.adapters.host_headers import _write_platform
 from gpgpu.adapters.tools import Machine, check_version, version_current
@@ -317,3 +319,44 @@ endpackage
     assert lines["GPGPU_BYTES"] == "{ 0x12U, 0xABU }"
     # status_t is numbered 0 and 4: no name table
     assert lines["GPGPU_ST_ERR"] == "4U" and "GPGPU_STATUS_NAMES" not in lines
+
+
+def test_map_values_come_from_the_rtl_and_the_configuration():
+    constants = {"gpu_pkg::FB0_BASE": 0x1800_0000, "gpu_pkg::DMEM_BASE": 0, "ControlPkg::DMEM_BASE": 0x4000,
+                 "gpu_pkg::GMEM_SIZE": 8 << 20}
+    config = {"architecture.num_cores": 32, "architecture.ddr_enable": True}.__getitem__
+    text, problems = substitute("# ${UNKNOWN} in a comment\n"
+                                "a: ${FB0_BASE:hex}, ${GMEM_SIZE:mib}, ${ControlPkg::DMEM_BASE:hex}\n"
+                                "b: ${config:architecture.num_cores} ${config:architecture.ddr_enable}\n", constants, config)
+    assert problems == []
+    assert "a: 0x1800_0000, 8 MiB, 0x0000_4000" in text and "b: 32 true" in text and "${UNKNOWN}" in text
+
+    def missing(key):
+        raise GpgpuError(key)
+    _, problems = substitute("x: ${DMEM_BASE} ${NOPE} ${config:no.such}\n", constants, missing)
+    assert [problem.split(":")[0] for problem in problems] == ["${DMEM_BASE}", "${NOPE}", "${config"]
+    assert "ambiguous" in problems[0] and "ControlPkg::DMEM_BASE" in problems[0]
+
+
+def test_map_checks_wires_module_names_and_block_design_cells(tmp_path):
+    (tmp_path / "Thing.sv").write_text("module Thing (input logic clk);\nendmodule\n")
+    design = tmp_path / "design_1.tcl"
+    design.write_text("set a [ create_bd_cell -type ip -vlnv x:y:z:1.0 cell_a ]\n"
+                      "set b [ create_bd_cell -type ip -vlnv x:y:z:1.0 cell_b ]\n")
+    root = {"id": "system", "children": [
+        {"id": "good", "kind": "module", "tech": "Thing", "rtl": "Thing.sv", "bd": "cell_a"},
+        {"id": "bad", "kind": "module", "tech": "Other", "rtl": "Thing.sv", "bd": ["cell_c"], "count": "many"},
+    ], "wires": ["good -> bad | data | ok", "good -> nowhere | data", "good -> bad | telepathy"]}
+    problems = check_model(root, tmp_path, design)
+    assert any("declares no module Other" in problem for problem in problems)
+    assert any("names no block nowhere" in problem for problem in problems)
+    assert any("unknown kind 'telepathy'" in problem for problem in problems)
+    assert any("count 'many'" in problem for problem in problems)
+    assert any("cell_c (bad) is not in design_1.tcl" in problem for problem in problems)
+    assert any("cell_b of design_1.tcl is in no block" in problem for problem in problems)
+    assert not any(problem.startswith("good:") for problem in problems)
+
+
+def test_the_architecture_map_matches_the_sources(capsys):
+    MapSite(Config(REPO_ROOT)).validate_map().action()
+    assert "model.yaml: valid" in capsys.readouterr().out
