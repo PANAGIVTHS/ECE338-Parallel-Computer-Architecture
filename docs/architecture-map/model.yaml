@@ -1,0 +1,975 @@
+# The GPGPU architecture map: one tree of blocks, from the kernel sources to the
+# lanes of the streaming multiprocessor. The viewer lays out every level with
+# ELK and nests it inside its parent, so zooming into a block opens it.
+#
+# A block:   id, label, kind, tech, summary, doc, rtl | src, bd, meta, count,
+#            status, children, wires
+# A wire:    "<from> -> <to> | <kind> | <label>"   (paths relative to the block
+#            declaring the wire, which must contain both ends)
+# Kinds:     lane, ip, module, memory, regs, process, command, artifact, tool,
+#            bus, external
+# Wire kinds: data, control, axi, axilite, stream, uart, irq, clock, produces, perf
+#
+# Values from the sources: ${NAME} is a constant of the RTL packages (bare, or
+# pkg::NAME), ${config:a.b} a configuration value. :hex prints 0x1234_5678,
+# :kib and :mib a size. `gpgpu docs map:validate` fails on an unknown name.
+# `bd` names the block design cells a block stands for; validation checks them
+# against hardware/bd/design_1.tcl in both directions.
+
+id: system
+label: GPGPU system
+summary: From the kernel sources to the lanes of the streaming multiprocessor.
+children:
+
+  # ================================================================ software
+  - id: software
+    label: Kernel software
+    kind: lane
+    summary: RISC-V C kernels, their headers and the build that turns them into an instruction-memory image.
+    children:
+      - id: kernels
+        label: Kernels
+        kind: process
+        tech: C, RV32IM
+        summary: One directory per program under software/programs, each with a native x86 build too.
+        src: software/programs
+        doc: |
+          Every lane runs the same kernel. A kernel reads its lane id with
+          `gpgpu_thread_id()` and its arguments from `GPGPU_ARGS`, and writes
+          to DMEM, the framebuffers or global memory.
+        children:
+          - id: fb
+            label: Framebuffer demos
+            kind: process
+            tech: FB0 / FB1 in DDR
+            summary: Render a 1280×720 XRGB frame that the HDMI pipeline shows.
+            children:
+              - {id: mandelbrot, label: "mandelbrot", kind: process, tech: "mandelbrot.c", summary: "The Mandelbrot set.", src: software/programs/mandelbrot/mandelbrot.c}
+              - {id: julia, label: "julia", kind: process, tech: "julia.c", summary: "A Julia set, sharing mandelbrot.h.", src: software/programs/julia/julia.c}
+              - {id: cube, label: "cube", kind: process, tech: "cube.c", summary: "A lit, rotating cube in fixed point.", src: software/programs/cube/cube.c}
+              - {id: triangle, label: "triangle", kind: process, tech: "triangle.c", summary: "Triangle rasterisation, fully inlined.", src: software/programs/triangle/triangle.c}
+              - {id: terrain, label: "terrain", kind: process, tech: "terrain.c", summary: "Terrain rendering with per-lane stacks.", src: software/programs/terrain/terrain.c}
+              - {id: metaballs, label: "metaballs", kind: process, tech: "metaballs.c", summary: "A metaball field.", src: software/programs/metaballs/metaballs.c}
+              - {id: ripple, label: "ripple", kind: process, tech: "ripple.c", summary: "Each store writes 32 consecutive pixels, one DDR burst.", src: software/programs/ripple/ripple.c}
+              - {id: pixels, label: "pixels / fill", kind: process, tech: "pixels.c, fill.c", summary: "Colour patterns and fills.", src: software/programs/pixels/pixels.c}
+          - id: compute
+            label: Compute kernels
+            kind: process
+            tech: DMEM + fpga_run.py
+            summary: Step a computation per launch; the workstation runner sets arguments and reads results.
+            children:
+              - {id: nbody, label: "nbody", kind: process, tech: "nbody.c + fpga.py", summary: "2D N-body steps.", src: software/programs/nbody/nbody.c}
+              - {id: nbody3d, label: "nbody-3d", kind: process, tech: "nbody-3d.c + fpga.py", summary: "3D N-body with JSON datasets.", src: software/programs/nbody-3d/nbody-3d.c}
+              - {id: differences, label: "differences", kind: process, tech: "differences.c + fpga.py", summary: "Finite differences.", src: software/programs/differences/differences.c}
+              - {id: sobel, label: "sobel", kind: process, tech: "sobel.c", summary: "Sobel edge filter on an image in memory.", src: software/programs/sobel/sobel.c}
+          - id: tests
+            label: Test kernels
+            kind: process
+            tech: hardware checks
+            summary: Exercise one feature of the core each.
+            children:
+              - {id: simple, label: "simple", kind: process, tech: "simple.c", summary: "Every lane writes its thread id.", src: software/programs/simple/simple.c}
+              - {id: memfault, label: "memfault", kind: process, tech: "memfault.c", summary: "Provokes a memory fault on purpose.", src: software/programs/memfault/memfault.c}
+              - {id: stacktest, label: "stacktest", kind: process, tech: "stacktest.c", summary: "Per-lane stacks and spills.", src: software/programs/stacktest/stacktest.c}
+              - {id: stress, label: "stress", kind: process, tech: "stress.c", summary: "Back-to-back ALU, multiply and memory dependencies.", src: software/programs/stress/stress.c}
+              - {id: subword, label: "subword", kind: process, tech: "subword.c", summary: "Byte and halfword loads and stores to global memory.", src: software/programs/subword/subword.c}
+      - id: headers
+        label: Kernel headers
+        kind: artifact
+        tech: software/programs/*.h
+        summary: The runtime entry, the core count and branch-free maths.
+        src: software/programs
+        children:
+          - id: runtime
+            label: Kernel runtime
+            kind: artifact
+            tech: gpgpu_runtime.h
+            summary: GPGPU_START at PC 0, per-lane stacks, lane id from x31, exit ECALL.
+            src: software/programs/gpgpu_runtime.h
+            doc: |
+              `GPGPU_START(kernel_fn)` emits the code at PC 0: it gives every lane a
+              private 64-byte stack slice at the top of DMEM, calls the kernel, then
+              requests completion with ECALL service 0 (`a7 = 0`).
+          - id: config
+            label: Core count
+            kind: artifact
+            tech: gpgpu_config.h
+            summary: GPGPU_NUM_CORES, supplied by the CLI from architecture.num_cores.
+            src: software/programs/gpgpu_config.h
+            meta: {GPGPU_NUM_CORES: "${config:architecture.num_cores}"}
+          - id: math
+            label: Branch-free maths
+            kind: artifact
+            tech: gpgpu_math.h
+            summary: Masks instead of branches; no divider, so only add, logic, shifts and MUL.
+            src: software/programs/gpgpu_math.h
+      - id: linker
+        label: Linker script
+        kind: artifact
+        tech: gpgpu.ld
+        summary: IMEM and DMEM both at 0; arguments at 0x40; lane stacks from 0x1800.
+        src: software/programs/gpgpu.ld
+        meta: {IMEM: "0x0000, ${IMEM_ENTRIES} words", DMEM: "0x0000, ${DMEM_ENTRIES} words", GPGPU_ARGS: "0x40..0x50 (host words 16..19)", stacks: "0x1800..0x2000, 64 B per lane"}
+      - id: build
+        label: Build chain
+        kind: tool
+        tech: gpgpu software:programs:<p>:*
+        summary: Compile, link, disassemble and emit the IMEM image.
+        children:
+          - {id: gcc, label: "riscv-gcc", kind: tool, tech: "-march=rv32im", summary: "Compiles and links the kernel into an ELF."}
+          - {id: elf, label: "ELF", kind: artifact, tech: "<p>.elf", summary: "The linked kernel."}
+          - {id: objdump, label: "objdump", kind: tool, tech: "disassembly", summary: "Complete disassembly, the source of the memory image."}
+          - {id: asm, label: "Assembly listing", kind: artifact, tech: "<p>.asm", summary: "Cleaned listing, for reading."}
+          - {id: mem, label: "IMEM image", kind: artifact, tech: "<p>.mem", summary: "One instruction word per line, loaded by loadimem."}
+          - {id: native, label: "x86 build", kind: tool, tech: "gcc, native", summary: "The same kernel as a host program, for checking results."}
+        wires:
+          - gcc -> elf | produces | link
+          - elf -> objdump | data |
+          - objdump -> asm | produces | clean
+          - objdump -> mem | produces | words
+    wires:
+      - kernels -> build.gcc | data | sources
+      - kernels -> build.native | data | sources
+      - headers -> build.gcc | data | include
+      - linker -> build.gcc | data | -T gpgpu.ld
+
+  # ================================================================ workstation
+  - id: workstation
+    label: Workstation
+    kind: lane
+    summary: The gpgpu CLI, RTL verification, the FPGA build and the connection to the board.
+    children:
+      - id: cli
+        label: gpgpu CLI
+        kind: tool
+        tech: tools/gpgpu, Python
+        summary: One command line for the RTL, Vivado, Vitis, the software, the board and this map.
+        src: tools/gpgpu
+        doc: |
+          Layers: `cli` → `app` → `api` (tasks, steps, ports) ← `adapters`.
+          Plugins declare tasks per category; adapters are the only code that
+          knows a tool. Configuration layers default.yaml, a profile,
+          config/local.yaml and `--set`.
+        children:
+          - {id: rtl, label: "rtl", kind: command, tech: "Verilator", summary: "Constants, expected results, the smx, e2e and ddr suites, random programs.", src: tools/gpgpu/plugins/rtl.py}
+          - {id: vivado, label: "vivado", kind: command, tech: "Vivado", summary: "IP project, packaging, system project, synthesis, implementation, bitstream.", src: tools/gpgpu/plugins/vivado.py}
+          - {id: vitis, label: "vitis", kind: command, tech: "Vitis", summary: "Software platform and the host application.", src: tools/gpgpu/plugins/vitis.py}
+          - {id: sw, label: "software", kind: command, tech: "riscv-gcc", summary: "Build kernels; generate gpgpu_platform.h and gpgpu_autorun.h.", src: tools/gpgpu/plugins/software.py}
+          - {id: fpga, label: "fpga", kind: command, tech: "SSH agent", summary: "Upload, reset, program the fabric and start the host.", src: tools/gpgpu/plugins/fpga.py}
+          - {id: docs, label: "docs", kind: command, tech: "this map", summary: "Validate, serve and build the architecture map.", src: tools/gpgpu/plugins/docs.py}
+      - id: verify
+        label: RTL verification
+        kind: tool
+        tech: tools/tests, tests/hardware/rtl
+        summary: A Python model of the GPGPU predicts every case; Verilator runs the RTL against it.
+        children:
+          - id: constants
+            label: RTL constants
+            kind: artifact
+            tech: pyslang
+            summary: Every package constant, elaborated from the RTL; (* host *) ones reach the driver.
+            src: tools/gpgpu/adapters/slang.py
+          - {id: assembler, label: "Assembler", kind: tool, tech: "assembler.py", summary: "Assembles each case's program.asm into program.mem.", src: tools/tests/assembler.py}
+          - {id: cases, label: "Test cases", kind: artifact, tech: "cases/test<N>", summary: "Directed programs with optional DMEM and DDR seeds.", src: tests/hardware/rtl/cases}
+          - {id: model, label: "GPGPU model", kind: tool, tech: "gpgpu_model.py", summary: "Instruction-level model with the hardware's rules: lockstep, lane-0 branches.", src: tools/tests/gpgpu_model.py}
+          - {id: expected, label: "Expected results", kind: tool, tech: "expected_generator.py", summary: "Runs each case on the model: DMEM, register files, pipeline-fill cycles.", src: tools/tests/expected_generator.py}
+          - {id: random, label: "Random programs", kind: tool, tech: "random_tester.py, program_checker.py", summary: "Reproducible random programs, checked against the model.", src: tools/tests/random_tester.py}
+          - {id: benches, label: "Test benches", kind: tool, tech: "tb_GPGPU, _e2e, _ddr", summary: "SMX only; through AXI4-Lite and the IRQ; with an AXI4 slave memory for DDR.", src: tests/hardware/rtl}
+          - {id: wave, label: "Waveforms", kind: tool, tech: "Surfer, visualizer.html", summary: "Traces of the last run, and a pipeline visualiser.", src: tests/hardware/rtl/visualizer.html}
+        wires:
+          - assembler -> cases | produces | program.mem
+          - cases -> expected | data |
+          - constants -> model | data | constants
+          - model -> expected | data |
+          - expected -> benches | data | expected results
+          - cases -> benches | data | programs
+          - model -> random | data |
+          - random -> benches | data | programs
+          - benches -> wave | produces | traces
+      - id: fpgaflow
+        label: FPGA build
+        kind: tool
+        tech: Vivado 2025.2, Vitis
+        summary: From the RTL to a bitstream and a host application.
+        src: tools/gpgpu/adapters/vivado
+        children:
+          - {id: ipproj, label: "IP project", kind: tool, tech: "create_ip_project.tcl", summary: "Recreated from the production RTL.", src: tools/gpgpu/adapters/vivado/tcl/create_ip_project.tcl}
+          - {id: package, label: "IP package", kind: artifact, tech: "gpgpu_axi v1.0", summary: "Packaged and validated, then published as an IP repository.", src: tools/gpgpu/adapters/vivado/tcl/package_ip.tcl}
+          - {id: system, label: "System project", kind: tool, tech: "create_system.tcl", summary: "Built from design_1.tcl, with the configuration applied over it.", src: tools/gpgpu/adapters/vivado/tcl/create_system.tcl}
+          - {id: impl, label: "Synthesis and implementation", kind: tool, tech: "synthesis.tcl, implementation.tcl", summary: "Optional post-route physical optimisation.", src: tools/gpgpu/adapters/vivado/tcl/implementation.tcl}
+          - {id: bit, label: "Bitstream", kind: artifact, tech: ".bit", summary: "Generated and published for upload.", src: tools/gpgpu/adapters/vivado/tcl/bitstream.tcl}
+          - {id: xsa, label: "Hardware platform", kind: artifact, tech: "gpgpu_platform.xsa", summary: "Exported for Vitis.", src: tools/gpgpu/adapters/vivado/tcl/export_hardware.tcl}
+          - {id: vitis, label: "Vitis platform and host", kind: tool, tech: "standalone BSP", summary: "Builds the software platform, then the host application.", src: tools/gpgpu/adapters/vitis/flow.py}
+          - {id: hostelf, label: "Host application", kind: artifact, tech: ".elf + ps7_init", summary: "The monitor and driver, with the PS initialisation script."}
+        wires:
+          - ipproj -> package | produces |
+          - package -> system | data | IP repository
+          - system -> impl | data |
+          - impl -> bit | produces |
+          - impl -> xsa | produces |
+          - xsa -> vitis | data |
+          - vitis -> hostelf | produces |
+      - id: boardlink
+        label: Board connection
+        kind: tool
+        tech: SSH agent, UART
+        summary: Programs the board through the machine it is plugged into, and talks to the monitor over UART.
+        children:
+          - {id: agent, label: "Board agent", kind: external, tech: "SSH, shell helpers", summary: "The machine connected to the board: uploads, reset, mode, programming.", src: tools/gpgpu/adapters/board/ssh.py}
+          - {id: uart, label: "UART client", kind: tool, tech: "tools/board/xc7z020/uart.py", summary: "Speaks the monitor's protocol over the serial port.", src: tools/board/xc7z020/uart.py}
+          - {id: runner, label: "fpga_run.py", kind: tool, tech: "Python", summary: "Load IMEM, write arguments, run, dump DMEM; repeated per kernel call.", src: software/programs/fpga_run.py, doc: "The generic UART loop. A program's `fpga.py` adapter decides the arguments of every launch and which DMEM window to dump and decode."}
+          - {id: adapters, label: "Program adapters", kind: tool, tech: "<p>/fpga.py", summary: "Per-program arguments, DMEM decoding and visualisation.", src: software/programs/nbody/fpga.py}
+        wires:
+          - adapters -> runner | control | args, windows
+          - runner -> uart | control | commands
+    wires:
+      - cli.rtl -> verify.constants | produces | rtl:constants
+      - cli.rtl -> verify.benches | control | build, run
+      - cli.vivado -> fpgaflow.ipproj | control |
+      - cli.vitis -> fpgaflow.vitis | control |
+      - cli.fpga -> boardlink.agent | control | upload, program
+      - fpgaflow.bit -> boardlink.agent | data | bitstream
+      - fpgaflow.hostelf -> boardlink.agent | data | host application
+
+  # ================================================================ host
+  - id: host
+    label: Host (PS software)
+    kind: lane
+    summary: Standalone firmware on Cortex-A9 core 0; a UART monitor over the GPGPU driver.
+    src: software/host/xc7z020
+    children:
+      - id: monitor
+        label: UART monitor
+        kind: process
+        tech: main.c
+        summary: Reads a command line, dispatches it, prints the result.
+        src: software/host/xc7z020/main.c
+        children:
+          - {id: reader, label: "Line reader", kind: process, tech: "inbyte, strtok", summary: "Reads one command line from the UART and splits it into words."}
+          - id: access
+            label: Word access
+            kind: command
+            tech: wimem wdmem rimem rdmem
+            summary: Write or read one IMEM or DMEM word by index.
+            children:
+              - {id: wimem, label: "wimem", kind: command, tech: "<index> <word>", summary: "Write an IMEM word."}
+              - {id: wdmem, label: "wdmem", kind: command, tech: "<index> <word>", summary: "Write a DMEM word."}
+              - {id: rimem, label: "rimem", kind: command, tech: "<index>", summary: "Read an IMEM word."}
+              - {id: rdmem, label: "rdmem", kind: command, tech: "<index>", summary: "Read a DMEM word."}
+          - id: load
+            label: Load
+            kind: command
+            tech: loadimem loaddmem *_bin
+            summary: Load a memory from the UART, as text or binary.
+            children:
+              - {id: loadimem, label: "loadimem", kind: command, tech: "<count>, hex", summary: "Load IMEM words as text."}
+              - {id: loaddmem, label: "loaddmem", kind: command, tech: "<count>, hex", summary: "Load DMEM words as text."}
+              - {id: loadimem_bin, label: "loadimem_bin", kind: command, tech: "<count>, binary", summary: "Load IMEM words as raw bytes."}
+              - {id: loaddmem_bin, label: "loaddmem_bin", kind: command, tech: "<count>, binary", summary: "Load DMEM words as raw bytes."}
+          - id: dump
+            label: Dump
+            kind: command
+            tech: dumpimem dumpdmem dumpdmem_bin
+            summary: Dump a range of a memory, as text or binary.
+            children:
+              - {id: dumpimem, label: "dumpimem", kind: command, tech: "<offset> <count>", summary: "Dump IMEM as text."}
+              - {id: dumpdmem, label: "dumpdmem", kind: command, tech: "<offset> <count>", summary: "Dump DMEM as text."}
+              - {id: dumpdmem_bin, label: "dumpdmem_bin", kind: command, tech: "<offset> <count>", summary: "Dump DMEM as raw bytes, for fpga_run.py."}
+          - id: run
+            label: Run control
+            kind: command
+            tech: run bench clear reset
+            summary: Launch, benchmark and recover the core.
+            children:
+              - {id: run, label: "run", kind: command, tech: "gpgpu_start_and_wait", summary: "Launch the kernel in IMEM once and wait for it."}
+              - {id: bench, label: "bench", kind: command, tech: "<frames>", summary: "Run N frames quietly; report the frame rate and the summed counters."}
+              - {id: clear, label: "clear", kind: command, tech: "gpgpu_clear", summary: "Acknowledge STOPPED and FAULTED."}
+              - {id: reset, label: "reset", kind: command, tech: "gpgpu_reset", summary: "Stop the display, pulse the PL reset, re-initialise, restart the display."}
+          - id: info
+            label: Information
+            kind: command
+            tech: help status perf
+            summary: Commands, device state and the last run's counters.
+            children:
+              - {id: help, label: "help", kind: command, tech: "print_help", summary: "List the commands."}
+              - {id: status, label: "status", kind: command, tech: "gpgpu_print_status", summary: "Identity, state, interrupt and fault registers."}
+              - {id: perf, label: "perf", kind: command, tech: "gpgpu_perf_report", summary: "Read and report the performance counters."}
+          - id: display
+            label: Display
+            kind: command
+            tech: display gmemfill gmemcheck
+            summary: Choose the framebuffer on HDMI; fill and check one from the CPU.
+            children:
+              - {id: display, label: "display", kind: command, tech: "<fb>", summary: "Park the VDMA on framebuffer 0 or 1."}
+              - {id: gmemfill, label: "gmemfill", kind: command, tech: "<fb>", summary: "Fill a framebuffer with a pattern from the CPU."}
+              - {id: gmemcheck, label: "gmemcheck", kind: command, tech: "<fb>", summary: "Check that pattern."}
+              - {id: scanout, label: "VDMA scanout", kind: process, tech: "display_show", summary: "Programs the VDMA's MM2S channel in park mode: size, stride, frame stores."}
+          - id: autorun
+            label: Autorun
+            kind: artifact
+            tech: gpgpu_autorun.h (generated)
+            summary: A kernel image compiled in, loaded and run at boot.
+            src: software/host/xc7z020/gpgpu_autorun.h
+        wires:
+          - reader -> access | control |
+          - reader -> load | control |
+          - reader -> dump | control |
+          - reader -> run | control |
+          - reader -> info | control |
+          - reader -> display | control |
+          - display.display -> display.scanout | control | park pointer
+      - id: driver
+        label: GPGPU driver
+        kind: process
+        tech: gpgpu_driver.c
+        summary: The only code that touches the GPGPU aperture; 18 functions in gpgpu_driver.h.
+        src: software/host/xc7z020/gpgpu_driver.c
+        meta: {aperture: "${config:hardware.vivado.peripheral.base_address}, 64 KiB", "return codes": "OK, ERR_STATE, ERR_FAULT, ERR_FATAL"}
+        children:
+          - id: life
+            label: Lifecycle
+            kind: process
+            tech: init, reset, status
+            summary: Check the identity, reset the PL, read the state.
+            children:
+              - {id: init, label: "gpgpu_init", kind: process, tech: "identity check", summary: "Checks the identity registers against the generated header."}
+              - {id: reset, label: "gpgpu_reset", kind: process, tech: "FCLK_RESET0", summary: "Pulses the PL reset, then gpgpu_init."}
+              - {id: readstatus, label: "gpgpu_read_status", kind: process, tech: "STATUS", summary: "Returns the STATUS register."}
+              - {id: printstatus, label: "gpgpu_print_status", kind: process, tech: "all registers", summary: "Prints identity, state, IRQ and fault registers."}
+          - id: launch
+            label: Launch
+            kind: process
+            tech: start, wait, clear
+            summary: Start a kernel and wait for it, by interrupt or by polling STATUS.
+            children:
+              - {id: start, label: "gpgpu_start_and_wait", kind: process, tech: "CONTROL.START", summary: "Starts the kernel and waits for IDLE, with progress messages."}
+              - {id: quiet, label: "gpgpu_run_quiet", kind: process, tech: "for timed loops", summary: "The same without messages."}
+              - {id: clear, label: "gpgpu_clear", kind: process, tech: "STATUS W1C", summary: "Clears STOPPED and FAULTED; a fatal needs a reset."}
+          - id: mem
+            label: Memory access
+            kind: process
+            tech: word indices
+            summary: IMEM and DMEM words through the 0x2000 and 0x4000 windows, while idle.
+            children:
+              - {id: wimem, label: "gpgpu_write_imem", kind: process, tech: "IMEM window", summary: "Writes one IMEM word."}
+              - {id: wdmem, label: "gpgpu_write_dmem", kind: process, tech: "DMEM window", summary: "Writes one DMEM word."}
+              - {id: rimem, label: "gpgpu_read_imem", kind: process, tech: "IMEM window", summary: "Reads one IMEM word."}
+              - {id: rdmem, label: "gpgpu_read_dmem", kind: process, tech: "DMEM window", summary: "Reads one DMEM word."}
+              - {id: dimem, label: "gpgpu_dump_imem_ascii", kind: process, tech: "text", summary: "Prints an IMEM range."}
+              - {id: ddmem, label: "gpgpu_dump_dmem_ascii", kind: process, tech: "text", summary: "Prints a DMEM range."}
+          - id: perf
+            label: Performance counters
+            kind: process
+            tech: gpgpu_perf_t
+            summary: Read every 64-bit counter while idle, sum runs, report and check the rules.
+            children:
+              - {id: read, label: "gpgpu_perf_read", kind: process, tech: "0x1000 window", summary: "Reads all global counters and warp leaves."}
+              - {id: add, label: "gpgpu_perf_add", kind: process, tech: "sum", summary: "Adds one run into a total."}
+              - {id: report, label: "gpgpu_perf_report", kind: process, tech: "groups, rules", summary: "Prints the report and counts failing consistency rules."}
+          - id: stubs
+            label: Register file stubs
+            kind: process
+            tech: compatibility
+            summary: The AXI aperture has no register-file window; these report that.
+            children:
+              - {id: rreg, label: "gpgpu_read_regfile", kind: process, tech: "stub", summary: "Returns ERR_STATE."}
+              - {id: dreg, label: "gpgpu_dump_regfile_ascii", kind: process, tech: "stub", summary: "Returns ERR_STATE."}
+          - id: isr
+            label: Interrupt handler
+            kind: process
+            tech: XScuGic, GPGPU_USE_IRQ
+            summary: Optional; clears the level interrupt's source, then wakes the waiter.
+          - id: platform
+            label: Platform header
+            kind: artifact
+            tech: gpgpu_platform.h (generated)
+            summary: Register map, memory map and sizes from the (* host *) RTL constants.
+            src: software/host/xc7z020/gpgpu_platform.h
+          - id: xil
+            label: Xil_In32 / Xil_Out32
+            kind: tool
+            tech: standalone BSP
+            summary: Uncached 32-bit loads and stores to the aperture.
+        wires:
+          - life -> xil | data |
+          - launch -> xil | control |
+          - mem -> xil | data |
+          - perf -> xil | data |
+          - isr -> launch | control | done
+          - platform -> xil | data | offsets
+    wires:
+      - monitor.access -> driver.mem | control |
+      - monitor.load -> driver.mem | control |
+      - monitor.dump -> driver.mem | control |
+      - monitor.run.run -> driver.launch.start | control |
+      - monitor.run.bench -> driver.launch.quiet | control |
+      - monitor.run.bench -> driver.perf | control | read, add, report
+      - monitor.run.clear -> driver.launch.clear | control |
+      - monitor.run.reset -> driver.life.reset | control |
+      - monitor.info.status -> driver.life.printstatus | control |
+      - monitor.info.perf -> driver.perf | control |
+      - monitor.autorun -> driver.mem | data | image
+
+  # ================================================================ hardware
+  - id: board
+    label: Zynq block design
+    kind: lane
+    tech: ${config:hardware.fpga.part}
+    summary: design_1 — the PS, the GPGPU IP, two SmartConnects, the HDMI pipeline, clocks and resets.
+    src: hardware/bd/design_1.tcl
+    doc: |
+      The block design is the source of truth in `design_1.tcl`; the
+      configuration is applied over it on every build, because it owns the
+      core count, the CSR aperture and the fabric clock. Each cell here links
+      to its place in the design by its `bd` name.
+    children:
+      - id: ps
+        label: Processing system
+        kind: ip
+        tech: processing_system7 5.5
+        bd: processing_system7_0
+        summary: Two Cortex-A9 cores, the DDR controller, UART, GIC and the AXI ports.
+        children:
+          - {id: cpu, label: "Cortex-A9 ×2", kind: ip, tech: "ARMv7-A", summary: "Core 0 runs the host firmware."}
+          - {id: gp0, label: "M_AXI_GP0", kind: bus, tech: "AXI3 master", summary: "Host → GPGPU registers, clocked by FCLK_CLK0."}
+          - {id: gp1, label: "M_AXI_GP1", kind: bus, tech: "AXI3 master", summary: "Host → VDMA registers, clocked by FCLK_CLK1."}
+          - {id: hp0, label: "S_AXI_HP0", kind: bus, tech: "64-bit AXI3 slave", summary: "GPGPU memory traffic into DDR."}
+          - {id: hp2, label: "S_AXI_HP2", kind: bus, tech: "64-bit AXI3 slave", summary: "VDMA framebuffer reads; meets HP0 only in the DDR controller."}
+          - {id: ddrc, label: "DDR controller", kind: memory, tech: "DDR3", summary: "Arbitrates the CPU and HP ports into the external DDR."}
+          - {id: gic, label: "GIC", kind: ip, tech: "IRQ_F2P, ID 61", summary: "Delivers the GPGPU's interrupt to the CPU."}
+          - {id: uart, label: "UART0", kind: ip, tech: "EMIO", summary: "The monitor's console, routed through the fabric to pins."}
+          - {id: fclk, label: "Fabric clocks and reset", kind: ip, tech: "FCLK_CLK0/1, FCLK_RESET0_N", summary: "FCLK_CLK0 at ${config:hardware.vivado.fabric_clock_mhz} MHz for the GPGPU; FCLK_CLK1 at 100 MHz for the display."}
+        wires:
+          - cpu -> gp0 | axi |
+          - cpu -> gp1 | axi |
+          - hp0 -> ddrc | axi |
+          - hp2 -> ddrc | axi |
+          - gic -> cpu | irq |
+          - cpu -> uart | data |
+      - {id: ctrl_smc, label: "gpgpu_ctrl", kind: bus, tech: "SmartConnect 1×1", bd: gpgpu_ctrl, summary: "GP0 to the GPGPU's AXI4-Lite slave."}
+      - {id: ddr_smc, label: "gpgpu_ddr", kind: bus, tech: "SmartConnect 1×1", bd: gpgpu_ddr, summary: "The GPGPU's AXI4 master to HP0, converting AXI4 to AXI3."}
+      # ---------------------------------------------------------- the IP
+      - id: gpgpu
+        label: GPGPU IP
+        kind: ip
+        tech: gpgpu_axi v1.0
+        bd: gpgpu_axi_0
+        summary: The packaged IP. Its wrapper adds the AXI4-Lite slave around the GPGPU core.
+        rtl: hardware/rtl/gpgpu/interfaces/AXI4Top.v
+        doc: |
+          The wrapper `gpgpu_axi` exposes the AXI4-Lite slave `s00_axi` the host
+          writes and the AXI4 master `m00_axi` through which the memory
+          subsystem reaches DDR, plus `irq` and two status outputs.
+        meta: {clock: "FCLK_CLK0, ${config:hardware.vivado.fabric_clock_mhz} MHz", aperture: "${config:hardware.vivado.peripheral.base_address}, 64 KiB", lanes: "${config:architecture.num_cores}", "interface version": "${config:architecture.interface_version}", DDR: "${config:architecture.ddr_enable}"}
+        children:
+          - id: axil
+            label: AXI4-Lite slave
+            kind: module
+            tech: gpgpu_axi_slave_lite_v1_0_S00_AXI
+            summary: One outstanding transaction, turned into the core's request/response pair.
+            rtl: hardware/rtl/gpgpu/interfaces/AXI4LiteSlave.sv
+
+          - id: core
+            label: GPGPU core
+            kind: module
+            tech: GPGPU
+            summary: Control, one streaming multiprocessor, its instruction memory and the memory subsystem.
+            rtl: hardware/rtl/gpgpu/GPGPU.sv
+            doc: |
+              While the core is idle the host owns the instruction memory and
+              lane 0's memory port; while it runs, the SM owns them. The AXI4
+              master is flattened onto the wrapper's `m00_axi` ports here.
+            children:
+
+              # ------------------------------------------ control
+              - id: control
+                label: Control
+                kind: module
+                tech: control/
+                summary: Decodes host accesses, holds the registers, runs the core's state machine and counts.
+                children:
+                  - id: mmio
+                    label: MMIO controller
+                    kind: module
+                    tech: MMIOController
+                    summary: Routes a host request to the CSRs, the IMEM window or the DMEM window.
+                    rtl: hardware/rtl/gpgpu/control/MMIOController.sv
+                    doc: The memory windows are only reachable while the core is idle; otherwise the status is `RSP_INVALID_STATE`.
+                    meta: {registers: "0x0000..0x0FFF", "perf counters": "${PERF_BASE:hex}", "IMEM window": "${IMEM_BASE:hex}", "DMEM window": "${ControlPkg::DMEM_BASE:hex}"}
+                  - id: csr
+                    label: CSR bank
+                    kind: regs
+                    tech: CSRBank
+                    summary: Identity, control, interrupt and fault registers, and the read path of the counters.
+                    rtl: hardware/rtl/gpgpu/control/CSRBank.sv
+                    children:
+                      - id: ident
+                        label: Identity
+                        kind: regs
+                        tech: read only
+                        summary: What was built, and from which commit.
+                        children:
+                          - {id: info, label: "INFO", kind: regs, tech: "${REG_INFO:hex}", summary: "Interface version and lanes per SM, 16 bits each."}
+                          - {id: infomem, label: "INFO_MEM", kind: regs, tech: "${REG_INFO_MEM:hex}", summary: "IMEM and DMEM entries, 16 bits each."}
+                          - {id: features, label: "INFO_FEATURES", kind: regs, tech: "${REG_INFO_FEATURES:hex}", summary: "Bit 0: the DDR backend is built in."}
+                          - {id: clock, label: "INFO_CLOCK", kind: regs, tech: "${REG_INFO_CLOCK:hex}", summary: "The fabric clock in kHz."}
+                          - {id: build, label: "BUILD_ID", kind: regs, tech: "${REG_BUILD_ID:hex}", summary: "28-bit commit hash and a dirty bit."}
+                      - id: ctl
+                        label: Control and status
+                        kind: regs
+                        tech: read / write
+                        summary: Start, stop, the state and the completion interrupt.
+                        children:
+                          - {id: control, label: "CONTROL", kind: regs, tech: "${REG_CONTROL:hex}", summary: "Write 1 to START (bit 0) or STOP (bit 1)."}
+                          - {id: status, label: "STATUS", kind: regs, tech: "${REG_STATUS:hex}", summary: "IDLE, RUNNING, STOPPED, FAULTED; write 1 to clear the last two."}
+                          - {id: irqen, label: "IRQ_ENABLE", kind: regs, tech: "${REG_IRQ_ENABLE:hex}", summary: "Bit 0 enables the completion interrupt."}
+                          - {id: irqst, label: "IRQ_STATUS", kind: regs, tech: "${REG_IRQ_STATUS:hex}", summary: "Completion pending; write 1 to clear. Drives the level irq."}
+                        wires:
+                          - irqen -> irqst | control | enable
+                      - id: fault
+                        label: Fault report
+                        kind: regs
+                        tech: read only, until the next START
+                        summary: Why, which lanes, and at which instruction.
+                        children:
+                          - {id: info, label: "FAULT_INFO", kind: regs, tech: "${REG_FAULT_INFO:hex}", summary: "Cause (none, memory, fatal), status kinds and the fatal code."}
+                          - {id: lanes, label: "FAULT_LANES", kind: regs, tech: "${REG_FAULT_LANES:hex}", summary: "One bit per lane that faulted."}
+                          - {id: pc, label: "FAULT_PC", kind: regs, tech: "${REG_FAULT_PC:hex}", summary: "The PC of the faulting memory instruction."}
+                      - {id: readmux, label: "Read mux", kind: module, tech: "o_rdata, o_status", summary: "Selects the addressed register, or a counter on a perf hit."}
+                    wires:
+                      - ident -> readmux | data |
+                      - ctl -> readmux | data |
+                      - fault -> readmux | data |
+                  - id: exec
+                    label: Execution controller
+                    kind: module
+                    tech: ExecutionController
+                    summary: IDLE → RESET → RUNNING → DRAINING → IDLE.
+                    rtl: hardware/rtl/gpgpu/control/ExecutionController.sv
+                    doc: START takes the core through RESET (one cycle, which resets the SM) into RUNNING. The exit ECALL, a STOP or a fault leads to DRAINING until the memory subsystem reports quiet, then IDLE.
+                  - id: perf
+                    label: Performance counters
+                    kind: regs
+                    tech: PerfCounters
+                    summary: 64-bit counters of the run, cleared at START and read while idle.
+                    rtl: hardware/rtl/gpgpu/control/PerfCounters.sv
+                    doc: Every event is registered once before it is counted, with the run state that decides the window, so the counters add no paths into the logic they observe and the partitions stay exact.
+                    meta: {"global counters": "${PERF_GLOBAL_COUNT}", "warp leaves": "${PERF_WARP_LEAF_COUNT}", width: "${PERF_COUNTER_BYTES} bytes", base: "${PERF_BASE:hex}"}
+                    children:
+                      - id: bank
+                        label: Counter bank
+                        kind: module
+                        tech: PerfCounters.sv
+                        summary: Registers each event, counts in RUNNING or the run window, decodes reads.
+                      - id: global
+                        label: Global counters
+                        kind: regs
+                        tech: perf_global_t
+                        summary: One set for the GPU; the run and each AXI channel are exact partitions.
+                        rtl: hardware/rtl/gpgpu/control/PerfPkg.sv
+                        children:
+                          - {id: run, label: "Run", kind: regs, tech: "KERNEL_CYCLES, RUN_RESET, RUN_DRAIN", summary: "Every cycle from START to IDLE, and its reset and drain parts."}
+                          - {id: aw, label: "AW channel", kind: regs, tech: "TRANSFER, BLOCKED, IDLE", summary: "Write addresses; transfers count bursts."}
+                          - {id: w, label: "W channel", kind: regs, tech: "TRANSFER, BLOCKED, WAIT_AW, IDLE", summary: "Write beats, 64 bits each."}
+                          - {id: wring, label: "Write ring", kind: regs, tech: "INFLIGHT_SUM, OWED_SUM, RING_FULL", summary: "Occupied slots, bursts owed a response, full cycles."}
+                          - {id: ar, label: "AR channel", kind: regs, tech: "TRANSFER, BLOCKED, IDLE", summary: "Read addresses; transfers count bursts."}
+                          - {id: r, label: "R channel", kind: regs, tech: "TRANSFER, BLOCKED, WAIT, IDLE", summary: "Read beats, 64 bits each."}
+                          - {id: rring, label: "Read ring", kind: regs, tech: "RD_OWED_SUM", summary: "Bursts whose AR is accepted and RLAST not yet arrived."}
+                          - {id: coalesce, label: "Coalescing", kind: regs, tech: "WR_LANE_STORES, RD_LANE_LOADS", summary: "Lane accesses admitted to the DDR paths."}
+                          - {id: bram, label: "BRAM", kind: regs, tech: "ACCESSES, BUSY, DEFERRED", summary: "Data memory accesses and picks deferred."}
+                      - id: warp
+                        label: Warp leaves
+                        kind: regs
+                        tech: perf_warp_leaf_t
+                        summary: What the warp did each running cycle; exactly one leaf per cycle.
+                        rtl: hardware/rtl/gpgpu/control/PerfPkg.sv
+                        children:
+                          - {id: issue, label: "Issue", kind: regs, tech: "ISSUED", summary: "An instruction moved from ID to EX."}
+                          - {id: pipeline, label: "Pipeline", kind: regs, tech: "PIPE_FILL, BRANCH, LOAD_USE, MUL", summary: "Fill, taken-branch flush, load-use bubble, multiplier hazard."}
+                          - {id: memory, label: "Memory", kind: regs, tech: "ST_*, LD_*, BRAM", summary: "Store and load stalls by cause: ring full, admission, data; BRAM."}
+                    wires:
+                      - bank -> global | perf | count
+                      - bank -> warp | perf | count
+                wires:
+                  - mmio -> csr.readmux | control | write fire
+                  - csr.readmux -> mmio | data | read data, status
+                  - csr.ctl.control -> exec | control | start, stop
+                  - csr.ctl.status -> exec | control | clear stopped, faulted
+                  - exec -> csr.ctl.status | control | state
+                  - exec -> csr.ctl.irqst | control | complete pulse
+                  - exec -> perf.bank | perf | core state
+                  - perf.bank -> csr.readmux | data | hit, counter
+
+              # ------------------------------------------ owner muxes and IMEM
+              - id: imux
+                label: IMEM owner mux
+                kind: module
+                tech: GPGPU.sv
+                summary: The host's port while idle, the SM's fetch port otherwise; writes only from the host.
+                rtl: hardware/rtl/gpgpu/GPGPU.sv
+              - id: imem
+                label: Instruction memory
+                kind: memory
+                tech: MemorySinglePort
+                summary: ${IMEM_ENTRIES} words of single-port BRAM; its output register is the fetched instruction.
+                rtl: hardware/rtl/gpgpu/memory/bram/MemorySinglePort.sv
+                meta: {entries: "${IMEM_ENTRIES}", init: MEMORY_INIT}
+              - id: lane0mux
+                label: Lane 0 share
+                kind: module
+                tech: g_req_mux / g_host_shared
+                summary: Memory slot 0 is the host's DMEM window while idle, lane 0's port otherwise.
+                rtl: hardware/rtl/gpgpu/GPGPU.sv
+                doc: While idle the subsystem belongs to the host, and SM requests left over from a STOP are not presented, so they can never be claimed.
+
+              # ------------------------------------------ the SM
+              - id: sm
+                label: Streaming multiprocessor
+                kind: module
+                tech: StreamingMultiprocessor
+                summary: One warp of ${config:architecture.num_cores} lockstep lanes sharing fetch, decode and hazard control.
+                rtl: hardware/rtl/gpgpu/StreamingMultiprocessor.sv
+                doc: |
+                  IF and ID live in the SM; EX, MEM and WB are inside each lane.
+                  All lanes execute the same instruction and branches follow
+                  lane 0. A memory instruction stalls the whole warp until every
+                  lane has its response. The exit ECALL in EX stops issue, and the
+                  pipeline drains while the older instructions retire.
+                meta: {lanes: "${config:architecture.num_cores}", "warps per SM": "${WARPS_PER_SM}", "multiplier latency": "${MUL_LATENCY}"}
+                children:
+                  - {id: pc, label: "Program counter", kind: module, tech: "GUCounter", summary: "Instruction index; set by a taken branch, held by a hazard or a stall.", rtl: hardware/rtl/gpgpu/sp/GUCounter.sv}
+                  - {id: ifid, label: "IF/ID register", kind: regs, tech: "ifid_program_counter", summary: "The PC of the instruction in decode; the instruction itself is IMEM's output register."}
+                  - {id: decoder, label: "Decoder", kind: module, tech: "Decoder", summary: "RV32IM decode into id_ex_t; also sends rs1 and rs2 to every lane's register file.", rtl: hardware/rtl/gpgpu/sp/Decoder.sv}
+                  - {id: idex, label: "ID/EX register", kind: regs, tech: "id_ex_t", summary: "The decoded instruction, shared by every lane; a bubble on a hazard."}
+                  - {id: hazard, label: "Hazard unit", kind: module, tech: "HazardUnit", summary: "Data, load-use and multiplier hazards; flush on a taken branch.", rtl: hardware/rtl/gpgpu/sp/HazardUnit.sv}
+                  - id: warp
+                    label: Warp control
+                    kind: module
+                    tech: stall, exit, fault, perf leaf
+                    summary: When the whole warp waits, stops or faults, and what it did each cycle.
+                    children:
+                      - {id: stall, label: "Memory stall", kind: module, tech: "stall", summary: "Holds the pipeline until every lane has its memory response, while disabled, or after a fault."}
+                      - {id: exit, label: "Exit and fault capture", kind: module, tech: "exiting, fault_q", summary: "Stops issue after the exit ECALL; captures faulting lanes, kinds and PC."}
+                      - {id: leaf, label: "Warp leaf", kind: module, tech: "o_perf_leaf", summary: "Names what the warp did this cycle, in PerfPkg's priority order."}
+                    wires:
+                      - exit -> stall | control | fault
+                      - stall -> leaf | perf | memory wait
+
+                  # ---------------------------------- one lane
+                  - id: lanes
+                    label: Lanes
+                    kind: module
+                    tech: StreamingProcessor
+                    count: ${config:architecture.num_cores}
+                    summary: Identical streaming processors, one CORE_ID each; EX, MEM and WB.
+                    rtl: hardware/rtl/gpgpu/sp/StreamingProcessor.sv
+                    children:
+                      - {id: regfile, label: "Register file", kind: memory, tech: "Regfile", summary: "32 × 32-bit, read in ID; x31 holds the lane id.", rtl: hardware/rtl/gpgpu/sp/Regfile.sv}
+                      - {id: fwd, label: "Forwarding unit", kind: module, tech: "ForwardingUnit", summary: "Selects the EX/MEM or MEM/WB value over a stale register read.", rtl: hardware/rtl/gpgpu/sp/ForwardingUnit.sv}
+                      - {id: opsel, label: "Operand select", kind: module, tech: "ex_actual_alu_in_a/b", summary: "Register, forwarded value, PC or immediate; store data replicated per size."}
+                      - {id: alu, label: "ALU", kind: module, tech: "ALU", summary: "Integer operations and comparisons; passes the multiplier's product through.", rtl: hardware/rtl/gpgpu/sp/ALU.sv}
+                      - {id: mul, label: "Multiplier", kind: module, tech: "Multiplier", summary: "Pipelined multiply over ${MUL_LATENCY} stages; reports its hazards.", rtl: hardware/rtl/gpgpu/sp/Multiplier.sv}
+                      - {id: branch, label: "Branch and exit", kind: module, tech: "sp_feedback_t", summary: "Taken, target index and exit-in-EX; the SM uses lane 0's."}
+                      - {id: exmem, label: "EX/MEM register", kind: regs, tech: "ex_mem_t", summary: "Result, store data, destination and the exit request."}
+                      - {id: lsu, label: "Load / store", kind: module, tech: "memory_if", summary: "Byte, half and word requests with strobes; holds the response; extends loads."}
+                      - {id: memwb, label: "MEM/WB register", kind: regs, tech: "mem_wb_t", summary: "Load data or result, chosen as the write-back value."}
+                    wires:
+                      - regfile -> opsel | data | rs1, rs2 values
+                      - fwd -> opsel | control | forward A, B
+                      - exmem -> opsel | data | EX/MEM forward
+                      - memwb -> opsel | data | write-back forward
+                      - opsel -> alu | data | A, B
+                      - opsel -> mul | data | A, B
+                      - mul -> alu | data | product
+                      - alu -> branch | data | zero, compare
+                      - alu -> exmem | data | result
+                      - opsel -> exmem | data | store data
+                      - branch -> exmem | control | exit requested
+                      - exmem -> lsu | data | address, data, size
+                      - exmem -> fwd | control | rd, wen
+                      - lsu -> memwb | data | load data
+                      - exmem -> memwb | data | result, rd
+                      - memwb -> fwd | control | rd, wen
+                      - memwb -> regfile | data | write back
+                wires:
+                  - pc -> ifid | data | PC
+                  - ifid -> decoder | data | PC
+                  - decoder -> idex | data | decoded
+                  - decoder -> hazard | control | rs1, rs2, type
+                  - decoder -> lanes.regfile | data | rs1, rs2
+                  - idex -> lanes.opsel | data | id_ex_t
+                  - idex -> lanes.fwd | control | rs1, rs2
+                  - idex -> hazard | control | rd, load, mul
+                  - hazard -> pc | control | hold
+                  - hazard -> idex | control | bubble
+                  - hazard -> ifid | control | flush
+                  - lanes.branch -> pc | control | target (lane 0)
+                  - lanes.branch -> hazard | control | taken (lane 0)
+                  - lanes.mul -> hazard | control | mul hazards
+                  - lanes.branch -> warp.exit | control | exit in EX
+                  - lanes.lsu -> warp.stall | control | response received
+                  - warp.stall -> lanes | control | stall
+                  - warp.stall -> pc | control | stall
+                  - warp.exit -> pc | control | stop issue
+                  - hazard -> warp.leaf | perf | flush, load-use, mul
+
+              # ------------------------------------------ memory subsystem
+              - id: memsys
+                label: Memory subsystem
+                kind: module
+                tech: MemorySubsystem
+                summary: One port per lane; BRAM data memory, and DDR behind the AXI4 master.
+                rtl: hardware/rtl/gpgpu/memory/MemorySubsystem.sv
+                doc: |
+                  Every request is decoded against the memory map. DMEM is in
+                  BRAM; the two framebuffers and global memory are in DDR. A
+                  misaligned or unmapped access answers at once with a fault
+                  status. Both backends read every lane's request directly; the
+                  port controllers only arbitrate and answer.
+                children:
+                  - id: map
+                    label: Memory map
+                    kind: memory
+                    tech: gpu_pkg
+                    summary: Where a lane address goes.
+                    rtl: hardware/rtl/gpgpu/packages/gpu_pkg.sv
+                    children:
+                      - {id: dmem, label: "DMEM", kind: memory, tech: "${gpu_pkg::DMEM_BASE:hex}", summary: "${DMEM_SIZE:kib} of BRAM, read and write."}
+                      - {id: fb0, label: "FB0", kind: memory, tech: "${FB0_BASE:hex}", summary: "${FB_WIDTH}×${FB_HEIGHT} XRGB, ${FB_SIZE:kib}, in DDR."}
+                      - {id: fb1, label: "FB1", kind: memory, tech: "${FB1_BASE:hex}", summary: "The second framebuffer, the same size."}
+                      - {id: gmem, label: "GMEM", kind: memory, tech: "${GMEM_BASE:hex}", summary: "${GMEM_SIZE:mib} of global memory in DDR."}
+                  - id: ports
+                    label: Port controllers
+                    kind: module
+                    tech: PortController
+                    count: ${config:architecture.num_cores}
+                    summary: Decode, claim a backend, and answer one lane's request.
+                    rtl: hardware/rtl/gpgpu/memory/PortController.sv
+                    children:
+                      - {id: decode, label: "Address decode", kind: module, tech: "decode_access", summary: "BRAM, DDR or a fault status, from the address, size and direction."}
+                      - {id: claim, label: "Claim", kind: module, tech: "cand / accept", summary: "A presented request becomes a candidate of its backend; ready when accepted."}
+                      - {id: fsm, label: "Port state", kind: module, tech: "IDLE, BRAM_RD, DDR_RD, DDR_WR, IMM_RSP", summary: "Tracks the request until its response is taken."}
+                      - {id: rsp, label: "Response", kind: module, tech: "mem_rsp_t", summary: "BRAM data, this lane's word of a DDR beat, or a status."}
+                    wires:
+                      - decode -> claim | control | target
+                      - claim -> fsm | control | accepted
+                      - decode -> fsm | control | error
+                      - fsm -> rsp | control | state
+                  - id: bram
+                    label: BRAM backend
+                    kind: module
+                    tech: BRAMBackend
+                    summary: Two picks per cycle onto a dual-port data memory.
+                    rtl: hardware/rtl/gpgpu/memory/bram/BRAMBackend.sv
+                    children:
+                      - {id: arb, label: "Two-lowest arbiter", kind: module, tech: "ArbiterMLowest", summary: "The two lowest-index candidates win ports A and B.", rtl: hardware/rtl/gpgpu/memory/ArbiterMLowest.sv}
+                      - {id: hold, label: "Port hold", kind: regs, tech: "owners, busy", summary: "Keeps a read result until its requester takes it."}
+                      - {id: dmem, label: "Data memory", kind: memory, tech: "MemoryDualPort", summary: "${DMEM_ENTRIES} words, two ports.", rtl: hardware/rtl/gpgpu/memory/bram/MemoryDualPort.sv}
+                      - {id: route, label: "Response routing", kind: module, tech: "per lane", summary: "Returns each port's data to its owner lane."}
+                    wires:
+                      - arb -> dmem | data | port A, port B
+                      - hold -> arb | control | busy
+                      - dmem -> route | data |
+                      - route -> hold | control | taken
+                  - id: ddr
+                    label: DDR backend
+                    kind: module
+                    tech: DDRBackend
+                    summary: Coalesces lane requests into ${AXI_MAX_BEATS_PER_BURST}-beat bursts on one AXI4 master.
+                    rtl: hardware/rtl/gpgpu/memory/ddr/DDRBackend.sv
+                    meta: {"AXI data": "${AXI_DATA_W} bit", burst: "${AXI_MAX_BEATS_PER_BURST} beats, ${GROUP_BYTES}-byte group", outstanding: "${AXI_MAX_OUTSTANDING_WRITES} writes, ${AXI_MAX_OUTSTANDING_READS} reads", timeout: "${AXI_TIMEOUT} cycles"}
+                    children:
+                      - id: former
+                        label: Group former
+                        kind: module
+                        tech: DDRGroupFormer
+                        summary: Seeds a group with the lowest candidate; members share its ${GROUP_BYTES}-byte line.
+                        rtl: hardware/rtl/gpgpu/memory/ddr/DDRGroupFormer.sv
+                        doc: Read candidates are dropped while the read ring is full, and write candidates while the write ring is full. The first and last beat of the burst are trimmed to the members.
+                      - {id: wring, label: "Write ring", kind: memory, tech: "DDRWriteRing", summary: "One slot per write burst; AW, then W, then B to the members.", rtl: hardware/rtl/gpgpu/memory/ddr/DDRWriteRing.sv}
+                      - {id: wasm, label: "Write assembler", kind: module, tech: "DDRWriteAssembler", summary: "Builds each W beat from its members; lowest-index writer wins a byte.", rtl: hardware/rtl/gpgpu/memory/ddr/DDRWriteAssembler.sv}
+                      - {id: rring, label: "Read ring", kind: memory, tech: "DDRReadRing", summary: "One slot per read burst, in AR order; each R beat serves its members.", rtl: hardware/rtl/gpgpu/memory/ddr/DDRReadRing.sv}
+                      - id: master
+                        label: AXI4 master
+                        kind: module
+                        tech: AXI4Master
+                        summary: The only module on the bus; ID checks, timeout and a sticky fatal.
+                        rtl: hardware/rtl/gpgpu/memory/ddr/AXI4Master.sv
+                        doc: After a fatal it stops issuing, sinks stray responses and freezes the rings. Recovery needs a reset of the GPGPU and of the SmartConnect and HP path.
+                    wires:
+                      - former -> wring | control | write group
+                      - former -> rring | control | read group
+                      - wring -> former | control | free
+                      - rring -> former | control | free
+                      - wring -> wasm | control | slot, beat
+                      - wring -> master | axi | AW
+                      - wasm -> master | axi | W
+                      - master -> wring | axi | B
+                      - rring -> master | axi | AR
+                      - master -> rring | axi | R
+                  - {id: quiet, label: "Quiet detect", kind: module, tech: "o_idle", summary: "Every port idle, both backends idle, no fatal."}
+                wires:
+                  - map -> ports.decode | data | regions
+                  - ports.claim -> bram.arb | control | candidates
+                  - bram.arb -> ports.claim | control | accept
+                  - ports.claim -> ddr.former | control | candidates
+                  - ddr.former -> ports.claim | control | accept
+                  - bram.route -> ports.rsp | data | read data
+                  - ddr.rring -> ports.rsp | data | R beat, select
+                  - ddr.wring -> ports.fsm | control | B done, resp
+                  - ports.fsm -> ddr.rring | control | member, take
+                  - ports.fsm -> ddr.wring | control | member, take
+                  - ports.fsm -> quiet | control | idle
+                  - bram -> quiet | control | busy
+                  - ddr -> quiet | control | busy
+            wires:
+              - sm.pc -> imux | data | fetch address
+              - imux -> imem | data |
+              - imem -> sm.decoder | data | instruction
+              - imem -> imux | data | read data
+              - sm.lanes.lsu -> lane0mux | data | lane 0
+              - lane0mux -> memsys.ports.claim | data | slot 0
+              - sm.lanes.lsu -> memsys.ports.claim | data | lanes 1..
+              - sm.lanes.lsu -> memsys.ports.decode | data | address, size
+              - sm.lanes.lsu -> memsys.bram.dmem | data | address, write data
+              - sm.lanes.lsu -> memsys.ddr.former | data | addresses
+              - sm.lanes.lsu -> memsys.ddr.wasm | data | write data
+              - memsys.ports.rsp -> sm.lanes.lsu | data | response
+              - memsys.ports.rsp -> sm.warp.exit | control | response status
+              - memsys.ports.fsm -> sm.warp.leaf | perf | waiting, admitted
+              - memsys.ddr -> sm.warp.leaf | perf | slot free
+              - control.mmio -> imux | data | IMEM window
+              - imux -> control.mmio | data | IMEM data
+              - control.mmio -> lane0mux | data | DMEM window
+              - lane0mux -> control.mmio | data | DMEM data
+              - control.exec -> imux | control | idle
+              - control.exec -> lane0mux | control | idle
+              - control.exec -> sm | control | enable, reset
+              - control.exec -> memsys.ports.claim | control | request enable
+              - sm.warp.exit -> control.exec | control | complete, fault
+              - sm.warp.exit -> control.csr.fault | data | lanes, kinds, PC
+              - memsys.quiet -> control.exec | control | quiet
+              - memsys.ddr.master -> control.exec | control | fatal
+              - memsys.ddr.master -> control.csr.fault.info | data | fatal code
+              - sm.warp.leaf -> control.perf.warp | perf | warp leaf
+              - memsys.ddr -> control.perf.global | perf | channel, ring events
+              - memsys.bram -> control.perf.global.bram | perf | accesses, deferred
+              - memsys.ports -> control.perf.global.coalesce | perf | admitted
+          - id: experimental
+            label: Not built
+            kind: module
+            tech: experimental/, deprecated
+            status: experimental
+            summary: RTL in the repository that the GPGPU does not instantiate.
+            src: hardware/rtl/gpgpu/experimental
+            children:
+              - {id: warpsched, label: "Warp scheduler", kind: module, tech: "WarpScheduler", status: experimental, summary: "Picks a ready warp, for more than one warp per SM.", rtl: hardware/rtl/gpgpu/experimental/WarpScheduler.sv}
+              - {id: scoreboard, label: "Scoreboard", kind: module, tech: "Scoreboard", status: experimental, summary: "Tracks pending register writes per warp.", rtl: hardware/rtl/gpgpu/experimental/Scoreboard.sv}
+              - {id: warpmask, label: "Warp state mask", kind: module, tech: "WarpStateMask", status: experimental, summary: "Per-warp active state.", rtl: hardware/rtl/gpgpu/experimental/WarpStateMask.sv}
+              - {id: fifo, label: "FIFO", kind: module, tech: "fifo", status: experimental, summary: "A generic FIFO, with its test bench.", rtl: hardware/rtl/gpgpu/experimental/fifo.sv}
+              - {id: stack, label: "Stack", kind: module, tech: "stack", status: experimental, summary: "A generic stack, with its test bench.", rtl: hardware/rtl/gpgpu/experimental/stack.sv}
+              - {id: hcp, label: "Host controller processor", kind: module, tech: "HostCommandProcessor", status: deprecated, summary: "The old GPIO-based host interface, replaced by AXI4-Lite.", rtl: hardware/rtl/gpgpu/interfaces/HostControllerProcessor.sv}
+        wires:
+          - axil -> core.control.mmio | data | request
+          - core.control.mmio -> axil | data | response
+          - axil -> core.control.csr | data | address, data, strobe
+          - axil -> core.control.perf.bank | data | address
+      - id: video
+        label: HDMI video pipeline
+        kind: ip
+        tech: 1280×720 @ 60 Hz
+        summary: Scans out FB0 or FB1 from DDR to the HDMI port.
+        doc: The display runs on FCLK_CLK1 and on a 74.25 MHz pixel clock from the board's 50 MHz oscillator, not from a PS clock, because the PS PLLs jitter. The video output's asynchronous FIFO crosses between the two.
+        children:
+          - {id: smc1, label: "axi_smc_1", kind: bus, tech: "SmartConnect", bd: axi_smc_1, summary: "GP1 to the VDMA's registers."}
+          - {id: vdma_smc, label: "vdma_ddr", kind: bus, tech: "SmartConnect 1×1", bd: vdma_ddr, summary: "VDMA reads to HP2."}
+          - {id: vdma, label: "AXI VDMA", kind: ip, tech: "axi_vdma 6.3", bd: axi_vdma_0, summary: "Read only, 32-bit pixels, 2 frame stores, 16-beat bursts, park mode.", meta: {"register base": "0x8300_0000", "frame stores": "2 (FB0, FB1)", "line buffer": "4096"}}
+          - {id: conv, label: "Subset converter", kind: ip, tech: "axis_subset_converter", bd: axis_subset_converter_0, summary: "0x00RRGGBB to the video order {R, B, G}, 4 bytes to 3."}
+          - {id: vout, label: "AXI4-Stream to video", kind: ip, tech: "v_axi4s_vid_out 4.0", bd: v_axi4s_vid_out_0, summary: "Crosses to the pixel clock; drives the timing generator's clock enable."}
+          - {id: vtc, label: "Timing controller", kind: ip, tech: "v_tc 6.2", bd: v_tc_0, summary: "720p60 sync and blanking, waiting for the stream."}
+          - {id: clk, label: "Pixel clock", kind: ip, tech: "clk_wiz (PLL)", bd: clk_wiz_0, summary: "74.25 MHz from the 50 MHz oscillator."}
+          - {id: dvi, label: "rgb2dvi", kind: ip, tech: "Digilent 1.4", bd: rgb2dvi_0, summary: "TMDS serialiser; makes its own 5× clock near the HDMI pins."}
+        wires:
+          - smc1 -> vdma | axilite | registers
+          - vdma -> vdma_smc | axi | MM2S
+          - vdma -> conv | stream |
+          - conv -> vout | stream |
+          - vout -> vtc | control | gen_clken
+          - vtc -> vout | control | vtiming
+          - vout -> dvi | data | RGB, syncs
+          - clk -> vout | clock |
+          - clk -> vtc | clock |
+          - clk -> dvi | clock |
+      - id: glue
+        label: Clocking, resets and IRQ
+        kind: ip
+        tech: proc_sys_reset ×3, inline HDL
+        summary: One reset per clock, the interrupt bus and the tied-off inputs.
+        children:
+          - {id: gpurst, label: "gpu_sys_reset", kind: ip, tech: "FCLK_CLK0 domain", bd: gpu_sys_reset, summary: "Resets the GPGPU and its two SmartConnects."}
+          - {id: disprst, label: "rst_ps7_0_35M", kind: ip, tech: "FCLK_CLK1 domain", bd: rst_ps7_0_35M, summary: "Resets the VDMA, its SmartConnects, the converter and the video out."}
+          - {id: pixrst, label: "proc_sys_reset_0", kind: ip, tech: "pixel clock domain", bd: proc_sys_reset_0, summary: "Resets the timing controller and rgb2dvi; waits for the PLL lock."}
+          - {id: irq, label: "IRQ bus", kind: ip, tech: "ilconcat + ilconstant", bd: [irq_concat, irq_zero], summary: "The GPGPU's irq as bit 0 of the 16-bit IRQ_F2P bus."}
+          - {id: ties, label: "Tied inputs", kind: ip, tech: "ilconstant ×4", bd: [reset_locked, reset_locked1, clk_en, clk_en1], summary: "dcm_locked high for the PS clocks; video clock enables on, field id 0."}
+      - id: pins
+        label: Board pins
+        kind: external
+        tech: smart_zynq.xdc
+        summary: The design's external ports and where the constraints put them.
+        src: hardware/constraints/smart_zynq.xdc
+        children:
+          - {id: clk50, label: "clk_50m", kind: external, tech: "M19", summary: "The 50 MHz PL oscillator, in the HDMI bank."}
+          - {id: uart, label: "UART_0_0", kind: external, tech: "L17 txd, M17 rxd", summary: "The PS UART through EMIO."}
+          - {id: tmds, label: "TMDS_0", kind: external, tech: "N19, M21, L21, J21", summary: "HDMI clock and three data pairs, TMDS_33."}
+          - {id: status, label: "Core status", kind: external, tech: "P20, P21", summary: "o_core_idle and o_core_running."}
+          - {id: ps, label: "DDR, FIXED_IO", kind: external, tech: "PS pins", summary: "The PS's DDR and MIO; not constrained in the fabric."}
+    wires:
+      - ps.gp0 -> ctrl_smc | axi |
+      - ctrl_smc -> gpgpu.axil | axilite | s00_axi
+      - gpgpu.core.memsys.ddr.master -> ddr_smc | axi | m00_axi
+      - ddr_smc -> ps.hp0 | axi |
+      - gpgpu.core.control.csr.ctl.irqst -> glue.irq | irq | irq
+      - glue.irq -> ps.gic | irq | IRQ_F2P
+      - ps.gp1 -> video.smc1 | axi |
+      - video.vdma_smc -> ps.hp2 | axi |
+      - ps.fclk -> gpgpu | clock | FCLK_CLK0
+      - ps.fclk -> video | clock | FCLK_CLK1
+      - ps.fclk -> glue | control | FCLK_RESET0_N
+      - glue.gpurst -> gpgpu | control | aresetn
+      - glue.disprst -> video | control | aresetn
+      - glue.pixrst -> video.dvi | control | reset
+      - video.clk -> glue.pixrst | control | locked
+      - gpgpu.core.control.exec -> pins.status | control | idle, running
+      - pins.clk50 -> video.clk | clock | 50 MHz
+      - video.dvi -> pins.tmds | data | TMDS
+      - ps.uart -> pins.uart | uart |
+      - ps.ddrc -> pins.ps | data |
+
+  # ================================================================ outside
+  - id: outside
+    label: Off chip
+    kind: lane
+    summary: What the board is connected to.
+    children:
+      - {id: dram, label: "DDR3 SDRAM", kind: external, tech: "PS DDR", summary: "The GPGPU and the VDMA see 0x0000_0000..0x1FFF_FFFF of it; framebuffers and global memory live here."}
+      - {id: osc, label: "50 MHz oscillator", kind: external, tech: "X2, CLK_50M", summary: "The pixel clock's reference."}
+      - {id: display, label: "HDMI display", kind: external, tech: "720p", summary: "Shows the parked framebuffer."}
+      - {id: usb, label: "USB-UART", kind: external, tech: "serial", summary: "The monitor's console, to the workstation."}
+
+wires:
+  - software.build.mem -> workstation.boardlink.runner | data | .mem
+  - software.build.mem -> host.monitor.autorun | produces | autorun header
+  - workstation.cli.sw -> software.build.gcc | control | build
+  - workstation.cli.sw -> host.driver.platform | produces | generated
+  - workstation.verify.constants -> host.driver.platform | data | (* host *)
+  - workstation.verify.constants -> software.headers.config | data | num_cores
+  - workstation.boardlink.uart -> outside.usb | uart | commands
+  - outside.usb -> board.pins.uart | uart |
+  - board.ps.uart -> host.monitor.reader | uart | console
+  - host.driver.xil -> board.ps.cpu | data | loads, stores
+  - host.monitor.display.scanout -> board.ps.cpu | data | VDMA registers
+  - board.ps.gic -> host.driver.isr | irq | IRQ 61
+  - board.pins.ps -> outside.dram | data |
+  - board.pins.tmds -> outside.display | data | HDMI
+  - outside.osc -> board.pins.clk50 | clock |
+  - workstation.boardlink.agent -> board | control | program, reset
