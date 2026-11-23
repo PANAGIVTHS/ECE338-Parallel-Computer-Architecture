@@ -32,7 +32,9 @@ module tb_GPGPU_e2e
     string dump_file;
 
     // Run settings (plusargs)
-    reg [31:0] unmapped_addr;
+    // The first address past the DMEM window: no CSR, IMEM or DMEM decodes it.
+    // The windows follow architecture.memory, so the bench derives it.
+    localparam logic [31:0] UNMAPPED_ADDR = 32'(ControlPkg::MMIO_END);
 
     // ============================================================
     // Host interface checks, then the directed cases
@@ -40,8 +42,6 @@ module tb_GPGPU_e2e
 
     initial begin
         host_init();
-
-        `REQUIRE_PLUSARG("UNMAPPED_ADDR=%h", unmapped_addr)
 
         $display("[INFO] =================================================");
         $display("[INFO]  Starting GPGPU AXI4-Lite E2E Test Suite");
@@ -71,7 +71,8 @@ module tb_GPGPU_e2e
         expect_write_resp(REG_INFO, 32'hFFFF_FFFF, AXI_SLVERR);   // read-only
         expect_read_resp(REG_CONTROL, AXI_SLVERR);                 // write-only
         expect_write_resp(REG_CONTROL, CONTROL_START_MASK | CONTROL_STOP_MASK, AXI_SLVERR);
-        expect_read_resp(unmapped_addr, AXI_DECERR);
+        if (ControlPkg::MMIO_END < 64'h1_0000)                     // DMEM may end the aperture
+            expect_read_resp(UNMAPPED_ADDR, AXI_DECERR);
         expect_read_resp(IMEM_BASE + 2, AXI_DECERR);               // misaligned
 
         // Performance counter block: read-only, zero before any run, and a

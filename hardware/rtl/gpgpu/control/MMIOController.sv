@@ -30,6 +30,11 @@ module MMIOController
     input rsp_status_t i_csr_status
 );
 
+    // The host reaches IMEM and DMEM through a 64-KiB AXI4-Lite aperture.
+    if (MMIO_END > 64'h1_0000) begin : g_aperture_check
+        $fatal(1, "IMEM and DMEM windows end at 0x%0h, past the 64-KiB host aperture", MMIO_END);
+    end
+
     // ========================================================================
     // Transaction State Machine
     // ========================================================================

@@ -2,9 +2,22 @@ architecture:
   num_cores: 32
   interface_version: 3
   # DDR backend of the memory subsystem (reported in INFO_FEATURES). Without
-  # it, framebuffer and texture accesses complete as ST_UNMAPPED. The DDR read
-  # path is not implemented yet: a texture load never completes.
+  # it, framebuffer and GMEM accesses complete as ST_UNMAPPED, and a kernel
+  # cannot read its .rodata/.data/.bss, which live in GMEM.
   ddr_enable: true
+  # Memory sizes and the kernel memory layout (software/programs/linker.ld).
+  # `rtl:config` writes the BRAM sizes into packages/gpu_config_pkg.sv, which
+  # is committed; a change needs a new bitstream and host application.
+  #   DMEM (BRAM, shared memory): GPGPU_ARGS at byte 0, then .shared
+  #   (GPGPU_SHARED variables), then num_cores stacks at the top.
+  #   GMEM (DDR): .rodata, .data and .bss at GMEM_BASE, the rest is free for
+  #   program buffers (__gmem_free_base).
+  memory:
+    imem_bytes: 16384           # instruction BRAM, a power of two
+    dmem_bytes: 16384           # data BRAM, a power of two
+    args_words: 32              # GPGPU_ARGS words at DMEM byte 0
+    stack_bytes_per_lane: 128   # a power of two; num_cores of them end DMEM
+    gmem_data_bytes: 65536      # .rodata + .data + .bss at the start of GMEM
 
 hardware:
   fpga:
@@ -32,6 +45,7 @@ hardware:
     extensions: [.sv, .v]
     header_extensions: [.svh]
     ordered:
+      - packages/gpu_config_pkg.sv
       - packages/gpu_pkg.sv
       - packages/riscv_pkg.sv
       - packages/alu_pkg.sv
@@ -183,7 +197,6 @@ tests:
       # All required by the bench (no defaults in SystemVerilog). +TEST_END
       # is optional and may be added here to stop after a given case.
       plusargs:
-        UNMAPPED_ADDR: "00008000"   # hex; must decode to no CSR/IMEM/DMEM
         # Shared AXI4-Lite host and directed-case settings (tb_e2e_host.svh)
         <<: &e2e_host_plusargs
           CLOCK_PERIOD_NS: 10

@@ -35,9 +35,12 @@ package ControlPkg;
     (* host *) localparam int unsigned PERF_WARP_SLOTS = PERF_WARP_STRIDE / PERF_COUNTER_BYTES;
     (* host *) localparam int unsigned PERF_MAX_WARPS = (PERF_BASE + PERF_SIZE - PERF_WARP_BASE) / PERF_WARP_STRIDE;
 
-    // Memory windows
+    // Memory windows: IMEM after the perf block, DMEM right after IMEM. Both
+    // follow the sizes in gpu_pkg; MMIOController checks that they fit the
+    // 64-KiB AXI4-Lite aperture.
     (* host *) localparam gpu_pkg::word_t IMEM_BASE = 'h2000;
-    (* host *) localparam gpu_pkg::word_t DMEM_BASE = 'h4000;
+    (* host *) localparam gpu_pkg::word_t DMEM_BASE = IMEM_BASE + gpu_pkg::IMEM_ENTRIES * gpu_pkg::BYTES_PER_WORD;
+    localparam longint unsigned MMIO_END = longint'(DMEM_BASE) + gpu_pkg::DMEM_ENTRIES * gpu_pkg::BYTES_PER_WORD;
 
     //! Control bits (start/stop GPU)
     localparam int unsigned CONTROL_START_BIT = 0;

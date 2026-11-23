@@ -7,7 +7,7 @@ def tasks(backend: Backends) -> list[Task]:
     return [
         Task("vivado:_identity", "Record the last commit and uncommitted changes of the RTL for BUILD_ID.", flow.identity()),
         Task("vivado:ip:create", "Recreate the IP development project from the production RTL.",
-             flow.create_ip(), needs=("vivado:_identity",)),
+             flow.create_ip(), needs=("rtl:config", "vivado:_identity")),
         Task("vivado:ip:build", "Package and validate the IP, then publish its repository.",
              flow.package_ip(), needs=("vivado:ip:create", "vivado:_identity")),
         Task("vivado:system:create", "Create or update the system project, block design and wrapper.",

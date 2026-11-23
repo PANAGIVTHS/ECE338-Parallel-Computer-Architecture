@@ -10,8 +10,8 @@
 
 /* gpu_pkg */
 #define GPGPU_BYTES_PER_WORD               4U
-#define GPGPU_IMEM_ENTRIES                 2048U
-#define GPGPU_DMEM_ENTRIES                 2048U
+#define GPGPU_IMEM_ENTRIES                 4096U
+#define GPGPU_DMEM_ENTRIES                 4096U
 #define GPGPU_FB0_BASE                     402653184U
 #define GPGPU_FB1_BASE                     406847488U
 #define GPGPU_GMEM_BASE                    411041792U
@@ -66,7 +66,7 @@
 #define GPGPU_PERF_WARP_SLOTS              32U
 #define GPGPU_PERF_MAX_WARPS               8U
 #define GPGPU_IMEM_BASE                    0x00002000U
-#define GPGPU_DMEM_BASE                    0x00004000U
+#define GPGPU_DMEM_BASE                    0x00006000U
 #define GPGPU_CONTROL_START_MASK           0x00000001U
 #define GPGPU_CONTROL_STOP_MASK            0x00000002U
 #define GPGPU_STATUS_IDLE_MASK             0x00000001U
