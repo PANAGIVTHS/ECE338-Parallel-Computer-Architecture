@@ -12,11 +12,14 @@ from gpgpu.api import GpgpuError, Step
 
 from . import host_headers
 from .config import Config, Section
-from .design import architecture, program_names, program_output
+from .design import architecture, memory_layout, program_names, program_output, rtl_constants_path
+from .program_image import write_linker_layout, write_program_files
 from .tools import run
 
+# -fno-jump-tables: a switch's table would be .rodata in GMEM, a DDR load before
+# every indirect jump; a kernel that wants one asks with optimize("jump-tables").
 _RISCV_CFLAGS = ("-ffreestanding", "-fno-builtin", "-fomit-frame-pointer", "-ffixed-x31", "-ffunction-sections",
-                 "-fdata-sections", "-msmall-data-limit=0", "-mno-relax")
+                 "-fdata-sections", "-msmall-data-limit=0", "-mno-relax", "-fno-jump-tables")
 _INSTRUCTION = re.compile(r"^\s*[0-9a-fA-F]+:\s+(\S+)(?:\s+(.*))?$")
 
 
@@ -64,6 +67,12 @@ class GccToolchain:
         self._config = config
         self._root = config.repo_root / "software/programs"
         self._cores = architecture(config).num_cores
+        self._memory = memory_layout(config)
+        stride = self._memory.stack_bytes_per_lane
+        # The memory ABI for both builds of a program: gpgpu_config.h documents each.
+        self._defines = (f"-DGPGPU_NUM_CORES={self._cores}", f"-DGPGPU_ARGS_WORDS={self._memory.args_words}",
+                         f"-DGPGPU_STACK_STRIDE={stride}", f"-DGPGPU_STACK_SHIFT={stride.bit_length() - 1}")
+        self._layout = config.build_root / "software/programs/linker_layout.ld"
         self._optimization = config.section("software.programs", _Programs).optimization
         self._riscv = config.section("software.riscv", _Riscv)
         self._native_cc, self._riscv_cc = config.tool("native_cc"), config.tool("riscv_gcc")
@@ -89,7 +98,7 @@ class GccToolchain:
     def build_native(self, program: str) -> Step:
         source, headers = self._sources(program)
         executable = self._out(program, "_x86")
-        command = [self._native_cc, self._optimization, f"-DGPGPU_NUM_CORES={self._cores}", "-o", str(executable), str(source)]
+        command = [self._native_cc, self._optimization, *self._defines, "-o", str(executable), str(source)]
         # The whole command: a change of compiler, flags or core count rebuilds.
         return Step(partial(run, command, creates=executable.parent), inputs=(source, *headers), outputs=(executable,),
                     fingerprint={"command": command})
@@ -100,13 +109,25 @@ class GccToolchain:
     def build_elf(self, program: str) -> Step:
         source, headers = self._sources(program)
         elf, link_map = self._out(program, ".elf"), self._out(program, ".map")
-        linker_script = self._root / "gpgpu.ld"
+        linker_script = self._root / "linker.ld"
         command = [self._riscv_cc, self._optimization, f"-march={self._riscv.march}", f"-mabi={self._riscv.abi}",
-                   f"-DGPGPU_NUM_CORES={self._cores}", *_RISCV_CFLAGS, "-o", str(elf), str(source), "-nostdlib", "-nostartfiles",
-                   f"-Wl,-T,{linker_script}", f"-Wl,-Map,{link_map}", "-Wl,--build-id=none"]
-        # The whole command: a change of compiler, flags, march/abi or core count rebuilds.
-        return Step(partial(run, command, creates=elf.parent), inputs=(source, linker_script, *headers),
+                   *self._defines, *_RISCV_CFLAGS, "-o", str(elf), str(source), "-nostdlib", "-nostartfiles",
+                   f"-Wl,-L,{self._layout.parent}", f"-Wl,-T,{linker_script}", f"-Wl,-Map,{link_map}", "-Wl,--build-id=none"]
+        # The whole command: a change of compiler, flags, march/abi, core count or memory layout rebuilds.
+        return Step(partial(run, command, creates=elf.parent), inputs=(source, linker_script, self._layout, *headers),
                     outputs=(elf, link_map), fingerprint={"command": command})
+
+    def linker_layout(self) -> Step:
+        settings = {**self._memory.model_dump(), "num_cores": self._cores}
+        constants = rtl_constants_path(self._config)
+        this = Path(__file__).with_name("program_image.py")
+        return Step(partial(write_linker_layout, settings, constants, self._layout), inputs=(constants, this),
+                    outputs=(self._layout,), fingerprint=settings)
+
+    def program_image(self, program: str) -> Step:
+        elf, image, layout = self._out(program, ".elf"), self._out(program, "_gmem.mem"), self._out(program, "_layout.json")
+        this = Path(__file__).with_name("program_image.py")
+        return Step(partial(write_program_files, elf, image, layout, program), inputs=(elf, this), outputs=(image, layout))
 
     def disassemble(self, program: str) -> Step:
         elf, listing = self._out(program, ".elf"), self._out(program, "_dump_real.asm")
@@ -125,7 +146,7 @@ class GccToolchain:
         return host_headers.platform_step(self._config)
 
     def host_autorun_header(self) -> Step:
-        return host_headers.autorun_step(self._config, self._binutil("nm"))
+        return host_headers.autorun_step(self._config)
 
     def autorun_program(self) -> str | None:
         return host_headers.autorun_program(self._config)

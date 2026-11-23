@@ -2,10 +2,11 @@
 #include "../gpgpu_math.h"
 
 #ifdef __riscv
-/* Each lane has 64 bytes of stack and saving the callee-saved registers
- * takes 52 of them, so main must not spill. Moving loop invariants out of
- * loops, scheduling before register allocation, PRE and GCSE all keep more
- * values live than the 27 registers hold. */
+/* Saving the callee-saved registers takes 52 bytes of the lane's stack
+ * (GPGPU_STACK_STRIDE), and every spill is a DMEM store and load, so main must
+ * not spill. Moving loop invariants out of loops, scheduling before register
+ * allocation, PRE and GCSE all keep more values live than the 27 registers
+ * hold. */
 #pragma GCC optimize ("no-move-loop-invariants", "no-tree-loop-im", "no-schedule-insns", "no-tree-pre", "no-gcse")
 #endif
 
@@ -49,9 +50,10 @@
  * The GPU's rules: lanes branch with lane 0, so every branch here depends
  * on values that are the same in every lane, and per-lane choices are masks.
  * There is no divider (MUL is the only M instruction with the right result),
- * no AUIPC (every function is inlined), only word loads and stores, nothing
- * in .data or .rodata (DMEM is not loaded), and 64 bytes of stack per lane,
- * so the state between phases lives at fixed DMEM words.
+ * no AUIPC (every function is inlined), only word loads and stores, and a
+ * small stack per lane. .rodata and .data are in GMEM (DDR), slow to load,
+ * so the tables and the state between phases live at fixed words of shared
+ * memory (DMEM), reserved with GPGPU_SHARED_FIXED.
  *
  * Args:
  *   GPGPU_ARGS[0] = framebuffer base, byte address (GPGPU_FB0_BASE or GPGPU_FB1_BASE)
@@ -138,9 +140,11 @@
 
 /* ---- DMEM words ------------------------------------------------------- */
 
-/* VERT and SHADE come first: below byte 2048, a load's 12-bit offset holds
- * their base, so the tile loop needs no register for it. */
-#define W_VERT    20                     /* per vertex: position */
+/* The words start at GPGPU_SHARED_BASE, after GPGPU_ARGS. VERT and SHADE
+ * come first: below byte 2048, a load's 12-bit offset holds their base, so
+ * the tile loop needs no register for it. */
+#define W_FIRST   (GPGPU_SHARED_BASE / 4)
+#define W_VERT    W_FIRST                /* per vertex: position */
 #define W_SHADE   (W_VERT + VERTS)       /* per cell: two RGB555 colors, visible bits */
 #define W_BOUNDS  (W_SHADE + CELLS)      /* per cell: valid, bands, tile columns, visible */
 #define W_CAND    (W_BOUNDS + CELLS)     /* MAX_CHUNKS x 32: a band's cells */
@@ -151,7 +155,6 @@
 #define W_LANEROW (W_ROWBAND + 32)       /* 32: each lane's pixel in the band's first row */
 #define W_END     (W_LANEROW + CORES)
 
-_Static_assert(W_END <= 1536, "terrain tables run into the lane stacks");
 _Static_assert(4 * W_SHADE < 2048, "VERT and SHADE must start below byte 2048");
 _Static_assert(W_MASK % 4 == 0, "a tile's 4 list words must be 16-byte aligned");
 _Static_assert(2 * HALF(ROWS) + 1 <= CORES, "a vertex row must fit the lanes");
@@ -178,9 +181,12 @@ _Static_assert(VERTS < 1024 && CELLS < 1024, "cell list entries hold 10-bit indi
 #define V_DONE    17
 
 #ifdef __riscv
+/* Reserves the words W_FIRST..W_END-1 at GPGPU_SHARED_BASE; the code reaches
+ * them by address (AT), and the linker checks that they end below the stacks. */
+GPGPU_SHARED_FIXED static int terrain_words[W_END - W_FIRST];
 #define AT(word) ((volatile int *)(uintptr_t)(4u * (unsigned int)(word)))
 #else
-static int dmem[2048] __attribute__((aligned(16)));
+static int dmem[W_END] __attribute__((aligned(16)));
 #define AT(word) ((volatile int *)(dmem + (word)))
 #endif
 

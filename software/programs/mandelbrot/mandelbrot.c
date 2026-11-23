@@ -66,11 +66,11 @@ INLINE void mandel_setup(volatile fractal_t *f, int frame)
 
 #ifdef __riscv
 
-/* Every lane writes the same values each frame. */
-static volatile fractal_t view;
+/* Shared memory (DMEM). Every lane writes the same values each frame. */
+static GPGPU_SHARED volatile fractal_t view;
 
 /* Each lane's sample, for its neighbors to read. */
-static volatile unsigned int samples[GPGPU_NUM_CORES];
+static GPGPU_SHARED volatile unsigned int samples[GPGPU_NUM_CORES];
 
 void main(void)
 {

@@ -247,8 +247,8 @@ INLINE int in_span(int x, int xl, int w)
 
 #ifdef __riscv
 
-/* Every lane writes the same values each frame. */
-static volatile cube_t cube;
+/* Shared memory (DMEM). Every lane writes the same values each frame. */
+static GPGPU_SHARED volatile cube_t cube;
 
 void main(void)
 {

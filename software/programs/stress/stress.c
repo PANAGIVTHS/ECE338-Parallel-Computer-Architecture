@@ -172,9 +172,9 @@ static inline __attribute__((always_inline)) unsigned int stress_lane(
 
 #ifdef __riscv
 
-/* No jump table for the mode: it would be read-only data in DMEM, which only
- * IMEM loading does not fill. */
-__attribute__((optimize("no-jump-tables"))) void main(void)
+/* The mode needs no jump table: -fno-jump-tables is the default for every
+ * kernel (a table would be .rodata in GMEM, a DDR load per dispatch). */
+void main(void)
 {
     unsigned int tid = gpgpu_thread_id();
 
@@ -183,7 +183,8 @@ __attribute__((optimize("no-jump-tables"))) void main(void)
      *   GPGPU_ARGS[0] = mode (MODE_*), optionally with a lane range (MODE_MASK)
      *   GPGPU_ARGS[1] = iterations
      *   GPGPU_ARGS[2] = seed; 0 keeps every data value at zero
-     *   GPGPU_ARGS[3] = buffer, byte address: DMEM (e.g. 0x1000) for the
+     *   GPGPU_ARGS[3] = buffer, byte address: shared memory (DMEM, e.g. 0x1000,
+     *                   free: the kernel has no GPGPU_SHARED variables) for the
      *                   other modes, a framebuffer for MODE_DDR, which uses
      *                   DDR_BURSTS * CORES words of it. buf[tid] gets the
      *                   lane's result, so the computation is not removed.

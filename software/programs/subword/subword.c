@@ -9,10 +9,13 @@
  * what it reads back. Every failed check sets one bit in errors[tid], so a
  * correct GPU leaves errors[] all zero.
  *
- * GPGPU_ARGS[0] = DMEM byte address of the test area, e.g. 0x100.
+ * GPGPU_ARGS[0] = DMEM byte address of the test area, e.g. 0x100 (shared
+ *                 memory; free, the kernel has no GPGPU_SHARED variables).
  * GPGPU_ARGS[1] = byte address of CORES + 31 words in GMEM (the GPU's
  *                 read-write DDR region) for test 6, aligned to a DDR
- *                 group (128 bytes), or 0 to skip the test.
+ *                 group (128 bytes), or 0 to skip the test. Use the free
+ *                 GMEM after the compiler data (__gmem_free_base in the
+ *                 program's layout), not GMEM_BASE.
  *                 Test 6 checks the sub-word loads against a word load of the
  *                 same word, so any contents work; bytes and halfwords with
  *                 their sign bit both set and clear exercise the extension.
@@ -60,8 +63,8 @@
     __asm__ volatile(insn " %0, 0(%1)" : : "r"(value), "r"(addr) : "memory")
 
 /* Ends one test. Without it GCC computes every test's addresses and expected
- * values up front, runs out of registers and spills more than the 64 bytes of
- * stack each lane has. */
+ * values up front, runs out of registers and spills more than the stack each
+ * lane has (GPGPU_STACK_STRIDE bytes). */
 #define END_OF_TEST() __asm__ volatile("" : "+r"(errors), "+r"(mine), "+r"(tid), "+r"(gmem) : : "memory")
 
 /* Ends one group of test 6's checks, for the same reason as END_OF_TEST. */

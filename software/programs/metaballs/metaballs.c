@@ -99,7 +99,8 @@ INLINE unsigned int field_color(int level, int y)
 
 #ifdef __riscv
 
-static volatile balls_t balls;
+/* Shared memory (DMEM): every lane writes the same table each frame. */
+static GPGPU_SHARED volatile balls_t balls;
 
 void main(void)
 {
