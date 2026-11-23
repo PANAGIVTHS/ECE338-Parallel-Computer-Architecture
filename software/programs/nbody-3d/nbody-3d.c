@@ -6,7 +6,8 @@
 #define CORES GPGPU_NUM_CORES
 
 /*
- * Host/kernel state layout starting at the pointer passed in GPGPU_ARGS[0].
+ * Host/kernel state layout from base: nbody_state in shared memory (DMEM) on
+ * the GPU, which the host reads through the symbol (nbody-3d/fpga.py).
  *
  * base + 0 * CORES -> pos_x[CORES]
  * base + 1 * CORES -> pos_y[CORES]
@@ -111,23 +112,21 @@ static inline __attribute__((always_inline)) void nbody_3d_lane(
 
 #ifdef __riscv
 
+GPGPU_SHARED volatile int nbody_state[STATE_WORDS];
+
 void kernel_main(void)
 {
     unsigned int tid = gpgpu_thread_id();
 
     /*
      * Host-written arguments:
-     *   GPGPU_ARGS[0] = base pointer byte address
-     *   GPGPU_ARGS[1] = steps per kernel call
-     *   GPGPU_ARGS[2] = reset, usually 1 only for the first kernel call
-     *   GPGPU_ARGS[3] = reserved
+     *   GPGPU_ARGS[0] = steps per kernel call
+     *   GPGPU_ARGS[1] = reset, usually 1 only for the first kernel call
      */
-    volatile int *base = (volatile int *)(uintptr_t)GPGPU_ARGS[0];
+    int steps = GPGPU_ARGS[0];
+    int reset = GPGPU_ARGS[1];
 
-    int steps = GPGPU_ARGS[1];
-    int reset = GPGPU_ARGS[2];
-
-    nbody_3d_lane(tid, base, steps, reset);
+    nbody_3d_lane(tid, nbody_state, steps, reset);
 
     return;
 }

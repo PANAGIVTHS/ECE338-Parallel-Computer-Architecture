@@ -22,9 +22,9 @@ def tasks(backend: Backends) -> list[Task]:
     for program in board.programs():
         prefix = f"fpga:programs:{program}"
         result += [
-            Task(f"{prefix}:upload", "Build the memory image of the program and upload it.", board.upload_program(program),
+            Task(f"{prefix}:upload", "Build the memory images and layout of the program and upload them.", board.upload_program(program),
                  needs=(f"software:programs:{program}:riscv:build", f"software:programs:{program}:mem")),
-            Task(f"{prefix}:load-imem", "After upload, load and verify IMEM over UART. No reset or programming.",
+            Task(f"{prefix}:load-imem", "After upload, load and verify IMEM and the program's data over UART. No reset or programming.",
                  board.load_program(program), needs=(f"{prefix}:upload",)),
             Task(f"{prefix}:run", "After load-imem, run the kernel once and verify it returns to idle.",
                  board.run_program(program), needs=(f"{prefix}:load-imem",)),

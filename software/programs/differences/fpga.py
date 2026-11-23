@@ -5,14 +5,12 @@ This adapter targets the refactored software/programs/fpga_run.py API.
 differences-specific ABI
 ------------------------
 
-GPGPU_ARGS / DMEM[16..19]:
+GPGPU_ARGS:
 
-    GPGPU_ARGS[0] = base pointer, byte address, default 0x00001000
-    GPGPU_ARGS[1] = number of output differences, default 32
-    GPGPU_ARGS[2] = reserved, 0
-    GPGPU_ARGS[3] = reserved, 0
+    GPGPU_ARGS[0] = number of output differences, default 32
 
-Default data-region layout:
+The buffer is the kernel's shared-memory array differences_buffer
+(GPGPU_SHARED, in DMEM; its address comes from differences_layout.json):
 
     data[33] at base + 0 words
         data[0] is padding
@@ -22,11 +20,8 @@ Default data-region layout:
 
 Expected kernel logic:
 
-    volatile int *base = (volatile int *)(uintptr_t)GPGPU_ARGS[0];
-    int n = GPGPU_ARGS[1];
-
-    volatile int *data = base;
-    volatile int *diff = base + (n + 1);
+    volatile int *data = differences_buffer;
+    volatile int *diff = differences_buffer + (n + 1);
 
     unsigned int tid = gpgpu_thread_id();
     diff[tid] = data[tid + 1] - data[tid];
@@ -45,8 +40,6 @@ from fpga_run import DmemWindow, ProgramAdapter as BaseProgramAdapter
 
 
 DEFAULT_NUM_VALUES = 32
-DEFAULT_DATA_BASE_BYTES = 0x00001000
-DEFAULT_DATA_LIMIT_BYTES = 0x00001800
 
 
 def parse_int_auto(value: str) -> int:
@@ -72,8 +65,8 @@ class ProgramAdapter(BaseProgramAdapter):
         self.csv_path = self.artifact_dir / "data.csv"
 
         self.num_values = DEFAULT_NUM_VALUES
-        self.data_base_bytes = DEFAULT_DATA_BASE_BYTES
-        self.data_limit_bytes = DEFAULT_DATA_LIMIT_BYTES
+        self.data_base_bytes = 0
+        self.data_limit_bytes = 0
         self.input_start = 0
         self.input_stride = 1
         self.clear_state = True
@@ -108,18 +101,6 @@ class ProgramAdapter(BaseProgramAdapter):
             help="Number of adjacent differences to compute, default: 32",
         )
         group.add_argument(
-            "--data-base",
-            type=parse_int_auto,
-            default=DEFAULT_DATA_BASE_BYTES,
-            help="Byte address passed to the kernel as the base pointer, default: 0x1000",
-        )
-        group.add_argument(
-            "--data-limit",
-            type=parse_int_auto,
-            default=DEFAULT_DATA_LIMIT_BYTES,
-            help="End byte address of the usable data region, default: 0x1800",
-        )
-        group.add_argument(
             "--input-start",
             type=int,
             default=0,
@@ -146,16 +127,11 @@ class ProgramAdapter(BaseProgramAdapter):
     ) -> None:
         if adapter_args.num_values < 1:
             raise SystemExit("--num-values must be >= 1")
-        if adapter_args.data_base % 4 != 0:
-            raise SystemExit("--data-base must be 4-byte aligned")
-        if adapter_args.data_limit % 4 != 0:
-            raise SystemExit("--data-limit must be 4-byte aligned")
-        if adapter_args.data_limit <= adapter_args.data_base:
-            raise SystemExit("--data-limit must be greater than --data-base")
 
         self.num_values = adapter_args.num_values
-        self.data_base_bytes = adapter_args.data_base
-        self.data_limit_bytes = adapter_args.data_limit
+        # differences_buffer (GPGPU_SHARED): the host writes data[], the kernel diff[].
+        self.data_base_bytes = self.symbol("differences_buffer")
+        self.data_limit_bytes = self.data_base_bytes + self.layout["symbols"]["differences_buffer"]["size"]
         self.input_start = adapter_args.input_start
         self.input_stride = adapter_args.input_stride
         self.clear_state = not adapter_args.no_clear_state
@@ -163,7 +139,7 @@ class ProgramAdapter(BaseProgramAdapter):
         available_words = (self.data_limit_bytes - self.data_base_bytes) // 4
         if available_words < self.total_word_count:
             raise SystemExit(
-                f"differences needs {self.total_word_count} words at --data-base "
+                f"differences needs {self.total_word_count} words in differences_buffer "
                 f"for data[{self.data_word_count}] + diff[{self.diff_word_count}], "
                 f"but only {available_words} words are available"
             )
@@ -216,10 +192,7 @@ class ProgramAdapter(BaseProgramAdapter):
         adapter_args: argparse.Namespace,
     ):
         return [
-            self.data_base_bytes,  # GPGPU_ARGS[0]: byte pointer to data[] and diff[]
-            self.num_values,       # GPGPU_ARGS[1]: number of output differences
-            0,                     # GPGPU_ARGS[2]: reserved
-            0,                     # GPGPU_ARGS[3]: reserved
+            self.num_values,       # GPGPU_ARGS[0]: number of output differences
         ]
 
     def output_window(

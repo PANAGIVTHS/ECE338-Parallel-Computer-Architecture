@@ -86,8 +86,9 @@ class SshBoard:
         return Step(partial(self._copy, tuple(zip(files, self._names))), always_run=True)
 
     def upload_program(self, program: str) -> Step:
-        memory = program_output(self._config, program, "_instructions.mem")
-        return Step(partial(self._copy, ((memory, memory.name),)), always_run=True)
+        # IMEM, and what the host loads besides it: the GMEM data image and the layout.
+        files = tuple(program_output(self._config, program, suffix) for suffix in ("_instructions.mem", "_gmem.mem", "_layout.json"))
+        return Step(partial(self._copy, tuple((path, path.name) for path in files)), always_run=True)
 
     def _copy(self, files: tuple[tuple[Path, str], ...]) -> None:
         """Copy files under explicit remote names, after checking that all of them exist."""
@@ -165,10 +166,11 @@ class SshBoard:
         uart = self._s.uart
         client = (self._config.repo_root / "tools/board/xc7z020/uart.py").read_text()
         driver = Path(__file__).with_name("program_uart.py").read_text()
-        memory = str(PurePosixPath(self._s.upload.directory) / f"{program}_instructions.mem")
+        directory = PurePosixPath(self._s.upload.directory)
+        memory, layout = (str(directory / f"{program}{suffix}") for suffix in ("_instructions.mem", "_layout.json"))
         # Separate exec scopes keep __future__ imports working without rewriting the client.
         payload = (f"exec({client!r}, globals())\nexec({driver!r}, globals())\n"
-                   f"remote_main({operation!r}, {memory!r}, {uart.port!r}, {uart.baud!r})\n")
+                   f"remote_main({operation!r}, {memory!r}, {uart.port!r}, {uart.baud!r}, {layout!r})\n")
         remote = (["sudo", "-n"] if uart.sudo else []) + [uart.python, "-"]
         subprocess.run(self._argv(shlex.join(remote)), cwd=self._config.repo_root, input=payload, text=True, check=True)
 

@@ -4,6 +4,7 @@ No repository imports: the SSH wrapper supplies the UART client's namespace.
 """
 
 from pathlib import Path
+import json
 import re
 import fcntl
 import hashlib
@@ -48,14 +49,16 @@ def exclusive_monitor(port, baud, verbose):
     return ExclusiveMonitor()
 
 
-def remote_main(operation, imem, port, baud):
+def remote_main(operation, imem, port, baud, layout_path):
     if operation not in ('load-imem', 'run'):
         raise ValueError('Unknown UART operation')
     words = validated_words(imem)
+    layout = json.loads(Path(layout_path).read_text())
+    image = read_gmem_image(Path(layout_path).with_name(layout['gmem_image']))
     with uart_ownership(port):
         uart = exclusive_monitor(port, baud, verbose=True)
         try:
-            execute_uart(uart, operation, words)
+            execute_uart(uart, operation, words, layout, image)
         finally:
             uart.close()
 
@@ -95,8 +98,11 @@ def checked_state(uart):
     return 'idle'
 
 
-def execute_uart(uart, operation, words):
-    """One guarded IMEM load/readback or single launch; never initialize DMEM."""
+def execute_uart(uart, operation, words, layout, image):
+    """One guarded program load (IMEM and data) with readback, or a single launch.
+
+    The load writes IMEM, the .rodata/.data image into GMEM and zeroes .bss and
+    .shared (linker.ld); it never writes GPGPU_ARGS."""
     if operation not in ('load-imem', 'run'):
         raise ValueError('Unknown UART operation')
     checked_state(uart)
@@ -105,6 +111,8 @@ def execute_uart(uart, operation, words):
         if uart.dump_imem_ascii(len(words), offset=0) != dict(enumerate(words)):
             raise RuntimeError('IMEM readback mismatch')
         print(f'Verified {len(words)} IMEM words', flush=True)
+        load_program_data(uart, layout, image, verify=True)
+        print(f'Loaded and verified {len(image)} GMEM data words; zeroed .bss and .shared', flush=True)
     else:
         # Another CLI workflow can load a different program between dependency
         # stages. Recheck under this session's UART lock before launching.

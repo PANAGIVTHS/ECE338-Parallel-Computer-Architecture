@@ -3,14 +3,16 @@
 
 #ifdef __riscv
 
+/* Shared memory (DMEM): the host writes data[0..CORES] and reads diff[] back
+ * through the symbol (differences/fpga.py). data[0] is padding. */
+GPGPU_SHARED volatile int differences_buffer[2 * CORES + 1];
+
 void main(void)
 {
     unsigned int tid = gpgpu_thread_id();
 
-    volatile int *base = (volatile int *)(uintptr_t)GPGPU_ARGS[0];
-
-    volatile int *data = base;
-    volatile int *diff = base + (CORES + 1);
+    volatile int *data = differences_buffer;
+    volatile int *diff = differences_buffer + (CORES + 1);
 
     // Calculate differences
     diff[tid] = data[tid + 1] - data[tid];

@@ -23,10 +23,11 @@ RISC-V assembly build + instruction-memory generation
 ```
 
 Each task includes its predecessors. Compiler outputs remain incremental;
-upload, IMEM load and execution repeat on every invocation. Upload copies only
-`<build-root>/software/programs/<program>/<program>_instructions.mem` to
-`hardware.fpga.upload.directory/<program>_instructions.mem` via SCP. It does
-not transfer or program the board bitstream/host ELF.
+upload, program load and execution repeat on every invocation. Upload copies
+`<program>_instructions.mem` (IMEM), `<program>_gmem.mem` (the .rodata/.data
+image) and `<program>_layout.json` (the memory layout) from
+`<build-root>/software/programs/<program>/` to `hardware.fpga.upload.directory`
+via SCP. It does not transfer or program the board bitstream/host ELF.
 
 Runtime uses the existing baremetal UART monitor **on the board-connected VM**.
 The CLI streams the repository's shared `tools/board/xc7z020/uart.py` and a small
@@ -59,21 +60,25 @@ UART ownership with the Agent or other serial clients first. The driver uses a
 nonblocking per-port advisory lock and pyserial exclusive opening, but unrelated
 clients that do not cooperate with those locks can still interfere.
 
-Before opening UART, the uploaded image must contain 1–2048 nonempty words,
-each exactly eight hexadecimal digits. The driver requires an idle, non-running,
+Before opening UART, the uploaded image must contain at least one nonempty
+word, each exactly eight hexadecimal digits (the monitor checks the IMEM size). The driver requires an idle, non-running,
 non-busy device with a complete `idle/running/busy/done` status. Legacy
 `loading/dumping` host monitors are rejected before IMEM mutation; build and
 deploy matching PL and host ELF artifacts before using these tasks.
 IMEM is loaded at word offset zero using `loadimem_bin`, then read back and
-compared. The run stage rechecks IMEM under its own UART lock before sending
+compared. Then the program's data (software/programs/linker.ld) is loaded once:
+`loadgmem_bin` writes .rodata/.data into GMEM, read back with `dumpgmem_bin`,
+and `fillgmem`/`filldmem` zero .bss (GMEM) and the GPGPU_SHARED variables
+(DMEM). GPGPU_ARGS are not written. The run stage rechecks IMEM under its own UART lock before sending
 `run`, preventing a different CLI session's loaded program from being launched
 silently. The host returns to idle automatically after completion; the driver
 checks status again and never sends the removed `done` command. Failures stop
 the dependency chain and retain normal CLI stage logs.
 
-**Scope:** one generic kernel launch, retaining existing DMEM. There is no
-program-specific adapter initialization, GPGPU_ARGS/data loading, DMEM export,
-CSV generation or visualization. Programs such as nbody may require prepared
+**Scope:** one generic kernel launch after the program load; GPGPU_ARGS keep
+whatever DMEM holds. There is no program-specific adapter initialization,
+GPGPU_ARGS loading, output export, CSV generation or visualization: use
+`software/programs/fpga_run.py` with the program's `fpga.py` adapter for that. Programs such as nbody may require prepared
 DMEM/arguments to produce meaningful results. The board must already be in
 PROJECT mode with the compatible PL and host monitor running. These tasks do
 not reset the board, change mode, or depend on `fpga:program`/`fpga:deploy`.

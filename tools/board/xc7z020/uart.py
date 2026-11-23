@@ -20,7 +20,11 @@ except ImportError:
     serial = None  # Parsing helpers work without pyserial installed.
 
 RET_INSTR = "00008067"
-DEPTH = 2048
+# Upper bound for IMEM/DMEM word indices: INFO_MEM's 16-bit fields. The real
+# sizes come from architecture.memory; the monitor checks them on every command.
+DEPTH = 0xFFFF
+# GMEM word offsets (from GMEM_BASE): the monitor checks them against GMEM_SIZE.
+GMEM_DEPTH = 1 << 24
 PROMPT = "gpgpu>"
 WORD_BYTES = struct.calcsize("<I")
 
@@ -98,6 +102,44 @@ def write_mem_file(path: str | Path, words: dict[int, int | str] | Iterable[int 
                 handle.write(f"{normalize_word(word)}\n")
 
 
+def read_gmem_image(path: str | Path) -> dict[int, str]:
+    """A program's <program>_gmem.mem: {byte address: word} of its .rodata and .data."""
+    words: dict[int, str] = {}
+    for line in Path(path).read_text().splitlines():
+        fields = line.split("//", 1)[0].split()
+        if fields:
+            words[int(fields[0], 16)] = normalize_word(fields[1])
+    return words
+
+
+def gmem_runs(image: dict[int, str], gmem_base: int) -> list[tuple[int, list[str]]]:
+    """Contiguous (word offset from GMEM_BASE, words) runs of a GMEM image."""
+    runs: list[tuple[int, list[str]]] = []
+    for address in sorted(image):
+        offset = (address - gmem_base) // 4
+        if runs and runs[-1][0] + len(runs[-1][1]) == offset:
+            runs[-1][1].append(image[address])
+        else:
+            runs.append((offset, [image[address]]))
+    return runs
+
+
+def load_program_data(monitor: "GpgpuUartMonitor", layout: dict, image: dict[int, str],
+                      verify: bool = True) -> None:
+    """What a program needs besides IMEM, once per program load (linker.ld):
+    .rodata/.data into GMEM, .bss (GMEM) and .shared (DMEM) zeroed.
+
+    `layout` is the program's <program>_layout.json; GPGPU_ARGS are the caller's."""
+    gmem_base = layout["gmem_data"]["start"]
+    for offset, words in gmem_runs(image, gmem_base):
+        monitor.load_gmem_bin(words, offset=offset)
+        if verify and monitor.dump_gmem_bin(len(words), offset=offset) != {offset + i: w for i, w in enumerate(words)}:
+            raise RuntimeError(f"GMEM readback mismatch at word offset {offset}")
+    bss, shared = layout["bss"], layout["shared"]
+    monitor.fill_gmem((bss["end"] - bss["start"]) // 4, offset=(bss["start"] - gmem_base) // 4)
+    monitor.fill_dmem((shared["end"] - shared["start"]) // 4, offset=shared["start"] // 4)
+
+
 def trim_program_at_ret(words: Iterable[str]) -> list[str]:
     """Legacy helper name: normalize the FULL image without trimming.
 
@@ -112,9 +154,9 @@ def _check_index(index: int) -> None:
         raise ValueError(f"GPU memory word index must be 0..{DEPTH - 1}, got {index}")
 
 
-def _check_span(offset: int, count: int) -> None:
-    if offset < 0 or count < 0 or offset > DEPTH or count > DEPTH - offset:
-        raise ValueError(f"GPU memory range offset={offset}, count={count} exceeds {DEPTH} words")
+def _check_span(offset: int, count: int, depth: int = DEPTH) -> None:
+    if offset < 0 or count < 0 or offset > depth or count > depth - offset:
+        raise ValueError(f"GPU memory range offset={offset}, count={count} exceeds {depth} words")
 
 
 class GpgpuUartMonitor:
@@ -289,10 +331,31 @@ class GpgpuUartMonitor:
     def load_dmem_bin(self, words: Iterable[int | str], offset: int = 0) -> str:
         return self._load_binary("loaddmem_bin", "READY_DMEM_BIN", "DMEM_LOAD_COMPLETE", words, offset)
 
+    def load_gmem_bin(self, words: Iterable[int | str], offset: int = 0) -> str:
+        """Words into GMEM from word `offset` after GMEM_BASE (the monitor flushes its cache)."""
+        return self._load_binary("loadgmem_bin", "READY_GMEM_BIN", "GMEM_LOAD_COMPLETE", words, offset, GMEM_DEPTH)
+
+    def fill_gmem(self, count: int, offset: int = 0, word: int | str = 0) -> str:
+        _check_span(offset, count, GMEM_DEPTH)
+        return self._fill("fillgmem", count, offset, word)
+
+    def fill_dmem(self, count: int, offset: int = 0, word: int | str = 0) -> str:
+        _check_span(offset, count)
+        return self._fill("filldmem", count, offset, word)
+
+    def _fill(self, cmd: str, count: int, offset: int, word: int | str) -> str:
+        if count == 0:
+            return ""
+        self.write_line(f"{cmd} {offset} {count} {normalize_word(word)}")
+        output, marker = self.read_until(["FILL_COMPLETE", "ERROR"], timeout=60.0)
+        if marker == "ERROR":
+            raise RuntimeError(f"{cmd} failed:\n{output + self.wait_prompt()}")
+        return output + self.wait_prompt(timeout=10.0)
+
     def _load_binary(self, cmd: str, ready: str, complete: str,
-                     words: Iterable[int | str], offset: int) -> str:
+                     words: Iterable[int | str], offset: int, depth: int = DEPTH) -> str:
         normalized = [normalize_word(w) for w in words]
-        _check_span(offset, len(normalized))
+        _check_span(offset, len(normalized), depth)
         self.write_line(f"{cmd} {offset} {len(normalized)}")
         first, marker = self.read_until([ready, "ERROR"], timeout=5.0)
         if marker == "ERROR":
@@ -309,8 +372,16 @@ class GpgpuUartMonitor:
 
     def dump_dmem_bin(self, count: int, offset: int = 0) -> dict[int, str]:
         _check_span(offset, count)
-        self.write_line(f"dumpdmem_bin {offset} {count}")
-        output, marker = self.read_until_bytes([b"BEGIN_DMEM_BIN\n", b"ERROR"], timeout=5.0)
+        return self._dump_binary("dumpdmem_bin", b"BEGIN_DMEM_BIN\n", count, offset)
+
+    def dump_gmem_bin(self, count: int, offset: int = 0) -> dict[int, str]:
+        """{word offset from GMEM_BASE: word} (the monitor invalidates its cache first)."""
+        _check_span(offset, count, GMEM_DEPTH)
+        return self._dump_binary("dumpgmem_bin", b"BEGIN_GMEM_BIN\n", count, offset)
+
+    def _dump_binary(self, cmd: str, begin: bytes, count: int, offset: int) -> dict[int, str]:
+        self.write_line(f"{cmd} {offset} {count}")
+        output, marker = self.read_until_bytes([begin, b"ERROR"], timeout=5.0)
         if marker == b"ERROR":
             raise RuntimeError(f"Binary dump rejected:\n{output.decode('ascii', errors='replace') + self.wait_prompt()}")
         payload = self.read_exact(count * 4, timeout=60.0)

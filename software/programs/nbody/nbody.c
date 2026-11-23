@@ -5,19 +5,26 @@
 
 #ifdef __riscv
 
+/* The bodies, in shared memory (DMEM): pos_x, pos_y, vel_x, vel_y, CORES words
+ * each. The host reads the positions through the symbol (nbody/fpga.py).
+ *
+ * Args:
+ *   GPGPU_ARGS[0] = steps per kernel call
+ *   GPGPU_ARGS[1] = reset: 1 sets the initial bodies first (the first call)
+ */
+GPGPU_SHARED volatile int nbody_state[4 * CORES];
+
 void main(void)
 {
     unsigned int tid = gpgpu_thread_id();
 
-    volatile int *base = (volatile int *)(uintptr_t)GPGPU_ARGS[0];
+    volatile int *pos_x = nbody_state;
+    volatile int *pos_y = nbody_state + CORES;
+    volatile int *vel_x = nbody_state + 2 * CORES;
+    volatile int *vel_y = nbody_state + 3 * CORES;
 
-    volatile int *pos_x = base;
-    volatile int *pos_y = base + CORES;
-    volatile int *vel_x = base + 2 * CORES;
-    volatile int *vel_y = base + 3 * CORES;
-
-    int steps = GPGPU_ARGS[1];
-    int reset = GPGPU_ARGS[2];
+    int steps = GPGPU_ARGS[0];
+    int reset = GPGPU_ARGS[1];
 
     int reset_mask = -nonzero_int(reset);
 

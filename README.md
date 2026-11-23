@@ -335,29 +335,16 @@ The key idea is that `fpga_run.py` is program-agnostic.  It knows how to talk to
 
 ### Program-specific adapter: `programs/nbody/fpga.py`
 
-`programs/nbody/fpga.py` defines the nbody host-side ABI.  It must match the DMEM constants used by `programs/nbody/nbody.c`.
+`programs/nbody/fpga.py` defines the nbody host-side ABI.  It must match `programs/nbody/nbody.c`; addresses come from the program's `nbody_layout.json` (see `software/programs/README.md`, "Memory spaces").
 
-Current nbody host-visible words:
-
-```text
-DMEM[16] = magic word 0x4e424459 ("NBDY")
-DMEM[17] = steps to run in this kernel launch
-DMEM[18] = reset flag; 1 for first launch, 0 for later launches
-DMEM[19] = logical start step
-```
-
-Current nbody output window:
+Current nbody arguments (GPGPU_ARGS, DMEM byte 0):
 
 ```text
-DMEM[1024 .. 1024 + 64)
+GPGPU_ARGS[0] = steps to run in this kernel launch
+GPGPU_ARGS[1] = reset flag; 1 for first launch, 0 for later launches
 ```
 
-There are 32 bodies.  Each body writes two output words:
-
-```text
-DMEM[1024 + body*2 + 0] = x pixel
-DMEM[1024 + body*2 + 1] = y pixel
-```
+The state is the shared-memory array `nbody_state` (GPGPU_SHARED, DMEM): pos_x[32], pos_y[32], vel_x[32], vel_y[32]. The adapter finds it with `self.symbol("nbody_state")` and dumps pos_x and pos_y after each launch.
 
 The nbody adapter implements the generic hooks as follows:
 
@@ -373,7 +360,7 @@ The nbody adapter implements the generic hooks as follows:
   - returns `NUM_BODIES * 2`, currently `64`.
 
 - `before_run(run_index, start_step, steps)`
-  - returns a write to `DMEM[16..19]`,
+  - returns the GPGPU_ARGS words,
   - sets the reset flag to `1` only for `run_index == 0`,
   - sets reset to `0` for later chunks so the kernel continues from DMEM-resident state.
 
@@ -408,10 +395,10 @@ To rebuild the nbody program from scratch while preserving the FPGA flow, keep t
 
 1. Keep `programs/nbody/fpga.py` and `programs/nbody/nbody.c` in agreement on all DMEM word offsets.
 2. Start with the smallest kernel that:
-   - reads `DMEM[16..19]`,
+   - reads its GPGPU_ARGS,
    - initializes deterministic per-body state when reset is nonzero,
    - runs `steps` iterations,
-   - writes `DMEM[1024..1087]`,
+   - writes the positions into its GPGPU_SHARED state,
    - returns with the hardware completion convention.
 3. Verify one kernel launch first:
 

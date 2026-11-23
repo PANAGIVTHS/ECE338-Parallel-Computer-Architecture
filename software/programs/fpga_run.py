@@ -3,13 +3,14 @@
 
 This runner owns only the common host-side UART flow:
 
-1. load IMEM once
+1. load the program once: IMEM, its .rodata/.data into GMEM, .bss and
+   .shared zeroed (from <program>_layout.json and <program>_gmem.mem)
 2. optionally let the adapter initialize DMEM
 3. ask the adapter for the next kernel argument words
 4. write GPGPU_ARGS only when those words changed
 5. run the kernel once
-6. ask the adapter which DMEM window to dump
-7. dump that DMEM window and let the adapter process it
+6. ask the adapter which DMEM or GMEM window to dump
+7. dump that window and let the adapter process it
 8. repeat for --kernel-calls launches
 
 Program-specific logic belongs in software/programs/<program>/fpga.py.
@@ -19,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import json
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -31,7 +33,8 @@ PROGRAMS_DIR = Path(__file__).resolve().parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from tools.board.xc7z020.uart import GpgpuUartMonitor, read_mem_file  # noqa: E402
+from tools.board.xc7z020.uart import (GpgpuUartMonitor, load_program_data, read_gmem_image,  # noqa: E402
+                                      read_mem_file)
 
 
 # If adapters do:
@@ -44,8 +47,6 @@ from tools.board.xc7z020.uart import GpgpuUartMonitor, read_mem_file  # noqa: E4
 sys.modules.setdefault("fpga_run", sys.modules[__name__])
 
 
-GPU_ARGS_BASE_WORDS = 0x00000040 // 4
-GPU_ARGS_WORDS = 4
 
 
 class AdapterProtocolError(RuntimeError):
@@ -69,6 +70,22 @@ class DmemWindow:
             raise AdapterProtocolError(
                 f"DMEM byte address 0x{self.byte_address:08x} is not 4-byte aligned"
             )
+        return self.byte_address // 4
+
+
+@dataclass(frozen=True)
+class GmemWindow:
+    """A contiguous GMEM (DDR) window: byte_address is the GPU's address, in GMEM.
+
+    The dumped words are keyed like a DmemWindow's: byte address / 4."""
+
+    byte_address: int
+    word_count: int
+
+    @property
+    def word_offset(self) -> int:
+        if self.byte_address % 4 != 0:
+            raise AdapterProtocolError(f"GMEM byte address 0x{self.byte_address:08x} is not 4-byte aligned")
         return self.byte_address // 4
 
 
@@ -101,6 +118,35 @@ class ProgramAdapter:
     def __init__(self, program_dir: Path, artifact_dir: Path):
         self.program_dir = Path(program_dir)
         self.artifact_dir = Path(artifact_dir)
+        self._layout: dict[str, Any] | None = None
+
+    # ---------- the program's memory layout ----------
+
+    @property
+    def layout(self) -> dict[str, Any]:
+        """<program>_layout.json from the RISC-V build: regions and data symbols."""
+        if self._layout is None:
+            path = self.artifact_dir / f"{self.program_dir.name}_layout.json"
+            if not path.is_file():
+                raise FileNotFoundError(f"{path} not found: build the program (software programs:<program>:riscv:build)")
+            self._layout = json.loads(path.read_text(encoding="utf-8"))
+        return self._layout
+
+    def symbol(self, name: str) -> int:
+        """Byte address of a global variable of the kernel (GPGPU_SHARED or GMEM)."""
+        symbols = self.layout["symbols"]
+        if name not in symbols:
+            raise AdapterProtocolError(f"{self.program_dir.name} has no global variable {name!r}")
+        return symbols[name]["address"]
+
+    def symbol_window(self, name: str, word_count: int | None = None) -> DmemWindow | GmemWindow:
+        """The window of a global variable: DMEM for GPGPU_SHARED ones, GMEM for the rest."""
+        entry = self.layout["symbols"].get(name)
+        if entry is None:
+            raise AdapterProtocolError(f"{self.program_dir.name} has no global variable {name!r}")
+        count = word_count if word_count is not None else entry["size"] // 4
+        window = DmemWindow if entry["section"] == ".shared" else GmemWindow
+        return window(byte_address=entry["address"], word_count=count)
 
     # ---------- CLI / setup ----------
 
@@ -154,11 +200,10 @@ class ProgramAdapter:
         call_index: int,
         adapter_args: argparse.Namespace,
     ) -> Iterable[int | str]:
-        """Return the 0..4 words to write into GPGPU_ARGS.
+        """Return the words to write into GPGPU_ARGS (at most its size, layout["args"]["words"]).
 
-        The runner normalizes this to exactly four words by zero-padding.
-        The words are written to DMEM[16..19] only if they changed relative to
-        the previous kernel call.
+        The runner zero-pads them to the whole window, at DMEM byte 0, and
+        writes them only if they changed relative to the previous kernel call.
         """
         raise NotImplementedError("ProgramAdapter.kernel_arguments() must be overridden")
 
@@ -168,8 +213,8 @@ class ProgramAdapter:
         call_index: int,
         kernel_args: list[str],
         adapter_args: argparse.Namespace,
-    ) -> DmemWindow | None:
-        """Return the DMEM window to dump after this kernel call, or None for no dump."""
+    ) -> DmemWindow | GmemWindow | None:
+        """Return the DMEM or GMEM window to dump after this kernel call, or None for no dump."""
         raise NotImplementedError("ProgramAdapter.output_window() must be overridden")
 
     def process_output(
@@ -177,7 +222,7 @@ class ProgramAdapter:
         *,
         call_index: int,
         kernel_args: list[str],
-        output_window: DmemWindow,
+        output_window: DmemWindow | GmemWindow,
         words: dict[int, str],
         adapter_args: argparse.Namespace,
     ) -> None:
@@ -223,15 +268,15 @@ def normalize_words(words: Iterable[int | str]) -> list[str]:
     return [normalize_word(word) for word in words]
 
 
-def normalize_kernel_args(args: Iterable[int | str]) -> list[str]:
+def normalize_kernel_args(args: Iterable[int | str], args_words: int) -> list[str]:
     words = normalize_words(args)
 
-    if len(words) > GPU_ARGS_WORDS:
+    if len(words) > args_words:
         raise AdapterProtocolError(
-            f"kernel_arguments() returned {len(words)} words, but GPGPU_ARGS has only {GPU_ARGS_WORDS}"
+            f"kernel_arguments() returned {len(words)} words, but GPGPU_ARGS has only {args_words}"
         )
 
-    while len(words) < GPU_ARGS_WORDS:
+    while len(words) < args_words:
         words.append("00000000")
 
     return words
@@ -321,7 +366,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--imem", type=Path, default=None, help="Override IMEM .mem file path")
     parser.add_argument("--imem-offset", type=int, default=0, help="IMEM word offset for program load")
     parser.add_argument("--skip-load-imem", action="store_true", help="Do not reload IMEM before the loop")
-    parser.add_argument("--args-offset", type=int, default=GPU_ARGS_BASE_WORDS, help="DMEM word offset for GPGPU_ARGS")
+    parser.add_argument("--skip-load-data", action="store_true",
+                        help="Do not reload .rodata/.data or zero .bss/.shared: keep the globals of earlier runs")
     parser.add_argument("--no-visualize", action="store_true", help="Disable adapter visualization/finalization")
     parser.add_argument("--verbose", action="store_true", help="Print UART traffic and framework details")
 
@@ -365,8 +411,6 @@ def parse_args(argv: list[str] | None = None) -> ParsedArgs:
         raise SystemExit("--port is required unless --adapter-help is used")
     if generic_args.kernel_calls < 1:
         raise SystemExit("--kernel-calls must be >= 1")
-    if generic_args.args_offset < 0:
-        raise SystemExit("--args-offset must be >= 0")
 
     return ParsedArgs(
         generic=generic_args,
@@ -400,6 +444,18 @@ def load_imem_once(
     uart.load_imem_bin(program_words, offset=args.imem_offset)
 
 
+def load_data_once(*, uart: GpgpuUartMonitor, args: argparse.Namespace, adapter: ProgramAdapter) -> None:
+    if args.skip_load_data:
+        print("[INFO] Skipping the program data load")
+        return
+    layout = adapter.layout
+    image = read_gmem_image(adapter.artifact_dir / layout["gmem_image"])
+    bss = (layout["bss"]["end"] - layout["bss"]["start"]) // 4
+    shared = (layout["shared"]["end"] - layout["shared"]["start"]) // 4
+    print(f"[INFO] Loading {len(image)} GMEM data word(s); zeroing {bss} .bss and {shared} .shared word(s)")
+    load_program_data(uart, layout, image)
+
+
 def load_kernel_args_if_changed(
     *,
     uart: GpgpuUartMonitor,
@@ -429,12 +485,13 @@ def run_kernel_call(
     previous_kernel_args: list[str] | None,
 ) -> list[str]:
     kernel_args = normalize_kernel_args(
-        adapter.kernel_arguments(call_index=call_index, adapter_args=adapter_args)
+        adapter.kernel_arguments(call_index=call_index, adapter_args=adapter_args),
+        adapter.layout["args"]["words"],
     )
 
     previous_kernel_args = load_kernel_args_if_changed(
         uart=uart,
-        args_offset=generic_args.args_offset,
+        args_offset=adapter.layout["args"]["base"] // 4,
         previous_args=previous_kernel_args,
         current_args=kernel_args,
         verbose=generic_args.verbose,
@@ -463,16 +520,22 @@ def run_kernel_call(
     if window.word_count < 1:
         raise AdapterProtocolError("output_window().word_count must be >= 1")
 
+    space = "GMEM" if isinstance(window, GmemWindow) else "DMEM"
     if generic_args.verbose:
         print(
-            f"[INFO] Dumping DMEM[{window.word_offset}:{window.word_offset + window.word_count}) "
-            f"from byte address 0x{window.byte_address:08x}"
+            f"[INFO] Dumping {space} {window.word_count} word(s) from byte address 0x{window.byte_address:08x}"
         )
 
-    output_words = uart.dump_dmem_bin(
-        count=window.word_count,
-        offset=window.word_offset,
-    )
+    if isinstance(window, GmemWindow):
+        gmem_base = adapter.layout["gmem_data"]["start"]
+        offset = (window.byte_address - gmem_base) // 4
+        dumped = uart.dump_gmem_bin(count=window.word_count, offset=offset)
+        output_words = {window.word_offset + index - offset: word for index, word in dumped.items()}
+    else:
+        output_words = uart.dump_dmem_bin(
+            count=window.word_count,
+            offset=window.word_offset,
+        )
 
     adapter.process_output(
         call_index=call_index,
@@ -503,12 +566,14 @@ def main(argv: list[str] | None = None) -> int:
     print(f"[INFO] Port          : {args.port} @ {args.baud}")
     print(f"[INFO] Kernel calls  : {args.kernel_calls}")
     print(f"[INFO] IMEM          : {imem_path}")
-    print(f"[INFO] Args window   : DMEM[{args.args_offset}:{args.args_offset + GPU_ARGS_WORDS})")
+    args_word, args_words = adapter.layout["args"]["base"] // 4, adapter.layout["args"]["words"]
+    print(f"[INFO] Args window   : DMEM[{args_word}:{args_word + args_words})")
 
     previous_kernel_args: list[str] | None = None
 
     with GpgpuUartMonitor(args.port, args.baud, verbose=args.verbose) as uart:
         load_imem_once(uart=uart, args=args, imem_path=imem_path)
+        load_data_once(uart=uart, args=args, adapter=adapter)
 
         load_dmem_updates(
             uart,

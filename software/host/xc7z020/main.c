@@ -237,9 +237,104 @@ static void gmemcheck(u32 fb) {
         xil_printf("GMEMCHECK_FAIL %u of %u words differ\r\n", mismatches, (u32)GMEMTEST_WORDS);
 }
 
+/* GMEM: the GPU's read-write DDR region, which holds a program's .rodata, .data
+ * and .bss (software/programs/linker.ld) and its buffers. Offsets and counts
+ * are words from GPGPU_GMEM_BASE. The A9 writes it through its cache, so
+ * every write is flushed before the GPU runs, and a read invalidates first:
+ * the GPU's HP port does not snoop the caches. */
+#define GMEM_WORDS (GPGPU_GMEM_SIZE / 4U)
+
+static volatile u32 *gmem_words(void) {
+    return (volatile u32 *)(UINTPTR)GPGPU_GMEM_BASE;
+}
+
+static int gmem_span_ok(const char *what, u32 offset, u32 count) {
+    if (offset > GMEM_WORDS || count > (GMEM_WORDS - offset)) {
+        xil_printf("ERROR: GMEM %s range offset=%u count=%u exceeds %u words\r\n", what, offset, count, GMEM_WORDS);
+        return 0;
+    }
+    return 1;
+}
+
+static void gmem_flush(u32 offset, u32 count) {
+    Xil_DCacheFlushRange((INTPTR)(GPGPU_GMEM_BASE + 4U * offset), 4U * count);
+}
+
+/* Raw little-endian words straight into GMEM: no buffer, so any count fits. */
+static int load_gmem_binary(u32 offset, u32 count) {
+    volatile u32 *gmem = gmem_words();
+
+    if (!gmem_span_ok("binary load", offset, count))
+        return -1;
+
+    xil_printf("READY_GMEM_BIN\n");
+    for (u32 i = 0; i < count; i++) {
+        u32 val = 0;
+        val |= ((u32)inbyte() & 0xFF) << 0;
+        val |= ((u32)inbyte() & 0xFF) << 8;
+        val |= ((u32)inbyte() & 0xFF) << 16;
+        val |= ((u32)inbyte() & 0xFF) << 24;
+        gmem[offset + i] = val;
+    }
+    gmem_flush(offset, count);
+    xil_printf("GMEM_LOAD_COMPLETE\n");
+    return 0;
+}
+
+static int dump_gmem_binary(u32 offset, u32 count) {
+    volatile u32 *gmem = gmem_words();
+
+    if (!gmem_span_ok("binary dump", offset, count))
+        return -1;
+
+    Xil_DCacheInvalidateRange((INTPTR)(GPGPU_GMEM_BASE + 4U * offset), 4U * count);
+    xil_printf("BEGIN_GMEM_BIN\n");
+    for (u32 i = 0; i < count; i++) {
+        u32 val = gmem[offset + i];
+
+        outbyte((val >> 0)  & 0xFF);
+        outbyte((val >> 8)  & 0xFF);
+        outbyte((val >> 16) & 0xFF);
+        outbyte((val >> 24) & 0xFF);
+    }
+    xil_printf("\r\n");
+    return 0;
+}
+
+/* Zeroes .bss (GMEM) and .shared (DMEM) at program load, or fills any span. */
+static int fill_gmem(u32 offset, u32 count, u32 word) {
+    volatile u32 *gmem = gmem_words();
+
+    if (!gmem_span_ok("fill", offset, count))
+        return -1;
+
+    for (u32 i = 0; i < count; i++)
+        gmem[offset + i] = word;
+    gmem_flush(offset, count);
+    xil_printf("FILL_COMPLETE\n");
+    return 0;
+}
+
+static int fill_dmem(u32 offset, u32 count, u32 word) {
+    if (offset > GPGPU_DMEM_ENTRIES || count > (GPGPU_DMEM_ENTRIES - offset)) {
+        xil_printf("ERROR: DMEM fill range offset=%u count=%u exceeds GPGPU_DMEM_ENTRIES=%d\n",
+                   offset, count, GPGPU_DMEM_ENTRIES);
+        return -1;
+    }
+    for (u32 i = 0; i < count; i++) {
+        if (gpgpu_write_dmem(offset + i, word) != 0) {
+            xil_printf("ERROR_AXI_WRITE\n");
+            return -1;
+        }
+    }
+    xil_printf("FILL_COMPLETE\n");
+    return 0;
+}
+
 #if GPGPU_AUTORUN
 #define AUTORUN_IMAGE_WORDS (sizeof(gpgpu_autorun_image) / sizeof(gpgpu_autorun_image[0]))
 #define AUTORUN_ARG_WORDS   (sizeof(gpgpu_autorun_args) / sizeof(gpgpu_autorun_args[0]))
+#define AUTORUN_GMEM_WORDS  (sizeof(gpgpu_autorun_gmem) / sizeof(gpgpu_autorun_gmem[0]))
 
 _Static_assert(AUTORUN_IMAGE_WORDS <= GPGPU_IMEM_ENTRIES, "autorun image does not fit IMEM");
 
@@ -263,6 +358,19 @@ static void autorun(void) {
             return;
         }
     }
+    /* The program's data, once: .rodata/.data into GMEM, .bss and .shared zeroed. */
+    for (u32 i = 0U; i < GPGPU_AUTORUN_SHARED_WORDS; i++) {
+        if (gpgpu_write_dmem(GPGPU_AUTORUN_SHARED_WORD + i, 0U) != 0) {
+            xil_printf("AUTORUN: shared memory word %u did not clear\r\n", i);
+            return;
+        }
+    }
+    for (u32 i = 0U; i < AUTORUN_GMEM_WORDS; i++)
+        gmem_words()[GPGPU_AUTORUN_GMEM_WORD + i] = gpgpu_autorun_gmem[i];
+    for (u32 i = 0U; i < GPGPU_AUTORUN_BSS_WORDS; i++)
+        gmem_words()[GPGPU_AUTORUN_BSS_WORD + i] = 0U;
+    gmem_flush(GPGPU_AUTORUN_GMEM_WORD, AUTORUN_GMEM_WORDS);
+    gmem_flush(GPGPU_AUTORUN_BSS_WORD, GPGPU_AUTORUN_BSS_WORDS);
     if (display_show(GPGPU_AUTORUN_DISPLAY) != 0)
         return;
 
@@ -529,6 +637,11 @@ static void print_help(void) {
     xil_printf("  loaddmem <offset> <count>\r\n");
     xil_printf("  loadimem_bin <offset> <count>\r\n");
     xil_printf("  loaddmem_bin <offset> <count>\r\n");
+    xil_printf("  --------- GMEM (DDR; word offsets from GMEM_BASE) ---------\r\n");
+    xil_printf("  loadgmem_bin <offset> <count>\r\n");
+    xil_printf("  dumpgmem_bin <offset> <count>\r\n");
+    xil_printf("  fillgmem <offset> <count> <word_hex>\r\n");
+    xil_printf("  filldmem <offset> <count> <word_hex>\r\n");
     xil_printf("  --------- CONTROL ---------\r\n");
     xil_printf("  run\r\n");
     xil_printf("  bench <frames>   (run the kernel back to back, report frames/s and the perf counters)\r\n");
@@ -538,7 +651,8 @@ static void print_help(void) {
     xil_printf("  --------- DISPLAY ---------\r\n");
     xil_printf("  display <fb>   (show framebuffer 0 or 1 on HDMI)\r\n");
     xil_printf("  --------- DDR TEST PICTURE ---------\r\n");
-    xil_printf("  gmemfill <fb>   (write the test picture to GMEM, clear framebuffer fb)\r\n");
+    xil_printf("  gmemfill <fb>   (write the test picture to GMEM, clear framebuffer fb;\r\n");
+    xil_printf("                   overwrites the loaded program's GMEM data: reload it after)\r\n");
     xil_printf("  gmemcheck <fb>  (compare framebuffer fb with GMEM)\r\n");
     xil_printf("\r\n");
 }
@@ -717,6 +831,39 @@ int main(void) {
             }
 
             load_dmem_binary(offset, count);
+
+        } else if (strcmp(cmd, "loadgmem_bin") == 0 || strcmp(cmd, "dumpgmem_bin") == 0) {
+            u32 offset, count;
+
+            arg1 = strtok(NULL, " \t");
+            arg2 = strtok(NULL, " \t");
+            if (parse_count(arg1, &offset) != 0 || parse_count(arg2, &count) != 0) {
+                xil_printf("ERROR: usage: %s <offset> <count>\r\n", cmd);
+                continue;
+            }
+
+            if (strcmp(cmd, "loadgmem_bin") == 0)
+                load_gmem_binary(offset, count);
+            else
+                dump_gmem_binary(offset, count);
+
+        } else if (strcmp(cmd, "fillgmem") == 0 || strcmp(cmd, "filldmem") == 0) {
+            u32 offset, count, word;
+            char *arg3;
+
+            arg1 = strtok(NULL, " \t");
+            arg2 = strtok(NULL, " \t");
+            arg3 = strtok(NULL, " \t");
+            if (parse_count(arg1, &offset) != 0 || parse_count(arg2, &count) != 0 ||
+                arg3 == NULL || parse_u32_hex(arg3, &word) != 0) {
+                xil_printf("ERROR: usage: %s <offset> <count> <word_hex>\r\n", cmd);
+                continue;
+            }
+
+            if (strcmp(cmd, "fillgmem") == 0)
+                fill_gmem(offset, count, word);
+            else
+                fill_dmem(offset, count, word);
 
         } else if (strcmp(cmd, "run") == 0) {
             gpgpu_start_and_wait();

@@ -12,26 +12,13 @@ The runner is generic and only knows how to:
 nbody-3d-specific ABI
 ---------------------
 
-GPGPU_ARGS / DMEM[16..19]:
+GPGPU_ARGS:
 
-    GPGPU_ARGS[0] = base pointer, byte address, default 0x00001000
-    GPGPU_ARGS[1] = steps per kernel call
-    GPGPU_ARGS[2] = reset, 1 only for call_index == 0
-    GPGPU_ARGS[3] = reserved, 0
+    GPGPU_ARGS[0] = steps per kernel call
+    GPGPU_ARGS[1] = reset, 1 only for call_index == 0
 
-The C kernel can interpret GPGPU_ARGS[0] like this:
-
-    volatile int *base  = (volatile int *)GPGPU_ARGS[0];
-
-    volatile int *pos_x = base;
-    volatile int *pos_y = base + CORES;
-    volatile int *pos_z = base + 2 * CORES;
-
-    volatile int *vel_x = base + 3 * CORES;
-    volatile int *vel_y = base + 4 * CORES;
-    volatile int *vel_z = base + 5 * CORES;
-
-Default data-region layout:
+The state is the kernel's shared-memory array nbody_state (GPGPU_SHARED, in
+DMEM; its address comes from nbody-3d_layout.json), zeroed at program load:
 
     pos_x[32] at base + 0 words
     pos_y[32] at base + 32 words
@@ -62,8 +49,6 @@ from fpga_run import DmemWindow, ProgramAdapter as BaseProgramAdapter
 
 NUM_BODIES = 32
 
-DEFAULT_DATA_BASE_BYTES = 0x00001000
-DEFAULT_DATA_LIMIT_BYTES = 0x00001800
 
 STATE_WORDS = NUM_BODIES * 6          # pos_x,pos_y,pos_z,vel_x,vel_y,vel_z
 POSITION_OUTPUT_WORDS = NUM_BODIES * 3 # pos_x,pos_y,pos_z
@@ -93,12 +78,9 @@ class ProgramAdapter(BaseProgramAdapter):
         self.current_step = 0
         self.history: list[list[int]] = []
 
-        # These are set from adapter CLI options in configure().
+        # These are set in configure(), from the CLI and the program's layout.
         self.steps_per_call = 1
-        self.data_base_bytes = DEFAULT_DATA_BASE_BYTES
-        self.data_limit_bytes = DEFAULT_DATA_LIMIT_BYTES
-        self.clear_state = True
-        self.clear_words = STATE_WORDS
+        self.data_base_bytes = 0
 
     def add_arguments(self, parser: argparse.ArgumentParser) -> None:
         group = parser.add_argument_group("nbody-3d FPGA options")
@@ -108,32 +90,6 @@ class ProgramAdapter(BaseProgramAdapter):
             type=int,
             default=1,
             help="Logical nbody-3d simulation steps executed by each kernel call",
-        )
-        group.add_argument(
-            "--data-base",
-            type=parse_int_auto,
-            default=DEFAULT_DATA_BASE_BYTES,
-            help="Byte address passed to the kernel as the base pointer, default: 0x1000",
-        )
-        group.add_argument(
-            "--data-limit",
-            type=parse_int_auto,
-            default=DEFAULT_DATA_LIMIT_BYTES,
-            help="End byte address of the usable data region, default: 0x1800",
-        )
-        group.add_argument(
-            "--clear-words",
-            type=int,
-            default=STATE_WORDS,
-            help=(
-                "Number of words to clear at --data-base before the first kernel call. "
-                "Default clears pos_x,pos_y,pos_z,vel_x,vel_y,vel_z."
-            ),
-        )
-        group.add_argument(
-            "--no-clear-state",
-            action="store_true",
-            help="Do not clear the nbody-3d state region before the first kernel call",
         )
 
     def configure(
@@ -145,34 +101,10 @@ class ProgramAdapter(BaseProgramAdapter):
     ) -> None:
         if adapter_args.steps < 1:
             raise SystemExit("--steps must be >= 1")
-        if adapter_args.data_base % 4 != 0:
-            raise SystemExit("--data-base must be 4-byte aligned")
-        if adapter_args.data_limit % 4 != 0:
-            raise SystemExit("--data-limit must be 4-byte aligned")
-        if adapter_args.data_limit <= adapter_args.data_base:
-            raise SystemExit("--data-limit must be greater than --data-base")
-        if adapter_args.clear_words < 0:
-            raise SystemExit("--clear-words must be >= 0")
-
-        required_words = STATE_WORDS
-        available_words = (adapter_args.data_limit - adapter_args.data_base) // 4
-
-        if available_words < required_words:
-            raise SystemExit(
-                f"nbody-3d needs at least {required_words} words at --data-base "
-                f"for pos_x,pos_y,pos_z,vel_x,vel_y,vel_z, but only {available_words} are available"
-            )
-
-        if adapter_args.clear_words > available_words:
-            raise SystemExit(
-                f"--clear-words={adapter_args.clear_words} exceeds available data words {available_words}"
-            )
 
         self.steps_per_call = adapter_args.steps
-        self.data_base_bytes = adapter_args.data_base
-        self.data_limit_bytes = adapter_args.data_limit
-        self.clear_state = not adapter_args.no_clear_state
-        self.clear_words = adapter_args.clear_words
+        # nbody_state (GPGPU_SHARED): zeroed at program load, set by reset.
+        self.data_base_bytes = self.symbol("nbody_state")
 
         self.current_step = 0
         self.history.clear()
@@ -190,23 +122,6 @@ class ProgramAdapter(BaseProgramAdapter):
             f"data_base=0x{self.data_base_bytes:08x}"
         )
 
-    def initial_dmem(self):
-        """Clear nbody-3d state memory once before the kernel-call loop.
-
-        The default clears only the nbody-3d state region:
-          pos_x[32], pos_y[32], pos_z[32], vel_x[32], vel_y[32], vel_z[32]
-
-        This is safer than clearing the whole compiler-owned data region, because
-        future programs may rely on .data/.rodata contents.
-        """
-        if not self.clear_state or self.clear_words == 0:
-            return None
-
-        return (
-            self.data_base_bytes // 4,
-            [u32_hex(0)] * self.clear_words,
-        )
-
     def kernel_arguments(
         self,
         *,
@@ -216,10 +131,8 @@ class ProgramAdapter(BaseProgramAdapter):
         reset = 1 if call_index == 0 else 0
 
         return [
-            self.data_base_bytes,     # GPGPU_ARGS[0]: byte pointer to nbody-3d state/output arrays
-            self.steps_per_call,      # GPGPU_ARGS[1]: steps per kernel call
-            reset,                    # GPGPU_ARGS[2]: reset on first call only
-            0,                        # GPGPU_ARGS[3]: reserved
+            self.steps_per_call,      # GPGPU_ARGS[0]: steps per kernel call
+            reset,                    # GPGPU_ARGS[1]: reset on first call only
         ]
 
     def output_window(
