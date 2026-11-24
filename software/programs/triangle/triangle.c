@@ -2,8 +2,7 @@
 
 #define CORES ((int)GPGPU_NUM_CORES)
 
-/* Every helper must be inlined: a call needs AUIPC, which the core does not
- * decode, and a function's RET (jalr x0, 0(x1)) would end the kernel. */
+/* Every helper is inlined: a lane has a small stack, and a call spills to it. */
 #define INLINE static inline __attribute__((always_inline))
 
 /*
