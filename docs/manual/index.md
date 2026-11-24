@@ -14,15 +14,11 @@ and all its lanes, the streaming processors, execute it in lockstep. The number
 of lanes is a configuration option.
 
 ```mermaid
-flowchart TB
-    pc["Your computer"] -- UART --> host
-    subgraph zynq["Zynq-7000"]
-        host["ARM host program"] -- AXI4-Lite --> gpu["GPGPU"]
-        gpu -- interrupt --> host
-        gpu -- AXI4 --> ddr[("DDR")]
-        ddr --> scan["Display scanout"]
-    end
-    scan -- HDMI --> monitor["Monitor"]
+flowchart LR
+    host["Host"] -- AXI4-Lite --> gpu["GPGPU"]
+    gpu -- IRQ --> host
+    gpu -- AXI4 --> ddr["DDR"]
+    ddr --> scan["Scanout"]
 ```
 
 - The **host program** runs on the ARM processor of the Zynq. It loads a kernel

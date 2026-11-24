@@ -45,8 +45,8 @@ this site, and they must also read well on GitHub.
   link to a file outside `docs/manual/`: write its path as code instead.
 - **Blocks inside a list item** are indented by four spaces. GitHub accepts
   fewer, but Zensical then ends the list.
-- **Diagrams** are Mermaid code blocks. GitHub draws them too. Prefer top to
-  bottom: a wide diagram is shrunk to the width of the text.
+- **Diagrams** are Mermaid code blocks. GitHub draws them too. Keep labels
+  short: a wide diagram is shrunk to the width of the text.
 - **Planned features** appear only as a short note where the reader would look
   for them.
 - **Do not copy values** that the RTL or the configuration owns, such as sizes
