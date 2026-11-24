@@ -219,6 +219,14 @@ paths:
   build:
     root: build
 
+# The user manual. `config` is the site's own configuration: its pages, navigation
+# and look. `gpgpu docs site:serve` serves it on host:port.
+docs:
+  site:
+    config: mkdocs.yml
+    host: 127.0.0.1
+    port: 8000
+
 # Commands are names or paths. Machine-specific paths belong in config/local.yaml.
 tools:
   git:
