@@ -44,4 +44,5 @@ addi x14, x13, 200   # EX-to-EX -> x14 = 300
 add  x15, x14, x13   # x14(EX-to-EX), x13(MEM-to-EX) -> x15 = 400
 sw   x15, 24(x1)     # Mem[24] = 400
 sw   x13, 24(x1)     # Overwrite Mem[24] with 100!
-jalr x0, 0(x1)  # return
+addi x17, x0, 0  # Kernel complete: ECALL service 0
+ecall

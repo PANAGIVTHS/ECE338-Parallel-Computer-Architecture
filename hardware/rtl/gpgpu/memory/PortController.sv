@@ -24,7 +24,17 @@ module PortController
     input axi_resp_t i_ddr_rd_resp,
     input ring_index_t i_ddr_alloc,
 
-    output logic o_idle
+    output logic o_idle,
+
+    // Performance counters: a DDR store presented and not yet admitted to
+    // the write path, one admitted and waiting for its response, and one
+    // admitted this cycle; the same for a DDR load and the read path
+    output logic o_perf_st_waiting,
+    output logic o_perf_st_admitted,
+    output logic o_perf_st_admit,
+    output logic o_perf_ld_waiting,
+    output logic o_perf_ld_admitted,
+    output logic o_perf_ld_admit
 );
     typedef enum logic [2:0] {
         IDLE,
@@ -36,7 +46,7 @@ module PortController
 
     port_ctrl_state_t current_state, next_state;
     decode_t decoded;
-    assign decoded = decode_access(req.addr, req.write, DDR_ENABLE);
+    assign decoded = decode_access(req.addr, req.size, req.write, DDR_ENABLE);
 
     // Claim: a presented request in IDLE becomes a candidate while enabled.
     // o_req_ready is high only when it is actually taken (claim = issue).
@@ -47,6 +57,12 @@ module PortController
     assign ddr_if.cand = cand & (decoded.target == TGT_DDR);
     assign o_req_ready = err | bram_if.accept | ddr_if.accept;
     assign o_idle = current_state == IDLE;
+    assign o_perf_st_waiting = i_req_valid & req.write & (current_state == IDLE) & (decoded.target == TGT_DDR);
+    assign o_perf_st_admitted = current_state == DDR_WR;
+    assign o_perf_st_admit = ddr_if.accept & req.write;
+    assign o_perf_ld_waiting = i_req_valid & ~req.write & (current_state == IDLE) & (decoded.target == TGT_DDR);
+    assign o_perf_ld_admitted = current_state == DDR_RD;
+    assign o_perf_ld_admit = ddr_if.accept & ~req.write;
 
     // IMM_RSP status, registered on entry (the decode error, or ST_OK for a
     // BRAM store) so the address decode stays off the requester's fault ->

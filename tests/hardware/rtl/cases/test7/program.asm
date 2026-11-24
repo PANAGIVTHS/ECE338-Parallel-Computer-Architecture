@@ -39,4 +39,5 @@ sw   x12, 28(x1)     # Mem[28] = 6
 sw   x13, 32(x1)     # Mem[32] = 24
 sw   x16, 36(x1)     # Mem[36] = 14
 sw   x17, 40(x1)     # Mem[40] = 17
-jalr x0, 0(x1)  # return
+addi x17, x0, 0  # Kernel complete: ECALL service 0
+ecall

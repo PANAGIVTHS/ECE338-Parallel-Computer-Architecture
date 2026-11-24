@@ -1,0 +1,30 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "gpgpu"
+version = "0.1.0"
+description = "Build, test and operate the ECE338 GPGPU"
+requires-python = ">=3.11"
+dependencies = [
+  "doit>=0.37,<1",
+  "pydantic>=2.5,<3",
+  # SystemVerilog compiler: reads constants out of the RTL's packages.
+  "pyslang>=12.1,<13",
+  "PyYAML>=6,<7",
+  "rich>=13,<15",
+  "typer>=0.15,<1",
+]
+
+[project.scripts]
+gpgpu = "gpgpu.cli.main:main"
+
+[dependency-groups]
+dev = ["pytest>=8,<9"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["tools/gpgpu"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests/cli"]

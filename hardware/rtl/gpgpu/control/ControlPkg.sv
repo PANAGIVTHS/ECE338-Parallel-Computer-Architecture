@@ -20,6 +20,21 @@ package ControlPkg;
     (* host *) localparam gpu_pkg::word_t REG_FAULT_LANES = 'h0044;
     (* host *) localparam gpu_pkg::word_t REG_FAULT_PC = 'h0048;
 
+    // Performance counter block (0x1000-0x1FFF): read-only 64-bit counters
+    // (PerfPkg), each in one PERF_COUNTER_BYTES slot with its low word first.
+    // The lower half holds the global counters, the upper half one bank of
+    // warp leaves per warp; both have room for counters not defined yet.
+    (* host *) localparam gpu_pkg::word_t PERF_BASE = 'h1000;
+    (* host *) localparam gpu_pkg::word_t PERF_SIZE = 'h1000;
+    (* host *) localparam gpu_pkg::word_t PERF_COUNTER_BYTES = 8;
+    (* host *) localparam gpu_pkg::word_t PERF_HI_OFFSET = gpu_pkg::BYTES_PER_WORD;
+    (* host *) localparam gpu_pkg::word_t PERF_GLOBAL_BASE = PERF_BASE;
+    (* host *) localparam gpu_pkg::word_t PERF_WARP_BASE = PERF_BASE + PERF_SIZE / 2;
+    (* host *) localparam gpu_pkg::word_t PERF_WARP_STRIDE = 'h100;
+    (* host *) localparam int unsigned PERF_GLOBAL_SLOTS = (PERF_WARP_BASE - PERF_GLOBAL_BASE) / PERF_COUNTER_BYTES;
+    (* host *) localparam int unsigned PERF_WARP_SLOTS = PERF_WARP_STRIDE / PERF_COUNTER_BYTES;
+    (* host *) localparam int unsigned PERF_MAX_WARPS = (PERF_BASE + PERF_SIZE - PERF_WARP_BASE) / PERF_WARP_STRIDE;
+
     // Memory windows
     (* host *) localparam gpu_pkg::word_t IMEM_BASE = 'h2000;
     (* host *) localparam gpu_pkg::word_t DMEM_BASE = 'h4000;

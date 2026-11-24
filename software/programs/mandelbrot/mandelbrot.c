@@ -1,54 +1,82 @@
 #include "../gpgpu_runtime.h"
+#include "../gpgpu_math.h"
 #include "mandelbrot.h"
 
-#define CORES GPGPU_NUM_CORES
+/*
+ * Endless Mandelbrot zoom: from the whole set down to the small copy of it
+ * on the antenna at (-1.7685, 0), then over again.
+ *
+ * Each frame shrinks the view by 1/2^MANDEL_ZOOM_SHIFT, for MANDEL_ZOOM_FRAMES
+ * frames (about 7.6x). That is about as deep as Q20 with the pre-shifted
+ * multiply goes before the picture turns blocky (see mandelbrot.h). The
+ * view's center moves from the whole set's to the copy's as the zoom goes,
+ * so the copy glides into the middle while it grows. The palette cycles with
+ * the frame.
+ *
+ * mandelbrot.h draws it: every pixel runs all MANDEL_ITER iterations (no
+ * early exit, so no divergence), one sample per 2x2 pixels.
+ */
+
+/* Iterations per sample; the cost of a frame is close to proportional. */
+#define MANDEL_ITER 32
+
+/* Centers, Q20: the whole set's (-0.75, 0) and the copy's (-1.7685, 0). */
+#define MANDEL_START_RE (-786432)
+#define MANDEL_START_IM 0
+#define MANDEL_TARGET_RE (-1854407)
+#define MANDEL_TARGET_IM 0
+
+/* Pixel step at the start of each zoom: 2.5 across 1280 pixels, Q20. */
+#define MANDEL_START_STEP 2048
+
+/* Frames per zoom (a power of two: frame & (MANDEL_ZOOM_FRAMES - 1) picks
+ * the frame within it), and the step shrinks by step >> MANDEL_ZOOM_SHIFT
+ * per frame: (31/32)^63 = 1 / 7.4 at the last frame. */
+#define MANDEL_ZOOM_FRAMES 64
+#define MANDEL_ZOOM_SHIFT 5
+
+/* The share of the way left to go, as (step - end) / (start - end), in Q12. */
+#define MANDEL_BLEND_SHIFT 12
+
+INLINE void mandel_setup(volatile fractal_t *f, int frame)
+{
+    int k = frame & (MANDEL_ZOOM_FRAMES - 1);
+    int step = MANDEL_START_STEP, end = MANDEL_START_STEP;
+
+    /* The same counts in every lane. */
+    for (int i = 1; i < MANDEL_ZOOM_FRAMES; i++) {
+        end -= end >> MANDEL_ZOOM_SHIFT;
+        if (i == k)
+            step = end;
+    }
+
+    /* (start - target) / 4 * left stays under 2^31 for the centers above;
+     * the / 4 costs 2 of 20 fraction bits. */
+    int left = (int)udiv_uniform((unsigned int)(step - end) << MANDEL_BLEND_SHIFT,
+                                 (unsigned int)(MANDEL_START_STEP - end));
+
+    f->julia = 0;
+    f->cx = MANDEL_TARGET_RE +
+            ((((MANDEL_START_RE - MANDEL_TARGET_RE) >> 2) * left) >> (MANDEL_BLEND_SHIFT - 2));
+    f->cy = MANDEL_TARGET_IM +
+            ((((MANDEL_START_IM - MANDEL_TARGET_IM) >> 2) * left) >> (MANDEL_BLEND_SHIFT - 2));
+    f->step = step;
+    f->max_iter = MANDEL_ITER;
+}
 
 #ifdef __riscv
 
-#include <stdint.h>
+/* Every lane writes the same values each frame. */
+static volatile fractal_t view;
 
-#define MANDEL_ROW_SHIFT 26
-#define MANDEL_SCALE_MASK ((1u << MANDEL_ROW_SHIFT) - 1u)
+/* Each lane's sample, for its neighbors to read. */
+static volatile unsigned int samples[GPGPU_NUM_CORES];
 
 void main(void)
 {
-    unsigned int tid = gpgpu_thread_id();
-
-    /*
-     * Args:
-     *   GPGPU_ARGS[0] = output row pointer, byte address
-     *   GPGPU_ARGS[1] = packed row + scale_q
-     *                    bits [31:26] = row, 0..63
-     *                    bits [25:0]  = scale_q
-     *   GPGPU_ARGS[2] = center_re_q
-     *   GPGPU_ARGS[3] = center_im_q
-     */
-    volatile int *output = (volatile int *)(uintptr_t)GPGPU_ARGS[0];
-
-    unsigned int packed = (unsigned int)GPGPU_ARGS[1];
-
-    unsigned int row = packed >> MANDEL_ROW_SHIFT;
-    int scale_q = (int)(packed & MANDEL_SCALE_MASK);
-
-    int center_re_q = GPGPU_ARGS[2];
-    int center_im_q = GPGPU_ARGS[3];
-
-    /*
-     * 32 cores, 64 pixels per row.
-     * Each core computes two pixels.
-     */
-    unsigned int x0 = tid;
-    unsigned int x1 = tid + CORES;
-
-    int iter0 = mandel_pixel(x0, row, center_re_q, center_im_q, scale_q);
-    int iter1 = mandel_pixel(x1, row, center_re_q, center_im_q, scale_q);
-
-    /*
-     * Output row:
-     *   output[0..63] = iteration counts for the selected row.
-     */
-    output[x0] = iter0;
-    output[x1] = iter1;
+    /* Args: see fractal_render() in mandelbrot.h. */
+    mandel_setup(&view, GPGPU_ARGS[3]);
+    fractal_render(&view, samples);
 
     return;
 }
@@ -57,84 +85,23 @@ GPGPU_START(main)
 
 #else
 
-#include <stdio.h>
 #include <stdlib.h>
 
-static void print_csv_header(void)
-{
-    printf("frame,row");
-
-    for (int x = 0; x < WIDTH; x++) {
-        printf(",p%d", x);
-    }
-
-    printf("\n");
-}
-
-static void print_mandelbrot_row(
-    int frame,
-    int row,
-    int center_re_q,
-    int center_im_q,
-    int scale_q
-)
-{
-    printf("%d,%d", frame, row);
-
-    for (unsigned int x = 0; x < WIDTH; x++) {
-        int iter = mandel_pixel(x, (unsigned int)row, center_re_q, center_im_q, scale_q);
-        printf(",%d", iter);
-    }
-
-    printf("\n");
-}
-
+/* ./mandelbrot_x86 width height frame > mandelbrot.ppm writes that frame. */
 int main(int argc, char **argv)
 {
-    int frames = DEFAULT_FRAMES;
-    int center_re_q = DEFAULT_CENTER_RE_Q;
-    int center_im_q = DEFAULT_CENTER_IM_Q;
-    int scale_q = DEFAULT_SCALE_Q;
-
-    /*
-     * Optional x86 arguments:
-     *
-     *   ./mandelbrot_x86 frames center_re_q center_im_q scale_q
-     *
-     * Example:
-     *   ./mandelbrot_x86 160 -779776 138240 3145728 > data.csv
-     */
-    if (argc >= 2) {
-        frames = atoi(argv[1]);
+    if (argc != 4) {
+        fprintf(stderr, "usage: %s width height frame\n", argv[0]);
+        return 1;
     }
 
-    if (argc >= 5) {
-        center_re_q = atoi(argv[2]);
-        center_im_q = atoi(argv[3]);
-        scale_q = atoi(argv[4]);
-    }
+    int width = (int)strtol(argv[1], NULL, 0);
+    int height = (int)strtol(argv[2], NULL, 0);
+    int frame = (int)strtol(argv[3], NULL, 0);
+    fractal_t view;
 
-    if (frames < 1) {
-        frames = 1;
-    }
-
-    print_csv_header();
-
-    for (int frame = 0; frame < frames; frame++) {
-        for (int row = 0; row < HEIGHT; row++) {
-            print_mandelbrot_row(
-                frame,
-                row,
-                center_re_q,
-                center_im_q,
-                scale_q
-            );
-        }
-
-        /* Zoom in for the next frame without division. */
-        scale_q = zoom_next_scale(scale_q);
-    }
-
+    mandel_setup(&view, frame);
+    fractal_ppm(&view, width, height, frame);
     return 0;
 }
 

@@ -155,4 +155,5 @@ lw x22,20(x2)
 lw x23,16(x2)
 lw x24,12(x2)
 addi x2,x2,48
-jalr x0,0(x1)
+addi x17, x0, 0  # Kernel complete: ECALL service 0
+ecall

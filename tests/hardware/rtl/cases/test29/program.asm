@@ -9,4 +9,5 @@ slli x7, x7, 2
 add  x5, x5, x7         # word lane / 2 of its framebuffer
 xori x8, x31, -1        # value = ~lane
 sw   x8, 0(x5)
-jalr x0, 0(x1)
+addi x17, x0, 0  # Kernel complete: ECALL service 0
+ecall

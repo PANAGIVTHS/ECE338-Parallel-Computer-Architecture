@@ -7,4 +7,5 @@ addi x7, x0, 3
 mul  x7, x7, x31
 addi x7, x7, 7          # value = 3 * lane + 7
 sw   x7, 0(x5)
-jalr x0, 0(x1)
+addi x17, x0, 0  # Kernel complete: ECALL service 0
+ecall

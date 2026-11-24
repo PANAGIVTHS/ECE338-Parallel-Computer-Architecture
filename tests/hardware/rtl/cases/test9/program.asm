@@ -32,4 +32,5 @@ sub  x18, x16, x17
 sw   x18, 20(x0)
 sw   x15, 24(x0)
 sw   x10, 28(x0)
-jalr x0, 0(x1)  # return
+addi x17, x0, 0  # Kernel complete: ECALL service 0
+ecall

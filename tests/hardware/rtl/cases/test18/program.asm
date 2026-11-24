@@ -142,4 +142,5 @@ addi x10, x0, 212
 sw   x10, 44(x0)
 
 end:
-jalr x0, 0(x1)
+addi x17, x0, 0  # Kernel complete: ECALL service 0
+ecall

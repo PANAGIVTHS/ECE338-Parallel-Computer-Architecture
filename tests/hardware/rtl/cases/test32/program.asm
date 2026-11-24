@@ -10,4 +10,5 @@ lw   x9, 0(x8)          # neighbour's square (0 if that lane does not exist)
 lui  x5, 0x18003
 add  x5, x5, x6
 sw   x9, 0(x5)
-jalr x0, 0(x1)
+addi x17, x0, 0  # Kernel complete: ECALL service 0
+ecall

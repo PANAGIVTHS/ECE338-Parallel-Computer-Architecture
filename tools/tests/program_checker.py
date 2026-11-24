@@ -45,9 +45,9 @@ def analyze_multicore_assembly(source_code, num_cores=4):
         'nop', 
         'add', 'sub', 'mul', 'and', 'or', 'xor', 'sll', 'srl', 'sra', 'slt', 'sltu',
         'addi', 'andi', 'ori', 'xori', 'slli', 'srli', 'srai', 'slti', 'sltiu',
-        'lw', 'sw', 
+        'lb', 'lh', 'lw', 'lbu', 'lhu', 'sb', 'sh', 'sw',
         'beq', 'bne', 'blt', 'bge', 'bltu', 'bgeu', 
-        'jal', 'jalr', 'lui'
+        'jal', 'jalr', 'lui', 'auipc', 'ecall'
     }
 
     # 1. Clean code, validate support, and extract labels
@@ -145,14 +145,20 @@ def analyze_multicore_assembly(source_code, num_cores=4):
                 set_reg(cores[c], rd, imm << 12)
             pc += 1
 
-        elif op == 'lw':
+        elif op == 'auipc':
+            rd, imm = parts[1], parse_imm(parts[2])
+            for c in range(num_cores):
+                set_reg(cores[c], rd, (pc * 4) + (imm << 12))
+            pc += 1
+
+        elif op in ['lb', 'lh', 'lw', 'lbu', 'lhu']:
             rd = parts[1]
             imm, rs1 = parse_mem_operand(parts[2])
             for c in range(num_cores):
                 set_reg(cores[c], rd, 0)
             pc += 1
 
-        elif op == 'sw':
+        elif op in ['sb', 'sh', 'sw']:
             rs2 = parts[1]
             imm, rs1 = parse_mem_operand(parts[2])
             
@@ -203,6 +209,28 @@ def analyze_multicore_assembly(source_code, num_cores=4):
             pc = resolve_control_target(target, pc, labels, has_objdump_symbol(parts, 2))
 
         elif op == 'jalr':
+            rd = parts[1]
+            if '(' in parts[2]:
+                imm, rs1 = parse_mem_operand(parts[2])
+            else:
+                rs1, imm = parts[2], parse_imm(parts[3])
+            targets = [(get_reg(core, rs1) + imm) & 0xFFFFFFFE for core in cores]
+            if len(set(targets)) != 1:
+                print(f"[FAIL] DIVERGENCE DETECTED at PC {pc}: '{inst_str}'")
+                return False
+            for core in cores:
+                set_reg(core, rd, (pc + 1) * 4)
+            pc = targets[0] // 4
+
+        elif op == 'ecall':
+            # The hardware follows lane 0, so the selector must agree like a branch.
+            selectors = [get_reg(core, 'x17') for core in cores]
+            if len(set(selectors)) != 1:
+                print(f"[FAIL] DIVERGENCE DETECTED at PC {pc}: '{inst_str}'")
+                print(f"       ECALL selectors (a7) across cores: {selectors}")
+                return False
+            if selectors[0] == 0:
+                break
             pc += 1
 
         else:

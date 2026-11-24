@@ -197,10 +197,10 @@ probably reaches the HDMI signal by one or more of these paths:
 
 | Change | Result |
 |---|---|
-| VDMA burst 64, line buffer 8192 | no effect on the blanking |
-| DDR controller: HP2/HP3 reads in the HPR queue, HPR critical level 1, LPR/write 15 | no effect on the blanking |
+| VDMA burst 64, line buffer 8192 | no effect on the blanking (kept: more DDR headroom) |
+| DDR controller: HP2/HP3 reads in the HPR queue, HPR critical level 1, LPR/write 15 | no effect on the blanking (kept) |
 | Wall charger | no effect |
-| Serial clock from `clk_wiz_0`, `Min_O_Jitter`, `kGenerateSerialClk false` | no effect |
+| Serial clock from `clk_wiz_0`, `Min_O_Jitter`, `kGenerateSerialClk false` | no effect (kept: one PLL fewer) |
 | FCLK0 at 20 MHz | fixes it, but not acceptable as the solution |
 | `clk_wiz_0` `JITTER_SEL Max_I_Jitter` (low bandwidth), FCLK0 at 40 MHz in the same build | still blanks under the standard trigger (kept for now) |
 | `clk_wiz_0` from the 50 MHz PL oscillator (`clk_50m`, M19) instead of FCLK1 (`clk_out1` 13.474 ns, `clk_out2` exactly 1/5) | still blanks: the PS clock is not the path (kept) |
@@ -384,7 +384,7 @@ frames/s (21.5 ms per frame), about 170 MB/s: twice the GPU's rate.
 ### Placement and the bitstream
 
 Development loop without the SD card: build on the laptop (njason@xps,
-Vivado 2025.2, `./gpgpu run vivado:system:build`, about 20 minutes), load
+Vivado 2025.2, `./gpgpu vivado system:build`, about 20 minutes), load
 the PL over JTAG from the Pi (`openFPGALoader -c digilent_hs2 file.bit`),
 then the host's `reset` reinitializes the PL side. The UART runs through
 the PL (EMIO), so it delivers junk while the PL configures; resync after.
@@ -409,7 +409,7 @@ blanks at any clock from 16.67 MHz up in the laptop builds, but only above
 25 MHz in the user's build.** The keep-out made no difference, so the GPU's
 proximity to the TMDS outputs is not the mechanism. Candidates: the build's
 target clock (42 against 40 MHz), a difference between the user's GUI block
-design and `create_block_design.tcl`, or JTAG against FSBL configuration.
+design and `hardware/bd/design_1.tcl`, or JTAG against FSBL configuration.
 
 Rebuilt on the laptop with `fabric_clock_mhz: 40` (WNS +0.012 ns) and loaded
 over JTAG:
@@ -680,6 +680,13 @@ to confirm the resonance.
   measure the switching current (mode 1 with seed 0 against the random seed).
   Also `report_power` of the implemented design.
 
+## Temporary state in the tree (uncommitted)
+
+- The block design and `hardware/bd/design_1.tcl`:
+  `v_axi4s_vid_out_0/locked` drives `o_core_running_0` (P21) instead of
+  `gpgpu_axi_0/o_core_running`. Revert it once the test is no longer needed.
+- `software/programs/stress/`: a new stress kernel with modes 0–10.
+
 ## Side findings
 
 - **`auipc` hang:** the GPU has no `auipc`. `Decoder.sv` runs unknown opcodes
@@ -696,3 +703,6 @@ to confirm the resonance.
   manually (DMEM words 0x4C0–0x4DF).
 - **Timing:** at 42 MHz, WNS −0.076 ns / TNS −0.356 ns, all in the DDRBackend.
   This is independent of the blanking, but has to be fixed for higher clocks.
+- **Python tests:** 13 tests (FPGA programs, UART protocol, fake-Vivado
+  `system:create`) fail here with and without these changes; they were not
+  investigated.
