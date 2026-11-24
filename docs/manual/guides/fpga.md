@@ -1,7 +1,13 @@
-# FPGA CLI flow
+# The shared lab board
 
-The `fpga:*` namespace contains board-operation tasks, separate from the Vivado
-and Vitis build stages.
+`./gpgpu fpga` operates a board that is connected to another machine, the lab's
+board host, over SSH. It builds no hardware: see [Building the hardware](vivado.md)
+and [Building the host](vitis.md).
+
+The examples use `user@board-host`, `/home/user/upload` and `<device-id>`. Replace
+them with the values of your lab.
+
+> **Note:** These commands need the board agent that runs on the lab's board host.
 
 ## Upload, load and execute a RISC-V program
 
@@ -32,7 +38,7 @@ Runtime uses the existing baremetal UART monitor **on the board-connected VM**.
 The CLI streams the repository's shared `tools/board/xc7z020/uart.py` and a small
 driver to VM Python over SSH stdin; it does not install files/packages remotely,
 use minicom interactively, or invent an Agent runtime API. IMEM filenames use
-the SSH upload namespace (`/home/njason/upload`), not the Agent namespace (`/app`).
+the SSH upload namespace (`/home/user/upload`), not the Agent namespace (`/app`).
 
 Default runtime configuration:
 
@@ -59,16 +65,16 @@ UART ownership with the Agent or other serial clients first. The driver uses a
 nonblocking per-port advisory lock and pyserial exclusive opening, but unrelated
 clients that do not cooperate with those locks can still interfere.
 
-Before opening UART, the uploaded image must contain 1–2048 nonempty words,
-each exactly eight hexadecimal digits. The driver requires an idle, non-running,
-non-busy device with a complete `idle/running/busy/done` status. Legacy
+Before opening UART, the uploaded image must fit in IMEM, as nonempty words of
+exactly eight hexadecimal digits. The driver requires an idle device with a complete
+`idle/running/stopped/faulted` status, and reports a fault. Legacy
 `loading/dumping` host monitors are rejected before IMEM mutation; build and
 deploy matching PL and host ELF artifacts before using these tasks.
 IMEM is loaded at word offset zero using `loadimem_bin`, then read back and
 compared. The run stage rechecks IMEM under its own UART lock before sending
 `run`, preventing a different CLI session's loaded program from being launched
 silently. The host returns to idle automatically after completion; the driver
-checks status again and never sends the removed `done` command. Failures stop
+checks status again. Failures stop
 the dependency chain and retain normal CLI stage logs.
 
 **Scope:** one generic kernel launch, retaining existing DMEM. There is no
@@ -77,7 +83,6 @@ CSV generation or visualization. Programs such as nbody may require prepared
 DMEM/arguments to produce meaningful results. The board must already be in
 PROJECT mode with the compatible PL and host monitor running. These tasks do
 not reset the board, change mode, or depend on `fpga:program`/`fpga:deploy`.
-The legacy `software/programs/run.sh` is left untouched.
 
 ## Program only or upload and program
 
@@ -119,15 +124,11 @@ With the default configuration, the mapping is:
 
 | Local path, relative to the repository | Remote filename |
 | --- | --- |
-| `build/hardware/bitstream/gpgpu_block_design_wrapper.bit` | `gpgpu_platform.bit` |
+| `build/hardware/bitstream/design_1_wrapper.bit` | `gpgpu_platform.bit` |
 | `build/software/vitis/gpgpu_platform/export/gpgpu_platform/hw/sdt/ps7_init.tcl` | `ps7_init.tcl` |
 | `build/software/vitis/gpgpu_host/build/gpgpu_host.elf` | `gpgpu_host.elf` |
 
-The default destination is `njason@192.168.1.13:/home/njason/upload/`. Renaming
-the bitstream on upload keeps the existing manual programming workflow's
-`gpgpu_platform.bit` filename. The bitstream comes from Vivado's published
-output; do not use the obsolete Vitis platform export path
-`export/gpgpu_platform/hw/sdt/gpgpu_platform.bit`.
+The bitstream is renamed on upload. It comes from Vivado's published output.
 
 ## Remote reset, mode, and programming
 
@@ -139,7 +140,7 @@ output; do not use the obsolete Vitis platform export path
 ```
 
 Every invocation runs again. SSH to `hardware.fpga.upload.destination`
-(default `njason@192.168.1.13`) opens the board-connected shell environment.
+opens the board-connected shell environment.
 The CLI runs its existing shell shortcuts through `bash -ic`, loading
 `~/.bashrc` even when it has an interactive-only guard. The CLI does not call
 curl, Docker, or a Unix socket directly. `fpga:program` does not build or
@@ -185,9 +186,9 @@ error. Upload remains available independently: run `fpga:upload` before
 `fpga:program`, or use `fpga:deploy` to combine both. No build or upload is
 triggered by preflight/program alone.
 
-For the verified board deployment, `/home/njason/upload` in the SSH environment
+In the lab, `/home/user/upload` in the SSH environment
 is mounted as `/app` in the Agent container. Keep `upload.directory` set to
-`/home/njason/upload` and `agent.directory` set to `/app`; these settings belong
+`/home/user/upload` and `agent.directory` set to `/app`; these settings belong
 to different filesystem namespaces and are not interchangeable.
 
 ## Configuration
@@ -199,10 +200,10 @@ any existing local settings):
 hardware:
   fpga:
     upload:
-      destination: njason@192.168.1.13
-      directory: /home/njason/upload
+      destination: user@board-host
+      directory: /home/user/upload
     agent:
-      device: "210299730789"
+      device: "<device-id>"
       directory: /app  # Agent-visible destination of the verified upload mount
 tools:
   ssh:
@@ -229,8 +230,8 @@ unrelated task discovery remains available.
 For a one-off override, global options go before the category:
 
 ```bash
-./gpgpu --set hardware.fpga.upload.destination=njason@192.168.1.13 \
-  --set hardware.fpga.upload.directory=/home/njason/upload fpga upload
+./gpgpu --set hardware.fpga.upload.destination=user@board-host \
+  --set hardware.fpga.upload.directory=/home/user/upload fpga upload
 ```
 
 Local paths follow `paths.build.root`, `hardware.vivado.top`,

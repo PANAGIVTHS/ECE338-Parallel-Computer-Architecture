@@ -1,4 +1,4 @@
-# GPGPU Build Monitor
+# The run monitor
 
 `./gpgpu <category> <task>` automatically shows a live build monitor in an interactive
 terminal. It uses the same task graph and logging infrastructure as plain runs;

@@ -1,9 +1,8 @@
-# Vitis 2025.2 CLI flow
+# Building the host
 
-The build creates hardware-derived platform/BSP/SDT inputs from the **current
-new system XSA**, using Vitis 2025.2 Python APIs. It does not restore the stale
-GPIO hardware/BSP from `default-project.zip`. That archive remains an explicit
-GUI export/application-settings input, not a hardware bootstrap prerequisite.
+`./gpgpu vitis` builds the software platform from the current hardware platform
+(XSA), and the host program on top of it, with Vitis 2025.2. The committed
+`default-project.zip` only supplies the settings of the application.
 
 ## Dependency graph and configuration
 
@@ -25,31 +24,29 @@ with adjacent headers as real build dependencies.
 Provide the licensed SDK environment or set `tools.vitis.command` in ignored
 `config/local.yaml`. No SDK is downloaded by this flow. Every task that runs
 Vitis first checks that `vitis --version` reports `hardware.vitis.version`, and
-stops if it does not, as the Vivado stages do. Use a new build root to avoid
-pre-existing reference projects:
+stops if it does not, as the Vivado stages do. The commands, with a build root of
+their own:
 
 ```bash
-./gpgpu --set paths.build.root=build-axi-2025-2 vivado system:build
-./gpgpu --set paths.build.root=build-axi-2025-2 vitis project
-./gpgpu --set paths.build.root=build-axi-2025-2 vitis build:platform
-./gpgpu --set paths.build.root=build-axi-2025-2 vitis build:host
-./gpgpu --set paths.build.root=build-axi-2025-2 vitis build:all --plain
+./gpgpu --set paths.build.root=build-new vivado system:build
+./gpgpu --set paths.build.root=build-new vitis project
+./gpgpu --set paths.build.root=build-new vitis build:platform
+./gpgpu --set paths.build.root=build-new vitis build:host
+./gpgpu --set paths.build.root=build-new vitis build:all --plain
 ```
 
 ## What each stage owns
 
 - **project:** generate the editable platform via `create_platform_component`
   from the current XSA, including hardware-derived inputs. On an XSA change,
-  preserve the previous component as a backup and regenerate the platform;
-  never reuse the archived GPIO SDT/BSP as current hardware.
+  preserve the previous component as a backup and regenerate the platform.
 - **build:platform:** build and verify the exported XSA, XPFM and PS init Tcl.
   FSBL/boot BSP generation remains enabled through SDK defaults.
 - **build:host:** create the application only after the platform exists, using
   `create_app_component` with the exported XPFM and standalone domain.
   Update the SDK-generated **actual `UserConfig.cmake`** source list and include
   paths to the configured driver/main/headers. The configured AXI base is passed
-  as `GPGPU_BASEADDR`, overriding the driver's fallback consistently with BD.
-  No driver/UART/application protocol is redesigned and IRQ operation stays on.
+  as `GPGPU_BASEADDR`. The driver does not compile without it.
 - **build:all:** the aggregate depends on the host, thus the platform-before-host
   graph.
 
@@ -58,10 +55,9 @@ previous generated components are backed up. Normal builds do not rewrite
 tracked templates or the ZIP. Source/header/settings/platform changes invalidate
 host outputs; unchanged builds skip completed stages.
 
-The prior BSP fixes remain: restore missing `lib/` output directories from BSP
-`CMakeLists.txt` discovery and recover vendor-owned `xilrsa/src/librsa.a` from
-the **active SDK**. Do not disable FSBL/RSA or alter `ps7_init.c` to hide failures.
-Missing/ambiguous SDK inputs fail explicitly.
+The build also restores missing `lib/` output directories of the BSP, and recovers
+the vendor's `xilrsa/src/librsa.a` from the active SDK. Missing or ambiguous SDK
+inputs fail explicitly.
 
 ## Outputs, logs and export
 
@@ -73,18 +69,17 @@ Missing/ambiguous SDK inputs fail explicitly.
 ```
 
 The programming bitstream stays at
-`<build-root>/hardware/bitstream/design_1_wrapper.bit`. Together with Vitis
-`ps7_init.tcl` and host ELF it preserves the FPGA upload/program artifact
-contract. Building does **not** upload or operate the board.
+`<build-root>/hardware/bitstream/design_1_wrapper.bit`. The board needs it, Vitis's
+`ps7_init.tcl` and the host ELF. Building does **not** upload or operate the board.
 
-The existing JSON-backed run monitor records stage status and persistent logs;
+The [run monitor](run-monitor.md) records stage status and persistent logs;
 `--plain` streams output without the interactive dashboard. Nonzero vendor or
 missing-output failures propagate to the CLI.
 
 Save/close the GUI before explicit synchronization:
 
 ```bash
-./gpgpu --set paths.build.root=build-axi-2025-2 vitis export
+./gpgpu --set paths.build.root=build-new vitis export
 ```
 
 Export remains outside the build graph. It atomically replaces the portable
@@ -93,4 +88,4 @@ Review that intentional source change before committing. Builds consume only
 portable application settings from the archive; stale platform/BSP/SDT is never
 used as a substitute for regeneration from the new XSA.
 
-See [Vivado flow](vivado-cli.md) for packaging/system safety and reference state.
+See [Building the hardware](vivado.md) for the stages before this one.

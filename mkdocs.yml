@@ -8,6 +8,12 @@ site_dir: site
 
 nav:
   - Home: index.md
+  - Guides:
+      - Testing the RTL: guides/rtl-tests.md
+      - Building the hardware: guides/vivado.md
+      - Building the host: guides/vitis.md
+      - The shared lab board: guides/fpga.md
+      - The run monitor: guides/run-monitor.md
   - Contributing:
       - Writing documentation: contributing/documentation.md
 
