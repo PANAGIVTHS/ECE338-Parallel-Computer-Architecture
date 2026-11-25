@@ -2,6 +2,8 @@
 import ast
 import json
 import re
+import socket
+import sys
 import time
 from contextlib import nullcontext
 from pathlib import Path
@@ -12,7 +14,7 @@ import pytest
 from gpgpu.adapters.config import Config
 from gpgpu.adapters.doit_engine import DoitEngine, _StateCheck
 from gpgpu.adapters.host_headers import _write_platform
-from gpgpu.adapters.manual import ZensicalManual, broken_targets, navigation_problems
+from gpgpu.adapters.manual import ZensicalManual, _serve, _stop, broken_targets, navigation_problems
 from gpgpu.adapters.tools import Machine, check_version, version_current
 from gpgpu.adapters.verilator import _open_waveform, _run_bench
 from gpgpu.adapters.vivado.flow import timing_summary
@@ -343,3 +345,25 @@ def test_the_manual_reports_local_targets_that_lead_nowhere(tmp_path):
                                          '<img src="a%20picture.png?v=1"><img src="lost.png">')
     (tmp_path / "guide/index.html").write_text('<a href="../">ok</a><a href="/index.html">ok</a><a href="..">ok</a><a href="../lost/">x</a>')
     assert broken_targets(tmp_path) == ["guide/index.html: ../lost/ leads to no file", "index.html: lost.png leads to no file"]
+
+
+def test_the_manual_is_served_without_waiting_for_the_server(tmp_path, capsys):
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    server = [sys.executable, "-m", "http.server", str(port), "--bind", "127.0.0.1"]
+    state, other = tmp_path / "build/server", tmp_path / "other/server"
+    _serve(server, tmp_path, state, "127.0.0.1", port)
+    try:
+        assert f"Serving the manual at http://127.0.0.1:{port}" in capsys.readouterr().out
+        _serve(server, tmp_path, state, "127.0.0.1", port)
+        assert "Already serving" in capsys.readouterr().out
+        with pytest.raises(RuntimeError, match="is in use"):
+            _serve(server, tmp_path, other, "127.0.0.1", port)
+    finally:
+        _stop(state)
+    assert "Stopped serving" in capsys.readouterr().out
+    _stop(state)
+    assert "not being served" in capsys.readouterr().out
+    with pytest.raises(RuntimeError, match="The server stopped: no such page"):
+        _serve([sys.executable, "-c", "print('no such page')"], tmp_path, state, "127.0.0.1", port)

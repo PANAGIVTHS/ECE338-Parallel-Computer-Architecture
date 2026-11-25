@@ -7,10 +7,14 @@ this site, and they must also read well on GitHub.
 
 ```bash
 ./gpgpu docs site:serve    # http://127.0.0.1:8000, rebuilt on every edit
+./gpgpu docs site:stop     # stop serving it
 ./gpgpu docs site:build    # the static site, in site/
 ```
 
-`site:serve` runs until you press Ctrl-C. To use another port:
+`site:serve` starts the server in the background and returns. The server keeps
+running until `site:stop`, also after you close the terminal. Its log is
+`<paths.build.root>/docs/server.log`; look there if an edit does not show up. To use
+another port:
 
 ```bash
 ./gpgpu --set docs.site.port=8001 docs site:serve

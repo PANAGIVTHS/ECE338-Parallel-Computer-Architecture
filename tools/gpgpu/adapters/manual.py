@@ -1,10 +1,15 @@
 """ManualSite on Zensical: the user manual, built to static HTML or served while it is written."""
 from __future__ import annotations
 
+import fcntl
+import os
 import re
 import shutil
+import signal
+import socket
 import subprocess
 import sys
+import time
 from collections.abc import Iterator
 from functools import partial
 from html.parser import HTMLParser
@@ -21,6 +26,7 @@ from gpgpu.api import GpgpuError, Step
 from .config import Config, Section
 
 _ANSI = re.compile(r"\x1b\[[0-9;]*m")
+_SERVER_SECONDS = 10  # for the server to answer, or to exit
 
 
 class _Site(Section):
@@ -103,11 +109,67 @@ def _build(command: list[str], root: Path, docs: Path, nav: Any, site: Path) -> 
     print(f"Built the manual in {site}")
 
 
-def _serve(command: list[str], root: Path) -> None:
+def _answers(host: str, port: int) -> bool:
     try:
-        subprocess.run(command, cwd=root, check=True)
-    except KeyboardInterrupt:
-        pass
+        socket.create_connection((host, port), timeout=1).close()
+    except OSError:
+        return False
+    return True
+
+
+def _server(state: Path) -> tuple[int, str] | None:
+    """The process and the address of the running server. It holds a lock on *state* for as long as it lives."""
+    if not state.is_file():
+        return None
+    with state.open("r+") as stream:
+        try:
+            fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            process, address = stream.read().split()
+            return int(process), address
+    return None
+
+
+def _serve(command: list[str], root: Path, state: Path, host: str, port: int) -> None:
+    """Start the server in its own session and return once it answers."""
+    running = _server(state)
+    if running:
+        print(f"Already serving the manual at {running[1]}", flush=True)
+        return
+    if _answers(host, port):
+        raise RuntimeError(f"Port {port} of {host} is in use: set docs.site.port to another one")
+    state.parent.mkdir(parents=True, exist_ok=True)
+    log = state.with_suffix(".log")
+    with state.open("w") as stream, log.open("w") as output:
+        fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)  # the server inherits it
+        process = subprocess.Popen(command, cwd=root, stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT,
+                                   start_new_session=True, pass_fds=(stream.fileno(),))
+        stream.write(f"{process.pid} http://{host}:{port}")
+    deadline = time.monotonic() + _SERVER_SECONDS
+    while not _answers(host, port):
+        if process.poll() is not None:
+            raise RuntimeError(f"The server stopped: {_ANSI.sub('', log.read_text()).strip()}")
+        if time.monotonic() > deadline:
+            _stop(state)
+            raise RuntimeError(f"The server did not answer within {_SERVER_SECONDS} s, see {log}")
+        time.sleep(0.1)
+    print(f"Serving the manual at http://{host}:{port} until `gpgpu docs site:stop`. Its log is {log}", flush=True)
+
+
+def _stop(state: Path) -> None:
+    running = _server(state)
+    if not running:
+        print("The manual is not being served", flush=True)
+        return
+    for number in (signal.SIGTERM, signal.SIGKILL):
+        os.killpg(running[0], number)  # its own session, so its own group
+        deadline = time.monotonic() + _SERVER_SECONDS
+        while time.monotonic() < deadline:
+            if not _server(state):
+                print(f"Stopped serving the manual at {running[1]}", flush=True)
+                return
+            time.sleep(0.1)
+    raise RuntimeError(f"Process {running[0]} does not stop")
 
 
 class ZensicalManual:
@@ -123,7 +185,8 @@ class ZensicalManual:
             raise GpgpuError(f"Invalid YAML in {self._file}: {error}") from None
         self._docs, self._site = self._root / site["docs_dir"], self._root / site["site_dir"]
         self._nav = site["nav"]
-        self._address = f"{settings.host}:{settings.port}"
+        self._host, self._port = settings.host, settings.port
+        self._state = config.build_root / "docs/server"
 
     def _command(self, *arguments: str) -> list[str]:
         return [sys.executable, "-m", "zensical", *arguments, "--config-file", str(self._file)]
@@ -138,4 +201,8 @@ class ZensicalManual:
                     outputs=(self._site / "index.html",), fingerprint={"zensical": version("zensical")})
 
     def serve(self) -> Step:
-        return Step(partial(_serve, self._command("serve", "--dev-addr", self._address), self._root), always_run=True)
+        command = self._command("serve", "--dev-addr", f"{self._host}:{self._port}")
+        return Step(partial(_serve, command, self._root, self._state, self._host, self._port), always_run=True)
+
+    def stop(self) -> Step:
+        return Step(partial(_stop, self._state), always_run=True)

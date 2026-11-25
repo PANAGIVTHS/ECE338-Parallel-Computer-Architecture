@@ -6,5 +6,6 @@ def tasks(backend: Backends) -> list[Task]:
     manual = backend(ManualSite)
     return [
         Task("docs:site:build", "Build the manual's static site, rejecting broken links and images.", manual.build()),
-        Task("docs:site:serve", "Serve the manual and rebuild it on every edit, until interrupted.", manual.serve()),
+        Task("docs:site:serve", "Serve the manual in the background, rebuilt on every edit.", manual.serve()),
+        Task("docs:site:stop", "Stop serving the manual.", manual.stop()),
     ]

@@ -26,7 +26,8 @@ The manual starts at [docs/manual/index.md](docs/manual/index.md). To read it as
 site:
 
 ```bash
-./gpgpu docs site:serve               # http://127.0.0.1:8000
+./gpgpu docs site:serve               # http://127.0.0.1:8000, in the background
+./gpgpu docs site:stop
 ```
 
 Also in the repository:
