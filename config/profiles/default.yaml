@@ -2,8 +2,7 @@ architecture:
   num_cores: 32
   interface_version: 3
   # DDR backend of the memory subsystem (reported in INFO_FEATURES). Without
-  # it, framebuffer and texture accesses complete as ST_UNMAPPED. The DDR read
-  # path is not implemented yet: a texture load never completes.
+  # it, framebuffer and GMEM accesses complete as ST_UNMAPPED.
   ddr_enable: true
 
 hardware:
