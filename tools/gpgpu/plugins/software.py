@@ -39,6 +39,10 @@ def _program(cc: Toolchain, program: str, prefix: str) -> list[Task]:
         Task(f"{prefix}:host", "Build the host program for the board's A9, against the platform's BSP.",
              cc.build_board_program(program), needs=(f"{prefix}:module", "software:host:platform"),
              requires=("vitis:build:platform",)),
+        Task(f"{prefix}:boot", "Build the host program for the A9 to run in place of the monitor "
+             "(software.host.boot_program), with software.runtime.arguments built in.",
+             cc.build_board_program(program, boot=True), needs=(f"{prefix}:module", "software:host:platform"),
+             requires=("vitis:build:platform",)),
         Task(f"{prefix}:all", "Build the kernels, their listing and the simulator program.",
              needs=(f"{prefix}:assembly", f"{prefix}:sim:build")),
     ]

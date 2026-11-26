@@ -126,6 +126,11 @@ software:
     use_irq: true
     # GIC interrupt ID of the GPU interrupt: IRQ_F2P[0] is ID 61 on Zynq-7000.
     irq_id: 61
+    # A program (a directory under software/programs) that `fpga deploy` starts
+    # in place of the UART monitor, with software.runtime.arguments built in
+    # (software programs:<p>:boot). It stops when gpgpu_main returns. null: the
+    # monitor.
+    boot_program: null
   # The runtime of programs with a host program (host.c; docs/runtime-spec.md).
   runtime:
     # How long a launch may run before the runtime stops it and the next

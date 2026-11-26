@@ -3,7 +3,13 @@
  *
  * The program is loaded and started by the UART monitor (gpgpu_loader.c),
  * which leaves its arguments in the boot record (gpgpu_boot.h). When
- * gpgpu_main returns, the program returns to the monitor through the record. */
+ * gpgpu_main returns, the program returns to the monitor through the record.
+ *
+ * The boot build (GPGPU_BOOT_PROGRAM, software.host.boot_program) runs in place
+ * of the monitor instead: `fpga deploy` starts it. Its arguments are built in
+ * (<p>_boot_args.h, from software.runtime.arguments), it starts the display
+ * itself, never reads the boot record, which an earlier monitor may have left
+ * in DDR, and stops when gpgpu_main returns. */
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
@@ -20,6 +26,12 @@
 #include "xiltimer.h"
 #include "xparameters.h"
 #include "xuartps_hw.h"
+
+#ifdef GPGPU_BOOT_PROGRAM
+/* GPGPU_BOOT_ARGUMENTS: the program's name, then its arguments, as string
+ * literals separated by commas. */
+#include "gpgpu_boot_args.h"
+#endif
 
 extern char inbyte(void);
 
@@ -157,17 +169,34 @@ int gpgpu_backend_vprintf(const char *format, va_list arguments)
 /* Return to the monitor with the status, or stop here when there is none. */
 void gpgpu_backend_exit(int status)
 {
-    volatile gpgpu_boot_record_t *boot = GPGPU_BOOT_RECORD;
-
     fflush(stdout);
     gpgpu_shutdown();
+#ifdef GPGPU_BOOT_PROGRAM
+    (void)status; /* printed by the runtime (GPGPU_EXIT); nothing to return to */
+#else
+    volatile gpgpu_boot_record_t *boot = GPGPU_BOOT_RECORD;
+
     boot->status = status;
     Xil_DCacheFlush();
     if (boot->magic == GPGPU_BOOT_MAGIC && boot->resume != 0U)
         ((void (*)(int))(UINTPTR)boot->resume)(status);
+#endif
     for (;;) {
     }
 }
+
+#ifdef GPGPU_BOOT_PROGRAM
+
+/* The startup code calls main() without arguments: they are built in. */
+int main(void)
+{
+    static char *argv[] = {GPGPU_BOOT_ARGUMENTS, NULL};
+
+    gpgpu_display_start(0U); /* the monitor would have started it */
+    gpgpu_backend_exit(gpgpu_runtime_main_((int)(sizeof argv / sizeof argv[0]) - 1, argv));
+}
+
+#else
 
 /* The startup code calls main() without arguments: they are in the boot record. */
 int main(void)
@@ -190,3 +219,5 @@ int main(void)
     argv[argc] = NULL;
     gpgpu_backend_exit(gpgpu_runtime_main_(argc, argv));
 }
+
+#endif

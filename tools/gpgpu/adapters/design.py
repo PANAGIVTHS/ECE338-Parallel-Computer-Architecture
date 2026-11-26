@@ -219,5 +219,13 @@ def program_names(config: Config) -> list[str]:
                   if path.is_dir() and (path / f"{path.name}.c").is_file() and (path / "host.c").is_file())
 
 
+def boot_program(config: Config) -> str | None:
+    """software.host.boot_program: the program `fpga deploy` starts in place of the monitor, or None."""
+    program = config.get("software.host.boot_program")
+    if program is not None and program not in program_names(config):
+        raise GpgpuError(f"software.host.boot_program must be null or one of: {', '.join(program_names(config))}")
+    return program
+
+
 def program_output(config: Config, program: str, suffix: str) -> Path:
     return config.build_root / "software/programs" / program / f"{program}{suffix}"

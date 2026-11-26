@@ -24,6 +24,7 @@ class _Host(Section):
     define_prefix: CName
     use_irq: bool
     irq_id: PositiveInt
+    boot_program: str | None  # read by design.boot_program()
 
 
 def _guard(header: Path) -> str:

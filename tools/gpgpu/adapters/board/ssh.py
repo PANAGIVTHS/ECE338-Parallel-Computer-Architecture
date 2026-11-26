@@ -18,7 +18,7 @@ from pydantic import AfterValidator, PositiveInt, StringConstraints
 from gpgpu.api import Step
 
 from ..config import Config, Section
-from ..design import bitstream_path, program_names, program_output, vitis_workspace
+from ..design import bitstream_path, boot_program, program_names, program_output, vitis_workspace
 from ..tools import run
 
 _NAME = r"[A-Za-z0-9_][A-Za-z0-9_.-]*"
@@ -80,11 +80,17 @@ class SshBoard:
     def programs(self) -> list[str]:
         return program_names(self._config)
 
+    def boot_program(self) -> str | None:
+        return boot_program(self._config)
+
     def upload(self) -> Step:
         workspace = vitis_workspace(self._config)
+        # The A9 executable goes up under the monitor's name, so `fps` starts whichever it is.
+        boot = self.boot_program()
+        host = (program_output(self._config, boot, "_boot_a9.elf") if boot
+                else workspace / self._host / "build" / f"{self._host}.elf")
         files = (bitstream_path(self._config),
-                 workspace / self._platform / "export" / self._platform / "hw/sdt/ps7_init.tcl",
-                 workspace / self._host / "build" / f"{self._host}.elf")
+                 workspace / self._platform / "export" / self._platform / "hw/sdt/ps7_init.tcl", host)
         return Step(partial(self._copy, tuple(zip(files, self._names))), always_run=True)
 
     def _copy(self, files: tuple[tuple[Path, str], ...]) -> None:

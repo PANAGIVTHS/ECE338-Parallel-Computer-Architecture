@@ -4,9 +4,11 @@ from gpgpu.api import Backends, Board, Task
 
 def tasks(backend: Backends) -> list[Task]:
     board = backend(Board)
+    boot = board.boot_program()
+    host = f"software:programs:{boot}:boot" if boot else "vitis:build:host"
     result = [
-        Task("fpga:upload", "Upload the existing bitstream, PS init script and host application. Builds nothing.",
-             board.upload(), requires=("vivado:system:build", "vitis:build:host")),
+        Task("fpga:upload", "Upload the existing bitstream, PS init script and host application (the monitor, or "
+             "software.host.boot_program). Builds nothing.", board.upload(), requires=("vivado:system:build", host)),
         Task("fpga:reset", "Reset the board, keeping its current mode.", board.reset()),
         Task("fpga:mode:project", "Set PROJECT mode, without resetting or programming.", board.set_mode("project")),
         Task("fpga:mode:demo", "Set DEMO mode, without resetting or programming.", board.set_mode("demo")),

@@ -54,6 +54,13 @@ class _Runtime(Section):
 _PROGRAM_BASE = 0x0020_0000
 
 
+def _c_string(text: str) -> str:
+    """A C string literal of printable ASCII `text`."""
+    if not all(" " <= character <= "~" for character in text):
+        raise GpgpuError(f"software.runtime.arguments: {text!r} must be printable ASCII for a boot program")
+    return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
 def _run_program(command: list[str], cwd: Path) -> None:
     """Run a host program in the simulator; its status is the task's."""
     cwd.mkdir(parents=True, exist_ok=True)
@@ -187,19 +194,25 @@ class GccToolchain:
         command = [str(executable), *self._runtime_settings.arguments]
         return Step(partial(_run_program, command, executable.parent / "sim"), always_run=True)
 
-    def build_board_program(self, program: str) -> Step:
-        """The host program for the A9, linked against the platform's standalone BSP."""
+    def build_board_program(self, program: str, boot: bool = False) -> Step:
+        """The host program for the A9, linked against the platform's standalone BSP.
+
+        `boot`: the build that runs in place of the monitor (software.host.boot_program), with
+        software.runtime.arguments built in."""
         platform, domain = (str(self._config.get(f"hardware.vitis.{key}")) for key in ("platform_name", "domain"))
         bsp = vitis_workspace(self._config) / platform / "export" / platform / "sw" / domain
         host = self._config.repo_root / "software/host/xc7z020"
-        executable, script = self._out(program, "_a9.elf"), self._out(program, "_a9.ld")
+        suffix = "_boot_a9" if boot else "_a9"
+        executable, script = self._out(program, f"{suffix}.elf"), self._out(program, f"{suffix}.ld")
+        arguments = [program, *self._runtime_settings.arguments] if boot else []
+        boot_header = executable.parent / "boot" / "gpgpu_boot_args.h"
         sources = [self._root / program / "host.c", self._runtime / "host/gpgpu_runtime.c",
                    self._runtime / "host/xc7z020/gpgpu_backend_xc7z020.c", host / "gpgpu_driver.c", host / "gpgpu_display.c",
                    self._out(program, "_module.c")]
         includes = [self._runtime / "include", self._runtime / "host", host, self._root, self._root / program,
-                    executable.parent, bsp / "include"]
+                    executable.parent, *([boot_header.parent] if boot else []), bsp / "include"]
         base, _ = axi_address(self._config)
-        flags = ["-DSDT", f"-DGPGPU_BASEADDR={base}", "-mcpu=cortex-a9", "-mfpu=vfpv3", "-mfloat-abi=hard",
+        flags = [*(["-DGPGPU_BOOT_PROGRAM"] if boot else []), "-DSDT", f"-DGPGPU_BASEADDR={base}", "-mcpu=cortex-a9", "-mfpu=vfpv3", "-mfloat-abi=hard",
                  f"-specs={bsp / 'Xilinx.spec'}"]
         command = [self._config.tool("arm_gcc"), "-std=gnu11", "-O2", "-g", "-Wall", "-Wextra", *flags, *self._defines,
                    f"-DGPGPU_LAUNCH_TIMEOUT_MS={self._runtime_settings.launch_timeout_ms}u",
@@ -218,13 +231,18 @@ class GccToolchain:
                 text = text.replace(f"@{key}@", f"0x{value:X}")
             script.parent.mkdir(parents=True, exist_ok=True)
             script.write_text(text, encoding="utf-8")
+            if boot:
+                boot_header.parent.mkdir(parents=True, exist_ok=True)
+                boot_header.write_text("/* Generated: the boot program's argv (software.runtime.arguments). */\n"
+                                       f"#define GPGPU_BOOT_ARGUMENTS {', '.join(map(_c_string, arguments))}\n",
+                                       encoding="utf-8")
             run(command)
 
         board_headers = [host / name for name in ("gpgpu_driver.h", "gpgpu_display.h", "gpgpu_boot.h", "gpgpu_platform.h")]
         headers = [*self._runtime_sources("include", "host"), *board_headers, *(self._root / program).glob("*.h"),
                    self._out(program, "_kernels.h"), self._root / "gpgpu_config.h"]
         return Step(build, inputs=(*sources, *headers, template, constants, bsp / "lib/libxil.a"),
-                    outputs=(executable,), fingerprint={"command": command, "sizes": sizes})
+                    outputs=(executable,), fingerprint={"command": command, "sizes": sizes, "arguments": arguments})
 
     def runtime_check(self) -> Step:
         runner = self._runtime_build / "gpgpu_sim_case"
