@@ -99,8 +99,8 @@ module CSRBank
     // CSR: INFO_MEM, INFO_FEATURES, INFO_CLOCK, BUILD_ID - Read-Only Identity
     // ========================================================================
 
-    if (IMEM_ENTRIES >= (1 << INFO_FIELD_WIDTH) || DMEM_ENTRIES >= (1 << INFO_FIELD_WIDTH)) begin : g_mem_check
-        $fatal(1, "IMEM_ENTRIES and DMEM_ENTRIES must fit INFO_MEM's %0d-bit fields", INFO_FIELD_WIDTH);
+    if (IMEM_ENTRIES >= (1 << INFO_FIELD_WIDTH) || SMEM_ENTRIES >= (1 << INFO_FIELD_WIDTH)) begin : g_mem_check
+        $fatal(1, "IMEM_ENTRIES and SMEM_ENTRIES must fit INFO_MEM's %0d-bit fields", INFO_FIELD_WIDTH);
     end
 
     if (CLOCK_KHZ == 0) begin : g_clock_check
@@ -111,7 +111,7 @@ module CSRBank
         $fatal(1, "BUILD_HASH must fit BUILD_ID's %0d-bit hash field", BUILD_HASH_BITS);
     end
 
-    localparam word_t INFO_MEM = {INFO_FIELD_WIDTH'(IMEM_ENTRIES), INFO_FIELD_WIDTH'(DMEM_ENTRIES)};
+    localparam word_t INFO_MEM = {INFO_FIELD_WIDTH'(IMEM_ENTRIES), INFO_FIELD_WIDTH'(SMEM_ENTRIES)};
     localparam word_t INFO_FEATURES = DDR_ENABLE ? FEATURE_DDR_MASK : '0;
     localparam word_t BUILD_ID = (word_t'(BUILD_HASH) & BUILD_HASH_MASK)
                                | (BUILD_DIRTY ? BUILD_DIRTY_MASK : '0);

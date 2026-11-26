@@ -14,10 +14,10 @@ Covers:
 - backward `bne` loop with repeated taken branches and final not-taken exit
 - self-comparison of a non-zero register
 
-Each case writes an independent signature to DMEM so failures identify the exact
+Each case writes an independent signature to SMEM so failures identify the exact
 branch case. Expected successful signatures are:
 
-| DMEM word | Expected |
+| SMEM word | Expected |
 | --- | --- |
 | 0 | 1 |
 | 1 | 2 |

@@ -7,7 +7,7 @@
 #include "gpgpu_device.h"
 
 /* Saving the callee-saved registers takes 52 bytes of the lane's stack
- * (GPGPU_STACK_STRIDE), and every spill is a DMEM store and load, so main must
+ * (GPGPU_STACK_STRIDE), and every spill is a SMEM store and load, so main must
  * not spill. Moving loop invariants out of loops, scheduling before register
  * allocation, PRE and GCSE all keep more values live than the 27 registers
  * hold. */
@@ -59,7 +59,7 @@
  * no AUIPC (every function is inlined), only word loads and stores, and a
  * small stack per lane. .rodata and .data are in GMEM (DDR), slow to load,
  * so the tables and the state between phases live at fixed words of shared
- * memory (DMEM), reserved with GPGPU_SHARED_FIXED.
+ * memory (SMEM), reserved with GPGPU_SHARED_FIXED.
  *
  * The kernel's parameters (terrain.c), which it keeps in VIEW:
  *   fb      the framebuffer
@@ -147,7 +147,7 @@
 #define COORD_MAX 24576
 #define NOT_DRAWN 0xFFFFFFFFu
 
-/* ---- DMEM words ------------------------------------------------------- */
+/* ---- SMEM words ------------------------------------------------------- */
 
 /* The words start at GPGPU_SHARED_BASE. VERT and SHADE
  * come first: below byte 2048, a load's 12-bit offset holds their base, so
@@ -199,8 +199,8 @@ _Static_assert(VERTS < 1024 && CELLS < 1024, "cell list entries hold 10-bit indi
 GPGPU_SHARED_FIXED static int terrain_words[W_END - W_FIRST];
 #define AT(word) ((volatile int *)(uintptr_t)(4u * (unsigned int)(word)))
 #else
-static int dmem[W_END] __attribute__((aligned(16), unused));
-#define AT(word) ((volatile int *)(dmem + (word)))
+static int smem[W_END] __attribute__((aligned(16), unused));
+#define AT(word) ((volatile int *)(smem + (word)))
 #endif
 
 /* The lane id, read from x31 at every use: a value computed from it once
@@ -519,7 +519,7 @@ INLINE unsigned int triangle_color(int nx, int nz, int hs, int raw, int zc, unsi
  * the low half. A triangle's corners are v00, v11 and v01 (T1) or v10 (T2). */
 INLINE void cell_shading(void)
 {
-    /* The row loop's state lives in DMEM: the shading needs every register. */
+    /* The row loop's state lives in SMEM: the shading needs every register. */
     VIEW[V_ROW] = 0;
     VIEW[V_DONE] = 0;
     for (;;) {

@@ -15,7 +15,7 @@
  * Per frame, every lane does the same setup: rotate and project the 8
  * corners, keep the faces that point at the camera (at most 3, and on a
  * convex solid they never overlap, so no depth buffer is needed), shade
- * each by its normal, and build an edge table for them in DMEM. Branches in
+ * each by its normal, and build an edge table for them in SMEM. Branches in
  * the setup are fine: every lane has the same values.
  *
  * Per row, every lane turns each visible face's edges into a span of pixels

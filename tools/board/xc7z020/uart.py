@@ -19,7 +19,7 @@ try:
 except ImportError:
     serial = None  # Parsing helpers work without pyserial installed.
 
-# Upper bound for IMEM/DMEM word indices: INFO_MEM's 16-bit fields. The real
+# Upper bound for IMEM/SMEM word indices: INFO_MEM's 16-bit fields. The real
 # sizes come from architecture.memory; the monitor checks them on every command.
 DEPTH = 0xFFFF
 # GMEM word offsets (from GMEM_BASE): the monitor checks them against GMEM_SIZE.
@@ -220,25 +220,25 @@ class GpgpuUartMonitor:
         _check_index(addr)
         return self._command_expect_prompt_or_error(f"wimem {addr:x} {normalize_word(word)}")
 
-    def write_dmem(self, addr: int, word: int | str) -> str:
+    def write_smem(self, addr: int, word: int | str) -> str:
         _check_index(addr)
-        return self._command_expect_prompt_or_error(f"wdmem {addr:x} {normalize_word(word)}")
+        return self._command_expect_prompt_or_error(f"wsmem {addr:x} {normalize_word(word)}")
 
     def read_imem(self, addr: int) -> str:
         _check_index(addr)
         return parse_single_word(self._command_expect_prompt_or_error(f"rimem {addr:x}"), "IMEM", addr)
 
-    def read_dmem(self, addr: int) -> str:
+    def read_smem(self, addr: int) -> str:
         _check_index(addr)
-        return parse_single_word(self._command_expect_prompt_or_error(f"rdmem {addr:x}"), "DMEM", addr)
+        return parse_single_word(self._command_expect_prompt_or_error(f"rsmem {addr:x}"), "SMEM", addr)
 
     def dump_imem_ascii(self, count: int, offset: int = 0) -> dict[int, str]:
         _check_span(offset, count)
         return parse_memory_dump(self._command_expect_prompt_or_error(f"dumpimem {offset} {count}", timeout=60.0))
 
-    def dump_dmem_ascii(self, count: int, offset: int = 0) -> dict[int, str]:
+    def dump_smem_ascii(self, count: int, offset: int = 0) -> dict[int, str]:
         _check_span(offset, count)
-        return parse_memory_dump(self._command_expect_prompt_or_error(f"dumpdmem {offset} {count}", timeout=60.0))
+        return parse_memory_dump(self._command_expect_prompt_or_error(f"dumpsmem {offset} {count}", timeout=60.0))
 
     # ---- Runtime programs (docs/runtime-spec.md, section 9.2) ----
 
@@ -305,9 +305,9 @@ class GpgpuUartMonitor:
         self.wait_prompt(timeout=10.0)
         return status
 
-    def dump_dmem_bin(self, count: int, offset: int = 0) -> dict[int, str]:
+    def dump_smem_bin(self, count: int, offset: int = 0) -> dict[int, str]:
         _check_span(offset, count)
-        return self._dump_binary("dumpdmem_bin", b"BEGIN_DMEM_BIN\n", count, offset)
+        return self._dump_binary("dumpsmem_bin", b"BEGIN_SMEM_BIN\n", count, offset)
 
     def dump_gmem_bin(self, count: int, offset: int = 0) -> dict[int, str]:
         """{word offset from GMEM_BASE: word} (the monitor invalidates its cache first)."""

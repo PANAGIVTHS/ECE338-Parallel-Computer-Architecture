@@ -24,7 +24,7 @@
 #define MODE_LOOP 0u  /* loop counter and branch only */
 #define MODE_ALU  1u  /* xorshift32: shifts and xor */
 #define MODE_MUL  2u  /* eight independent x[k] *= y[k]; odd seeds stay odd */
-#define MODE_DMEM 3u  /* load, xor, store to buf[tid] */
+#define MODE_SMEM 3u  /* load, xor, store to buf[tid] */
 #define MODE_DDR  4u  /* stores to consecutive bursts of a framebuffer */
 /* MODE_ALU split into its parts; every result feeds the next instruction. */
 #define MODE_XOR  5u  /* x ^= y, y ^= x */
@@ -98,7 +98,7 @@ static inline __attribute__((always_inline)) unsigned int stress_lane(
             p4 *= y; p5 *= x; p6 *= y; p7 *= x;
         }
         x = p0 ^ p1 ^ p2 ^ p3 ^ p4 ^ p5 ^ p6 ^ p7;
-    } else if (mode == MODE_DMEM) {
+    } else if (mode == MODE_SMEM) {
         buf[tid] = x;
         for (unsigned int i = 0; i < iterations; i++) {
 #pragma GCC unroll 8

@@ -4,20 +4,20 @@
  * Three memories, each at its own addresses:
  *
  *   IMEM  (BRAM)  instructions, a separate address space from PC 0
- *   DMEM  (BRAM)  shared memory: .shared, the per-lane stacks
+ *   SMEM  (BRAM)  shared memory: .shared, the per-lane stacks
  *   GMEM  (DDR)   compiler data (.rodata, .data, .bss), then program buffers
  *
  * linker_layout.ld is generated for every build (software:programs:layout)
  * from architecture.memory in the configuration and the RTL's memory map. It
- * defines the regions IMEM, DMEM and GDATA (all of GMEM, from GMEM_BASE), and
+ * defines the regions IMEM, SMEM and GDATA (all of GMEM, from GMEM_BASE), and
  * the symbols __gpu_num_cores and
  * __gpu_stack_stride.
  *
- * DMEM, from byte 0:
+ * SMEM, from byte 0:
  *
  *   __shared_start    GPGPU_SHARED variables, undefined when a block starts
  *   __gpu_stack_bottom   lane n's stack: __stack_top - n * stride downwards
- *   __stack_top       the end of DMEM
+ *   __stack_top       the end of SMEM
  *
  * GMEM, from GMEM_BASE:
  *
@@ -30,7 +30,7 @@
  * The runtime loads the data once per module, with IMEM, not before every
  * launch: globals keep their values from one launch to the next.
  *
- * Only .text and GMEM hold loadable contents. DMEM starts at address 0 like
+ * Only .text and GMEM hold loadable contents. SMEM starts at address 0 like
  * IMEM, so everything placed there is NOLOAD: the linker then does not see
  * an overlap with .text.
  */
@@ -49,9 +49,9 @@ SECTIONS
         *(.text .text.*)
     } > IMEM
 
-    /* ---- DMEM: shared memory ------------------------------------------ */
+    /* ---- SMEM: shared memory ------------------------------------------ */
 
-    /* GPGPU_SHARED variables, from DMEM byte 0. They cannot have
+    /* GPGPU_SHARED variables, from SMEM byte 0. They cannot have
      * initializers: the section is not loaded. GPGPU_SHARED_FIXED
      * (.shared.fixed) comes first, at GPGPU_SHARED_BASE. */
     .shared (NOLOAD) : ALIGN(16)
@@ -61,9 +61,9 @@ SECTIONS
         *(.shared .shared.*)
         . = ALIGN(4);
         __shared_end = .;
-    } > DMEM
+    } > SMEM
 
-    __stack_top        = ORIGIN(DMEM) + LENGTH(DMEM);
+    __stack_top        = ORIGIN(SMEM) + LENGTH(SMEM);
     __gpu_stack_bottom = __stack_top - __gpu_num_cores * __gpu_stack_stride;
 
     /* ---- GMEM: launch block, then compiler data ------------------------- */
@@ -113,6 +113,6 @@ SECTIONS
 
 /* The regions already reject .text, .shared and compiler data that do not
  * fit; these check what the regions cannot. */
-ASSERT(__shared_end <= __gpu_stack_bottom, "GPGPU DMEM overflow: GPGPU_SHARED variables collide with the per-lane stacks")
+ASSERT(__shared_end <= __gpu_stack_bottom, "GPGPU SMEM overflow: GPGPU_SHARED variables collide with the per-lane stacks")
 ASSERT(__gpu_launch == ORIGIN(GDATA), "GPGPU layout error: the launch block must be at GMEM_BASE")
-ASSERT(__shared_start == ORIGIN(DMEM), "GPGPU layout error: .shared must start at GPGPU_SHARED_BASE, DMEM byte 0")
+ASSERT(__shared_start == ORIGIN(SMEM), "GPGPU layout error: .shared must start at GPGPU_SHARED_BASE, SMEM byte 0")

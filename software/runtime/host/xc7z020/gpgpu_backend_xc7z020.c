@@ -53,7 +53,7 @@ int gpgpu_backend_init(gpgpu_hardware_t *hardware)
         .name = "xc7z020",
         .lanes = info & GPGPU_INFO_SP_COUNT_MASK,
         .imem_words = (info_mem & GPGPU_INFO_MEM_IMEM_MASK) >> GPGPU_INFO_MEM_IMEM_LSB,
-        .shared_bytes = 4U * (info_mem & GPGPU_INFO_MEM_DMEM_MASK),
+        .shared_bytes = 4U * (info_mem & GPGPU_INFO_MEM_SMEM_MASK),
         .gmem_base = GPGPU_GMEM_BASE,
         .gmem_size = GPGPU_GMEM_SIZE,
         .fb_base = {GPGPU_FB0_BASE, GPGPU_FB1_BASE},

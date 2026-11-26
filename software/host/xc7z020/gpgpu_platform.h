@@ -6,12 +6,12 @@
 #define GPGPU_PLATFORM_H
 
 /* Interface version reported in INFO[31:16] (architecture.interface_version). */
-#define GPGPU_INTERFACE_VERSION            3U
+#define GPGPU_INTERFACE_VERSION            4U
 
 /* gpu_pkg */
 #define GPGPU_BYTES_PER_WORD               4U
 #define GPGPU_IMEM_ENTRIES                 4096U
-#define GPGPU_DMEM_ENTRIES                 4096U
+#define GPGPU_SMEM_ENTRIES                 4096U
 #define GPGPU_FB0_BASE                     67108864U
 #define GPGPU_FB1_BASE                     71303168U
 #define GPGPU_GMEM_BASE                    75497472U
@@ -66,7 +66,7 @@
 #define GPGPU_PERF_WARP_SLOTS              32U
 #define GPGPU_PERF_MAX_WARPS               8U
 #define GPGPU_IMEM_BASE                    0x00002000U
-#define GPGPU_DMEM_BASE                    0x00006000U
+#define GPGPU_SMEM_BASE                    0x00006000U
 #define GPGPU_CONTROL_START_MASK           0x00000001U
 #define GPGPU_CONTROL_STOP_MASK            0x00000002U
 #define GPGPU_STATUS_IDLE_MASK             0x00000001U
@@ -82,7 +82,7 @@
 #define GPGPU_INFO_SP_COUNT_MASK           0x0000FFFFU
 #define GPGPU_INFO_MEM_IMEM_LSB            16U
 #define GPGPU_INFO_MEM_IMEM_MASK           0xFFFF0000U
-#define GPGPU_INFO_MEM_DMEM_MASK           0x0000FFFFU
+#define GPGPU_INFO_MEM_SMEM_MASK           0x0000FFFFU
 #define GPGPU_FAULT_NONE                   0U
 #define GPGPU_FAULT_MEMORY                 1U
 #define GPGPU_FAULT_POSTED_WRITE           2U

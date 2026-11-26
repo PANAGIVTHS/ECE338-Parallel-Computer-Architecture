@@ -29,7 +29,7 @@ bench parameter.
 ### Test cases and the GPGPU model
 
 A case is `tests/hardware/rtl/cases/test<N>/program.asm`, with optional
-`dmem_seed.mem` (initial DMEM: hex words, `@<word index>` moves on) and
+`smem_seed.mem` (initial SMEM: hex words, `@<word index>` moves on) and
 `ddr_seed.mem` (initial DDR: `<byte address> <word>` hex pairs).
 `rtl:generate` assembles each case to `program.mem` and runs that machine
 code on the GPGPU model (`tools/tests/gpgpu_model.py`) to produce the expected
@@ -37,7 +37,7 @@ code on the GPGPU model (`tools/tests/gpgpu_model.py`) to produce the expected
 (`bursts <n>` and the expected DDR words). The model follows the hardware's
 rules: lockstep lanes that branch with lane 0, the kernel ending at lane 0's
 RET, the memory map and permissions of `MemorySubsystemPkg::decode_access`,
-ascending-lane order for same-word DMEM stores, and one AXI burst per group per
+ascending-lane order for same-word SMEM stores, and one AXI burst per group per
 store instruction. A case must end with a halt ecall without a fault; a branch the lanes
 disagree on or lanes storing different values to one DDR word in one
 instruction is reported. Every constant comes from the RTL packages:
@@ -83,10 +83,10 @@ and preserves the first failing `cases/test999` input.
 The bench file and top module come from `tests.rtl.e2e.testbench` and
 `tests.rtl.e2e.top`. The bench instantiates the AXI4-Lite wrapper (the IP top
 used on the FPGA) and touches the GPGPU only through AXI4-Lite and the IRQ pin. It first checks the
-CSR map and error responses, plus a host-only DMEM write/readback. Then, for
-each case, it clears DMEM, loads and verifies IMEM, enables the IRQ, writes
+CSR map and error responses, plus a host-only SMEM write/readback. Then, for
+each case, it clears SMEM, loads and verifies IMEM, enables the IRQ, writes
 `CONTROL.START`, waits for the completion IRQ, checks `STATUS`/`IRQ_STATUS` and
-the W1C acknowledge, and compares all of DMEM with the expected data file and, for a
+the W1C acknowledge, and compares all of SMEM with the expected data file and, for a
 DDR case, the DDR model's contents and burst count with `ddr.mem`. Register files are
 not host-visible, so they are checked only by the SMX suite. Its
 `tests.rtl.e2e.exclude_sources` keeps `interfaces/` (the AXI wrapper) that the SMX suite

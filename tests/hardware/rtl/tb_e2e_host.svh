@@ -245,12 +245,12 @@
         read_word(IMEM_BASE + 32'(index) * 4, data);
     endtask
 
-    task automatic write_dmem(input integer index, input [31:0] data);
-        write_word(ControlPkg::DMEM_BASE + 32'(index) * 4, data);
+    task automatic write_smem(input integer index, input [31:0] data);
+        write_word(ControlPkg::SMEM_BASE + 32'(index) * 4, data);
     endtask
 
-    task automatic read_dmem(input integer index, output [31:0] data);
-        read_word(ControlPkg::DMEM_BASE + 32'(index) * 4, data);
+    task automatic read_smem(input integer index, output [31:0] data);
+        read_word(ControlPkg::SMEM_BASE + 32'(index) * 4, data);
     endtask
 
     // Read a CSR and compare against an expected value; counts mismatches.
@@ -513,12 +513,12 @@
     // ============================================================
     // Each case is loaded through AXI4-Lite, run to its completion IRQ, and
     // checked against the expected files of expected_generator.py: all of
-    // DMEM, and for a case that uses DDR, the DDR model's contents and burst
+    // SMEM, and for a case that uses DDR, the DDR model's contents and burst
     // count (its ddr_seed file is loaded first). Without the DDR backend such
     // a case is skipped. Ends the simulation after the last case.
 
     reg [31:0] expected_imem [0:IMEM_ENTRIES-1];
-    reg [31:0] expected_dmem [0:DMEM_ENTRIES-1];
+    reg [31:0] expected_smem [0:SMEM_ENTRIES-1];
 
     function automatic bit file_exists(input string path);
         int fd;
@@ -536,7 +536,7 @@
         bit has_test_end;
         integer fd;
         integer imem_errors;
-        integer dmem_errors;
+        integer smem_errors;
         int unsigned ddr_errors;
         integer cycle_count;
         integer program_words;
@@ -545,7 +545,7 @@
         string test_root, case_prefix, program_name, data_name, ddr_seed_name, ddr_name, perf_name;
         string prog_file, data_file, ddr_seed_file, ddr_file, perf_file;
         string perf_key;
-        longint unsigned model_instructions, model_ddr_lane_stores, model_dmem_lane_accesses;
+        longint unsigned model_instructions, model_ddr_lane_stores, model_smem_lane_accesses;
         longint unsigned model_ddr_lane_loads, model_ddr_read_bursts, model_ddr_read_beats;
 
         `REQUIRE_PLUSARG("TEST_ROOT=%s", test_root)
@@ -605,11 +605,11 @@
             for (i = 0; i < IMEM_ENTRIES; i = i + 1)
                 expected_imem[i] = NOP_INSTR;
 
-            for (i = 0; i < DMEM_ENTRIES; i = i + 1)
-                expected_dmem[i] = 32'b0;
+            for (i = 0; i < SMEM_ENTRIES; i = i + 1)
+                expected_smem[i] = 32'b0;
 
             $readmemh(prog_file, expected_imem);
-            $readmemh(data_file, expected_dmem);
+            $readmemh(data_file, expected_smem);
 
             // Load the full linked image: functions may follow RET or ECALL.
             program_words = IMEM_ENTRIES;
@@ -626,11 +626,11 @@
                 $fatal(1, "[ERROR] GPGPU did not enter idle after reset");
 
             // ----------------------------------------------------
-            // Clear DMEM, load and verify IMEM
+            // Clear SMEM, load and verify IMEM
             // ----------------------------------------------------
-            $display("[INFO]  Clearing DMEM...");
-            for (i = 0; i < DMEM_ENTRIES; i = i + 1)
-                write_dmem(i, 32'b0);
+            $display("[INFO]  Clearing SMEM...");
+            for (i = 0; i < SMEM_ENTRIES; i = i + 1)
+                write_smem(i, 32'b0);
 
             $display("[INFO]  Loading IMEM...");
             for (i = 0; i < program_words; i = i + 1)
@@ -702,8 +702,8 @@
                 $fatal(1, "[ERROR] %0s: expected 'instructions <count>' first", perf_file);
             if ($fscanf(fd, "%s %d", perf_key, model_ddr_lane_stores) != 2 || perf_key != "ddr_lane_stores")
                 $fatal(1, "[ERROR] %0s: expected 'ddr_lane_stores <count>' second", perf_file);
-            if ($fscanf(fd, "%s %d", perf_key, model_dmem_lane_accesses) != 2 || perf_key != "dmem_lane_accesses")
-                $fatal(1, "[ERROR] %0s: expected 'dmem_lane_accesses <count>' third", perf_file);
+            if ($fscanf(fd, "%s %d", perf_key, model_smem_lane_accesses) != 2 || perf_key != "smem_lane_accesses")
+                $fatal(1, "[ERROR] %0s: expected 'smem_lane_accesses <count>' third", perf_file);
             if ($fscanf(fd, "%s %d", perf_key, model_ddr_lane_loads) != 2 || perf_key != "ddr_lane_loads")
                 $fatal(1, "[ERROR] %0s: expected 'ddr_lane_loads <count>' fourth", perf_file);
             if ($fscanf(fd, "%s %d", perf_key, model_ddr_read_bursts) != 2 || perf_key != "ddr_read_bursts")
@@ -716,9 +716,9 @@
                          model_ddr_lane_stores, perf_g(PerfPkg::PERF_WR_LANE_STORES));
                 csr_errors = csr_errors + 1;
             end
-            if (perf_g(PerfPkg::PERF_BRAM_ACCESSES) != model_dmem_lane_accesses) begin
-                $display("  [ERROR] BRAM_ACCESSES: Expected %0d (the model's DMEM lane accesses), Found %0d",
-                         model_dmem_lane_accesses, perf_g(PerfPkg::PERF_BRAM_ACCESSES));
+            if (perf_g(PerfPkg::PERF_BRAM_ACCESSES) != model_smem_lane_accesses) begin
+                $display("  [ERROR] BRAM_ACCESSES: Expected %0d (the model's SMEM lane accesses), Found %0d",
+                         model_smem_lane_accesses, perf_g(PerfPkg::PERF_BRAM_ACCESSES));
                 csr_errors = csr_errors + 1;
             end
             if (perf_g(PerfPkg::PERF_RD_LANE_LOADS) != model_ddr_lane_loads) begin
@@ -746,16 +746,16 @@
             end
 
             // ----------------------------------------------------
-            // Read back and verify DMEM
+            // Read back and verify SMEM
             // ----------------------------------------------------
-            $display("[INFO]  Verifying DMEM...");
-            dmem_errors = 0;
-            for (i = 0; i < DMEM_ENTRIES; i = i + 1) begin
-                read_dmem(i, captured_word);
-                if (captured_word !== expected_dmem[i]) begin
-                    $display("  [ERROR] DMEM[%0d]: Expected %h, Found %h",
-                             i, expected_dmem[i], captured_word);
-                    dmem_errors = dmem_errors + 1;
+            $display("[INFO]  Verifying SMEM...");
+            smem_errors = 0;
+            for (i = 0; i < SMEM_ENTRIES; i = i + 1) begin
+                read_smem(i, captured_word);
+                if (captured_word !== expected_smem[i]) begin
+                    $display("  [ERROR] SMEM[%0d]: Expected %h, Found %h",
+                             i, expected_smem[i], captured_word);
+                    smem_errors = smem_errors + 1;
                 end
             end
 
@@ -768,11 +768,11 @@
                 ddr_errors = ddr_mem.check_words(ddr_file);
             end
 
-            if (dmem_errors == 0 && ddr_errors == 0 && csr_errors == 0) begin
+            if (smem_errors == 0 && ddr_errors == 0 && csr_errors == 0) begin
                 $display("  [SUCCESS] Test %0d passed in %0d cycles.", test_idx, cycle_count);
             end else begin
-                $display("  [WARNING] Test %0d failed. DMEM errors: %0d, DDR errors: %0d, CSR errors: %0d",
-                         test_idx, dmem_errors, ddr_errors, csr_errors);
+                $display("  [WARNING] Test %0d failed. SMEM errors: %0d, DDR errors: %0d, CSR errors: %0d",
+                         test_idx, smem_errors, ddr_errors, csr_errors);
                 $fatal(1, "[ERROR] Halting simulation due to E2E GPGPU test failure.");
             end
 

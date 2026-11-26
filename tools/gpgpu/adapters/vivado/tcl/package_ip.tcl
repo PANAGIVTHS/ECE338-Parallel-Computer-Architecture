@@ -104,7 +104,7 @@ set_property range [expr {wide(1) << $m00_addr_width}] $address_space
 set_property width $m00_data_width $address_space
 set_property master_address_space_ref m00_axi [ipx::get_bus_interfaces m00_axi -of_objects $core]
 
-# MMIOController decodes CSR, IMEM 0x2000..0x3fff, DMEM 0x4000..0x5fff.
+# MMIOController decodes CSR, IMEM 0x2000..0x3fff, SMEM 0x4000..0x5fff.
 # 32 address wires do NOT imply a 4-GiB peripheral aperture.
 set memory_map [ipx::get_memory_maps s00_axi -of_objects $core]
 if {[llength $memory_map] == 0} {set memory_map [ipx::add_memory_map s00_axi $core]}

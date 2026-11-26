@@ -1,6 +1,6 @@
-# Sub-word stores change only the addressed bytes of a DMEM word: over a
+# Sub-word stores change only the addressed bytes of a SMEM word: over a
 # background, followed by loads and fed by forwarding, and from lanes that share
-# a word. DMEM holds the results; the benches check all of it.
+# a word. SMEM holds the results; the benches check all of it.
 slli  x3, x31, 2        # x3: lane * 4, this lane's word of each array
 lui   x5, 0x1010
 addi  x5, x5, 0x101     # 0x01010101

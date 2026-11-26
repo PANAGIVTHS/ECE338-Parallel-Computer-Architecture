@@ -5,7 +5,7 @@
 // (gpgpu_axi), exactly as the PS does on the FPGA. It checks the CSR map,
 // error responses and fault reports, then runs the directed cases
 // (run_cases, tb_e2e_host.svh): programs are loaded, launched and checked
-// using only CSR/IMEM/DMEM accesses, the IRQ pin and the DDR model's backdoor.
+// using only CSR/IMEM/SMEM accesses, the IRQ pin and the DDR model's backdoor.
 // +TEST_END is optional: without it the suite runs until the next case
 // directory has no program file.
 module tb_GPGPU_e2e
@@ -32,7 +32,7 @@ module tb_GPGPU_e2e
     string dump_file;
 
     // Run settings (plusargs)
-    // The first address past the DMEM window: no CSR, IMEM or DMEM decodes it.
+    // The first address past the SMEM window: no CSR, IMEM or SMEM decodes it.
     // The windows follow architecture.memory, so the bench derives it.
     localparam logic [31:0] UNMAPPED_ADDR = 32'(ControlPkg::MMIO_END);
 
@@ -57,7 +57,7 @@ module tb_GPGPU_e2e
 
         $display("\n[INFO] ---> Checking host interface...");
         expect_csr(REG_INFO, {(XLEN/2)'(INTERFACE_VERSION), (XLEN/2)'(NUM_CORES)}, "INFO");
-        expect_csr(REG_INFO_MEM, {(XLEN/2)'(IMEM_ENTRIES), (XLEN/2)'(DMEM_ENTRIES)}, "INFO_MEM");
+        expect_csr(REG_INFO_MEM, {(XLEN/2)'(IMEM_ENTRIES), (XLEN/2)'(SMEM_ENTRIES)}, "INFO_MEM");
         expect_csr(REG_INFO_FEATURES, 32'(DDR_ENABLE) << FEATURE_DDR_BIT, "INFO_FEATURES");
         expect_csr(REG_INFO_CLOCK, 32'(CLOCK_KHZ), "INFO_CLOCK");
         expect_csr(REG_BUILD_ID, 32'(BUILD_HASH) | (32'(BUILD_DIRTY) << BUILD_DIRTY_BIT), "BUILD_ID");
@@ -71,7 +71,7 @@ module tb_GPGPU_e2e
         expect_write_resp(REG_INFO, 32'hFFFF_FFFF, AXI_SLVERR);   // read-only
         expect_read_resp(REG_CONTROL, AXI_SLVERR);                 // write-only
         expect_write_resp(REG_CONTROL, CONTROL_START_MASK | CONTROL_STOP_MASK, AXI_SLVERR);
-        if (ControlPkg::MMIO_END < 64'h1_0000)                     // DMEM may end the aperture
+        if (ControlPkg::MMIO_END < 64'h1_0000)                     // SMEM may end the aperture
             expect_read_resp(UNMAPPED_ADDR, AXI_DECERR);
         expect_read_resp(IMEM_BASE + 2, AXI_DECERR);               // misaligned
 
@@ -92,13 +92,13 @@ module tb_GPGPU_e2e
             csr_errors = csr_errors + 1;
         end
 
-        // Host DMEM path (through the memory subsystem) independent of kernels.
-        for (i = 0; i < DMEM_ENTRIES; i = i + DMEM_ENTRIES / 8 - 1)
-            write_dmem(i, 32'hA5A5_0000 | 32'(i));
-        for (i = 0; i < DMEM_ENTRIES; i = i + DMEM_ENTRIES / 8 - 1) begin
-            read_dmem(i, captured_word);
+        // Host SMEM path (through the memory subsystem) independent of kernels.
+        for (i = 0; i < SMEM_ENTRIES; i = i + SMEM_ENTRIES / 8 - 1)
+            write_smem(i, 32'hA5A5_0000 | 32'(i));
+        for (i = 0; i < SMEM_ENTRIES; i = i + SMEM_ENTRIES / 8 - 1) begin
+            read_smem(i, captured_word);
             if (captured_word !== (32'hA5A5_0000 | 32'(i))) begin
-                $display("  [ERROR] Host DMEM[%0d] readback: Expected %h, Found %h",
+                $display("  [ERROR] Host SMEM[%0d] readback: Expected %h, Found %h",
                          i, 32'hA5A5_0000 | 32'(i), captured_word);
                 csr_errors = csr_errors + 1;
             end
@@ -112,16 +112,16 @@ module tb_GPGPU_e2e
         expect_write_resp(REG_FAULT_PC, 32'd0, AXI_SLVERR);
 
         // All lanes misaligned; the store after the faulting load never issues.
-        write_dmem(0, 32'hDEAD_BEEF);
+        write_smem(0, 32'hDEAD_BEEF);
         expect_fault("misaligned load", '{
                 rv_addi(6, 0, 'h5A),
                 rv_lw(5, 0, 1),
                 rv_sw(6, 0, 0),
                 rv_addi(17, 0, 0), riscv_pkg::ECALL_INSTR
             }, 32'(FAULT_MEMORY) | fault_kind(MemorySubsystemPkg::ST_MISALIGNED), all_lanes(), 32'd4);
-        read_dmem(0, captured_word);
+        read_smem(0, captured_word);
         if (captured_word !== 32'hDEAD_BEEF) begin
-            $display("  [ERROR] Instruction after a fault executed: DMEM[0] = %h", captured_word);
+            $display("  [ERROR] Instruction after a fault executed: SMEM[0] = %h", captured_word);
             csr_errors = csr_errors + 1;
         end
 
@@ -142,22 +142,22 @@ module tb_GPGPU_e2e
             all_lanes() & 32'hAAAA_AAAA, 32'd0);
 
         // A misaligned sub-word store leaves the word untouched.
-        write_dmem(0, 32'hDEAD_BEEF);
+        write_smem(0, 32'hDEAD_BEEF);
         expect_fault("misaligned halfword store", '{
                 rv_addi(6, 0, 'h5A),
                 rv_sh(6, 0, 1),
                 rv_addi(17, 0, 0), riscv_pkg::ECALL_INSTR
             }, 32'(FAULT_MEMORY) | fault_kind(MemorySubsystemPkg::ST_MISALIGNED), all_lanes(), 32'd4);
-        read_dmem(0, captured_word);
+        read_smem(0, captured_word);
         if (captured_word !== 32'hDEAD_BEEF) begin
-            $display("  [ERROR] A misaligned store changed DMEM[0] to %h", captured_word);
+            $display("  [ERROR] A misaligned store changed SMEM[0] to %h", captured_word);
             csr_errors = csr_errors + 1;
         end
 
         // Byte accesses cannot be misaligned, so the map decides: the last byte
-        // of DMEM completes and the next one is unmapped.
-        expect_fault("byte load past the end of DMEM", '{
-                rv_lui(5, gpu_pkg::DMEM_BASE + gpu_pkg::DMEM_SIZE),
+        // of SMEM completes and the next one is unmapped.
+        expect_fault("byte load past the end of SMEM", '{
+                rv_lui(5, gpu_pkg::SMEM_BASE + gpu_pkg::SMEM_SIZE),
                 rv_lbu(6, 5, -1),
                 rv_lbu(6, 5, 0),
                 rv_addi(17, 0, 0), riscv_pkg::ECALL_INSTR
@@ -169,13 +169,13 @@ module tb_GPGPU_e2e
                 rv_addi(17, 0, 0), riscv_pkg::ECALL_INSTR
             }, 32'(FAULT_MEMORY) | fault_kind(MemorySubsystemPkg::ST_PERMISSION), all_lanes(), 32'd4);
 
-        // One store, two kinds: from the first 4 KiB boundary after DMEM
+        // One store, two kinds: from the first 4 KiB boundary after SMEM
         // (unmapped up to FB0), even lanes are unmapped and odd misaligned.
-        if (gpu_pkg::DMEM_BASE + gpu_pkg::DMEM_SIZE + 'h1000 > FB0_BASE)
-            $fatal(1, "[ERROR] The fault check needs unmapped space between DMEM and FB0");
+        if (gpu_pkg::SMEM_BASE + gpu_pkg::SMEM_SIZE + 'h1000 > FB0_BASE)
+            $fatal(1, "[ERROR] The fault check needs unmapped space between SMEM and FB0");
         expect_fault("unmapped and misaligned store", '{
                 rv_add(5, 31, 31),
-                rv_lui(6, (gpu_pkg::DMEM_BASE + gpu_pkg::DMEM_SIZE + 'hFFF) & ~32'hFFF),
+                rv_lui(6, (gpu_pkg::SMEM_BASE + gpu_pkg::SMEM_SIZE + 'hFFF) & ~32'hFFF),
                 rv_add(5, 5, 6),
                 rv_sw(0, 5, 0),
                 rv_addi(17, 0, 0), riscv_pkg::ECALL_INSTR

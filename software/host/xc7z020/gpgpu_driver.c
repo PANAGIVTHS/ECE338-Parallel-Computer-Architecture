@@ -172,9 +172,9 @@ static void print_identity(void)
 
     const u32 info_mem = gpu_read(GPGPU_REG_INFO_MEM);
     print_register("INFO_MEM", info_mem);
-    xil_printf("IMEM %u words, DMEM %u words\r\n",
+    xil_printf("IMEM %u words, SMEM %u words\r\n",
                (unsigned int)((info_mem & GPGPU_INFO_MEM_IMEM_MASK) >> GPGPU_INFO_MEM_IMEM_LSB),
-               (unsigned int)(info_mem & GPGPU_INFO_MEM_DMEM_MASK));
+               (unsigned int)(info_mem & GPGPU_INFO_MEM_SMEM_MASK));
 
     const u32 features = gpu_read(GPGPU_REG_INFO_FEATURES);
     print_register("INFO_FEATURES", features);
@@ -353,12 +353,12 @@ int gpgpu_write_imem(u32 index, u32 word)
     return 0;
 }
 
-int gpgpu_write_dmem(u32 index, u32 word)
+int gpgpu_write_smem(u32 index, u32 word)
 {
-    if (check_index("DMEM", index, GPGPU_DMEM_ENTRIES) != 0 ||
-        require_idle("DMEM write") != 0)
+    if (check_index("SMEM", index, GPGPU_SMEM_ENTRIES) != 0 ||
+        require_idle("SMEM write") != 0)
         return GPGPU_ERR_STATE;
-    gpu_write(GPGPU_DMEM_BASE + 4U * index, word);
+    gpu_write(GPGPU_SMEM_BASE + 4U * index, word);
     return 0;
 }
 
@@ -371,12 +371,12 @@ int gpgpu_read_imem(u32 index, u32 *data)
     return 0;
 }
 
-int gpgpu_read_dmem(u32 index, u32 *data)
+int gpgpu_read_smem(u32 index, u32 *data)
 {
-    if (data == NULL || check_index("DMEM", index, GPGPU_DMEM_ENTRIES) != 0 ||
-        require_idle("DMEM read") != 0)
+    if (data == NULL || check_index("SMEM", index, GPGPU_SMEM_ENTRIES) != 0 ||
+        require_idle("SMEM read") != 0)
         return GPGPU_ERR_STATE;
-    *data = gpu_read(GPGPU_DMEM_BASE + 4U * index);
+    *data = gpu_read(GPGPU_SMEM_BASE + 4U * index);
     return 0;
 }
 
@@ -442,22 +442,22 @@ int gpgpu_init(void)
      * sizes compiled in from gpgpu_platform.h must match the hardware's. */
     const u32 info_mem = gpu_read(GPGPU_REG_INFO_MEM);
     const u32 imem = (info_mem & GPGPU_INFO_MEM_IMEM_MASK) >> GPGPU_INFO_MEM_IMEM_LSB;
-    const u32 dmem = info_mem & GPGPU_INFO_MEM_DMEM_MASK;
-    if (imem != GPGPU_IMEM_ENTRIES || dmem != GPGPU_DMEM_ENTRIES) {
-        xil_printf("ERROR: the GPU has IMEM %u / DMEM %u words (INFO_MEM=0x%08x), but this "
-                   "driver was built for IMEM %u / DMEM %u: rebuild the host against the "
-                   "bitstream's RTL\r\n", (unsigned int)imem, (unsigned int)dmem,
+    const u32 smem = info_mem & GPGPU_INFO_MEM_SMEM_MASK;
+    if (imem != GPGPU_IMEM_ENTRIES || smem != GPGPU_SMEM_ENTRIES) {
+        xil_printf("ERROR: the GPU has IMEM %u / SMEM %u words (INFO_MEM=0x%08x), but this "
+                   "driver was built for IMEM %u / SMEM %u: rebuild the host against the "
+                   "bitstream's RTL\r\n", (unsigned int)imem, (unsigned int)smem,
                    (unsigned int)info_mem, (unsigned int)GPGPU_IMEM_ENTRIES,
-                   (unsigned int)GPGPU_DMEM_ENTRIES);
+                   (unsigned int)GPGPU_SMEM_ENTRIES);
         return GPGPU_ERR_STATE;
     }
 
     const u32 build = gpu_read(GPGPU_REG_BUILD_ID);
-    xil_printf("GPU: RTL %07x%s, %u SPs, %u kHz, IMEM %u / DMEM %u words, DDR %s\r\n",
+    xil_printf("GPU: RTL %07x%s, %u SPs, %u kHz, IMEM %u / SMEM %u words, DDR %s\r\n",
                (unsigned int)(build & GPGPU_BUILD_HASH_MASK),
                (build & GPGPU_BUILD_DIRTY_MASK) != 0U ? "-dirty" : "",
                (unsigned int)(info & GPGPU_INFO_SP_COUNT_MASK),
-               (unsigned int)gpu_read(GPGPU_REG_INFO_CLOCK), (unsigned int)imem, (unsigned int)dmem,
+               (unsigned int)gpu_read(GPGPU_REG_INFO_CLOCK), (unsigned int)imem, (unsigned int)smem,
                (gpu_read(GPGPU_REG_INFO_FEATURES) & GPGPU_FEATURE_DDR_MASK) != 0U ? "on" : "off");
 
     gpu_write(GPGPU_REG_IRQ_ENABLE, 0U);
@@ -603,20 +603,20 @@ int gpgpu_dump_imem_ascii(u32 offset, u32 count)
     return 0;
 }
 
-int gpgpu_dump_dmem_ascii(u32 offset, u32 count)
+int gpgpu_dump_smem_ascii(u32 offset, u32 count)
 {
     u32 word;
-    if (check_span("DMEM", offset, count, GPGPU_DMEM_ENTRIES) != 0 ||
-        require_idle("DMEM dump") != 0)
+    if (check_span("SMEM", offset, count, GPGPU_SMEM_ENTRIES) != 0 ||
+        require_idle("SMEM dump") != 0)
         return GPGPU_ERR_STATE;
-    xil_printf("BEGIN_DMEM_DUMP\r\n");
+    xil_printf("BEGIN_SMEM_DUMP\r\n");
     for (u32 i = 0U; i < count; ++i) {
-        if (gpgpu_read_dmem(offset + i, &word) != 0)
+        if (gpgpu_read_smem(offset + i, &word) != 0)
             return GPGPU_ERR_STATE;
         xil_printf("0x%08x: 0x%08x\r\n", (unsigned int)(4U * (offset + i)),
                    (unsigned int)word);
     }
-    xil_printf("END_DMEM_DUMP\r\n");
+    xil_printf("END_SMEM_DUMP\r\n");
     return 0;
 }
 

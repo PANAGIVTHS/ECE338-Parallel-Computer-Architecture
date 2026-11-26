@@ -249,7 +249,7 @@ class GccToolchain:
         cases = sorted((path.parent for path in cases_root.glob("test*/program.asm")
                         if re.fullmatch(r"test\d+", path.parent.name)), key=lambda path: int(path.name[4:]))
         expected = [case / name for case in cases for name in ("program.mem", "data.mem")]
-        seeds = [case / name for case in cases for name in ("dmem_seed.mem", "ddr_seed.mem") if (case / name).is_file()]
+        seeds = [case / name for case in cases for name in ("smem_seed.mem", "ddr_seed.mem") if (case / name).is_file()]
         log = self._runtime_build / "check/check.log"
 
         def check() -> None:

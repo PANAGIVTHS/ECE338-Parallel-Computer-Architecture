@@ -76,7 +76,7 @@ lists the address spaces.
 
 ### 3.3 Shared memory
 
-The on-chip data BRAM, named DMEM in the current RTL, is called **shared memory** everywhere: RTL (`SMEM_*`),
+The on-chip data BRAM, named DMEM until phase 5, is called **shared memory** everywhere *(done)*: RTL (`SMEM_*`),
 configuration (`shared_bytes`), generated host headers and documentation. The parameters leave it. From byte 0 it
 holds the `GPGPU_SHARED` variables, and the stacks are at its top.
 
@@ -93,6 +93,12 @@ holds the `GPGPU_SHARED` variables, and the stacks are at its top.
 where the stack is, so it can move without changing a kernel. The planned home is one BRAM per lane (32 RAMB18,
 16 of the 124 free BRAM tiles, 2 KiB per lane, all lanes in parallel). DDR is rejected: without address interleaving
 the 128-byte stacks put each lane in a different 128-byte burst group, so one spill is 32 bursts.
+
+
+The rename *(done)*: `DMEM_*` in the RTL, the driver and the tools became `SMEM_*`, `architecture.memory.dmem_bytes`
+became `shared_bytes`, and the monitor's `wdmem`, `rdmem`, `dumpdmem` and `dumpdmem_bin` became `wsmem`, `rsmem`,
+`dumpsmem` and `dumpsmem_bin`. `interface_version` is 4: a driver of version 3 refuses the new bitstream, and the
+reverse.
 
 ### 3.4 Global memory (GMEM)
 
@@ -700,7 +706,7 @@ Each phase ends with all RTL suites passing and is its own pull request. Phases 
 | 5 | RTL: DDR map from config, 440 MiB GMEM, `DMEM` to `SMEM`, `interface_version` 4 | all suites pass, the bitstream meets timing, all programs pass on the board |
 
 Until phase 4 the old flow worked for the programs that had not moved, and `linker.ld` kept the `.args` region for
-them. Phase 4 removed both: shared memory starts at DMEM byte 0.
+them. Phase 4 removed both: shared memory starts at byte 0.
 
 Phase 5 depends on timing: the build of 2026-11-23 misses the 40 MHz clock by 0.106 ns with 84 % of the LUTs in use.
 `perf/timing-closure` should merge first. `feature/doom` changes `GMEM_SIZE` on the same line.

@@ -289,7 +289,7 @@ def write_module(elf: Path, scan_json: Path, constants_file: Path, settings: dic
         "abi_version": "GPGPU_ABI_VERSION",
         "num_cores": f"{settings['num_cores']}u",
         "imem_words": f"{rtl['gpu_pkg::IMEM_ENTRIES']}u",
-        "shared_bytes": f"{4 * rtl['gpu_pkg::DMEM_ENTRIES']}u",
+        "shared_bytes": f"{4 * rtl['gpu_pkg::SMEM_ENTRIES']}u",
         "gmem_base": f"0x{rtl['gpu_pkg::GMEM_BASE']:08x}u",
         "gmem_size": f"0x{rtl['gpu_pkg::GMEM_SIZE']:08x}u",
         "fb_base": f"{{ 0x{rtl['gpu_pkg::FB0_BASE']:08x}u, 0x{rtl['gpu_pkg::FB1_BASE']:08x}u }}",
@@ -321,7 +321,7 @@ def write_module(elf: Path, scan_json: Path, constants_file: Path, settings: dic
 # ---- Simulator ----------------------------------------------------------------------------------
 
 _HW = {
-    "IMEM_ENTRIES": "gpu_pkg::IMEM_ENTRIES", "DMEM_ENTRIES": "gpu_pkg::DMEM_ENTRIES", "DMEM_BASE": "gpu_pkg::DMEM_BASE",
+    "IMEM_ENTRIES": "gpu_pkg::IMEM_ENTRIES", "SMEM_ENTRIES": "gpu_pkg::SMEM_ENTRIES", "SMEM_BASE": "gpu_pkg::SMEM_BASE",
     "FB0_BASE": "gpu_pkg::FB0_BASE", "FB1_BASE": "gpu_pkg::FB1_BASE", "FB_SIZE": "gpu_pkg::FB_SIZE",
     "GMEM_BASE": "gpu_pkg::GMEM_BASE", "GMEM_SIZE": "gpu_pkg::GMEM_SIZE", "STACK_P_INIT": "gpu_pkg::STACK_P_INIT",
     "TXD_REGISTER": "gpu_pkg::TXD_REGISTER", "GROUP_BYTES": "DDRBackendPkg::GROUP_BYTES", "BEAT_LSB": "DDRBackendPkg::BEAT_LSB",

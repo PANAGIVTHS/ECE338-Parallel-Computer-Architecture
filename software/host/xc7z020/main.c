@@ -196,18 +196,18 @@ static int parse_count(const char *s, u32 *out) {
     return 0;
 }
 
-static int gpgpu_dump_dmem_binary(u32 offset, u32 count) {
-    if (offset > GPGPU_DMEM_ENTRIES || count > (GPGPU_DMEM_ENTRIES - offset)) {
-        xil_printf("ERROR: DMEM binary dump range offset=%u count=%u exceeds GPGPU_DMEM_ENTRIES=%d\n",
-                   offset, count, GPGPU_DMEM_ENTRIES);
+static int gpgpu_dump_smem_binary(u32 offset, u32 count) {
+    if (offset > GPGPU_SMEM_ENTRIES || count > (GPGPU_SMEM_ENTRIES - offset)) {
+        xil_printf("ERROR: SMEM binary dump range offset=%u count=%u exceeds GPGPU_SMEM_ENTRIES=%d\n",
+                   offset, count, GPGPU_SMEM_ENTRIES);
         return -1;
     }
 
-    xil_printf("BEGIN_DMEM_BIN\n");
+    xil_printf("BEGIN_SMEM_BIN\n");
 
     for (u32 i = 0; i < count; i++) {
         u32 val;
-        gpgpu_read_dmem(offset + i, &val);
+        gpgpu_read_smem(offset + i, &val);
 
         outbyte((val >> 0)  & 0xFF);
         outbyte((val >> 8)  & 0xFF);
@@ -226,13 +226,13 @@ static void print_help(void) {
     xil_printf("  help\r\n");
     xil_printf("  status\r\n");
     xil_printf("  wimem <addr_hex> <word_hex>\r\n");
-    xil_printf("  wdmem <addr_hex> <word_hex>\r\n");
+    xil_printf("  wsmem <addr_hex> <word_hex>\r\n");
     xil_printf("  rimem <addr_hex>\r\n");
-    xil_printf("  rdmem <addr_hex>\r\n");
+    xil_printf("  rsmem <addr_hex>\r\n");
     xil_printf("  --------- DUMPING ---------\r\n");
     xil_printf("  dumpimem <offset> <count>\r\n");
-    xil_printf("  dumpdmem <offset> <count>\r\n");
-    xil_printf("  dumpdmem_bin <offset> <count>\r\n");
+    xil_printf("  dumpsmem <offset> <count>\r\n");
+    xil_printf("  dumpsmem_bin <offset> <count>\r\n");
     xil_printf("  dumpgmem_bin <offset> <count>   (word offsets from GMEM_BASE)\r\n");
     xil_printf("  --------- PROGRAMS (docs/runtime-spec.md) ---------\r\n");
     xil_printf("  load <entry_hex> <segments_hex>   (receive a program; `fpga programs:<p>:run` sends it)\r\n");
@@ -297,7 +297,7 @@ int main(void) {
 
             gpgpu_write_imem(addr, word);
 
-        } else if (strcmp(cmd, "wdmem") == 0) {
+        } else if (strcmp(cmd, "wsmem") == 0) {
             u32 addr, word;
 
             arg1 = strtok(NULL, " \t");
@@ -306,11 +306,11 @@ int main(void) {
             if (!arg1 || !arg2 ||
                 parse_u32_hex(arg1, &addr) != 0 ||
                 parse_u32_hex(arg2, &word) != 0) {
-                xil_printf("Usage: wdmem <addr_hex> <word_hex>\r\n");
+                xil_printf("Usage: wsmem <addr_hex> <word_hex>\r\n");
                 continue;
             }
 
-            gpgpu_write_dmem(addr, word);
+            gpgpu_write_smem(addr, word);
 
         } else if (strcmp(cmd, "rimem") == 0) {
             u32 addr, data;
@@ -325,18 +325,18 @@ int main(void) {
             if (gpgpu_read_imem(addr, &data) == 0)
                 xil_printf("IMEM[%u] = 0x%08x\r\n", addr, data);
 
-        } else if (strcmp(cmd, "rdmem") == 0) {
+        } else if (strcmp(cmd, "rsmem") == 0) {
             u32 addr, data;
 
             arg1 = strtok(NULL, " \t");
 
             if (!arg1 || parse_u32_hex(arg1, &addr) != 0) {
-                xil_printf("Usage: rdmem <addr_hex>\r\n");
+                xil_printf("Usage: rsmem <addr_hex>\r\n");
                 continue;
             }
 
-            if (gpgpu_read_dmem(addr, &data) == 0)
-                xil_printf("DMEM[%u] = 0x%08x\r\n", addr, data);
+            if (gpgpu_read_smem(addr, &data) == 0)
+                xil_printf("SMEM[%u] = 0x%08x\r\n", addr, data);
 
         } else if (strcmp(cmd, "dumpimem") == 0) {
             u32 offset, count;
@@ -350,29 +350,29 @@ int main(void) {
 
             gpgpu_dump_imem_ascii(offset, count);
 
-        } else if (strcmp(cmd, "dumpdmem") == 0) {
+        } else if (strcmp(cmd, "dumpsmem") == 0) {
             u32 offset, count;
 
             arg1 = strtok(NULL, " \t");
             arg2 = strtok(NULL, " \t");
             if (parse_count(arg1, &offset) != 0 || parse_count(arg2, &count) != 0) {
-                xil_printf("Usage: dumpdmem <offset> <count>\r\n");
+                xil_printf("Usage: dumpsmem <offset> <count>\r\n");
                 continue;
             }
 
-            gpgpu_dump_dmem_ascii(offset, count);
+            gpgpu_dump_smem_ascii(offset, count);
 
-        }  else if (strcmp(cmd, "dumpdmem_bin") == 0) {
+        }  else if (strcmp(cmd, "dumpsmem_bin") == 0) {
             u32 offset, count;
 
             arg1 = strtok(NULL, " \t");
             arg2 = strtok(NULL, " \t");
             if (parse_count(arg1, &offset) != 0 || parse_count(arg2, &count) != 0) {
-                xil_printf("Usage: dumpdmem_bin <offset> <count>\r\n");
+                xil_printf("Usage: dumpsmem_bin <offset> <count>\r\n");
                 continue;
             }
 
-            gpgpu_dump_dmem_binary(offset, count);
+            gpgpu_dump_smem_binary(offset, count);
 
         } else if (strcmp(cmd, "dumpgmem_bin") == 0) {
             u32 offset, count;

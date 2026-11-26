@@ -46,12 +46,12 @@ int gpgpu_pl_reset(void);
 
 /* Addresses are WORD INDICES, not AXI byte addresses. */
 int gpgpu_write_imem(u32 index, u32 word);
-int gpgpu_write_dmem(u32 index, u32 word);
+int gpgpu_write_smem(u32 index, u32 word);
 int gpgpu_read_imem(u32 index, u32 *data);
-int gpgpu_read_dmem(u32 index, u32 *data);
+int gpgpu_read_smem(u32 index, u32 *data);
 
 int gpgpu_dump_imem_ascii(u32 offset, u32 count);
-int gpgpu_dump_dmem_ascii(u32 offset, u32 count);
+int gpgpu_dump_smem_ascii(u32 offset, u32 count);
 
 /* Performance counters (docs/perf-counters-spec.md, RTL PerfPkg). The GPU
  * clears them at every START; each run reads its own. */

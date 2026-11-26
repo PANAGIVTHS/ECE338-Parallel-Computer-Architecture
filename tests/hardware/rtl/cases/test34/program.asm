@@ -60,7 +60,7 @@ lui   x6, 0x9E378
 addi  x6, x6, -0x64F    # 0x9E3779B1: spreads the lane id over all four bytes
 addi  x7, x31, 1
 mul   x7, x7, x6
-sw    x7, 1024(x4)      # DMEM[0x400 + lane * 4] = this lane's word
+sw    x7, 1024(x4)      # SMEM[0x400 + lane * 4] = this lane's word
 slli  x8, x31, 1
 lb    x9, 1024(x31)     # each lane its own byte
 lbu   x10, 1024(x31)

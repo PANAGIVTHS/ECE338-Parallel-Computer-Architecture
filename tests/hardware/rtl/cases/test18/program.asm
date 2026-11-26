@@ -1,6 +1,6 @@
 # BNE instruction coverage test
 #
-# Each case writes an independent signature to DMEM so a wrong branch decision or
+# Each case writes an independent signature to SMEM so a wrong branch decision or
 # wrong target is easy to identify.  The test covers taken/not-taken paths,
 # equality, inequality, zero operands, negative/high-bit values, x0 comparisons,
 # forwarding into BNE operands, and a backward BNE loop.

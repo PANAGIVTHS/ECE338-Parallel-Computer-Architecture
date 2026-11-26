@@ -26,8 +26,8 @@
 typedef struct {
     uint32_t lanes;
     uint32_t imem_words;
-    uint32_t dmem_words;
-    uint32_t dmem_base;
+    uint32_t smem_words;
+    uint32_t smem_base;
     uint32_t fb0_base, fb1_base, fb_size;
     uint32_t gmem_base, gmem_size;
     uint32_t stack_p_init;
@@ -63,7 +63,7 @@ typedef struct {
     uint64_t ddr_lane_loads;
     uint64_t ddr_read_bursts;
     uint64_t ddr_read_beats;
-    uint64_t dmem_lane_accesses;
+    uint64_t smem_lane_accesses;
 } gpgpu_sim_result_t;
 
 typedef struct gpgpu_sim gpgpu_sim_t;
@@ -77,7 +77,7 @@ void gpgpu_sim_destroy(gpgpu_sim_t *sim);
 
 const gpgpu_sim_config_t *gpgpu_sim_config(const gpgpu_sim_t *sim);
 uint32_t *gpgpu_sim_imem(gpgpu_sim_t *sim); /* imem_words words */
-uint32_t *gpgpu_sim_dmem(gpgpu_sim_t *sim); /* dmem_words words */
+uint32_t *gpgpu_sim_smem(gpgpu_sim_t *sim); /* smem_words words */
 
 /* Called once for every branch or ECALL the lanes disagree on. */
 typedef void (*gpgpu_sim_divergence_fn)(void *context, uint32_t pc);

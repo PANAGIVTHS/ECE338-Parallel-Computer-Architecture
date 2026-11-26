@@ -19,7 +19,7 @@ GPGPU_GLOBAL void terrain(unsigned int *fb, int width, int height, int frame)
     cell_shading();
     row_bands();
 
-    /* The band loop's state lives in DMEM, so that the tile loop has every
+    /* The band loop's state lives in SMEM, so that the tile loop has every
      * register it can get. */
     store_uniform(&VIEW[V_BAND], 0);
     for (;;) {

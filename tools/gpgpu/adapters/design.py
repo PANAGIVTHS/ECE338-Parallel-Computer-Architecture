@@ -16,7 +16,7 @@ from .config import Config, Section
 class Memory(Section):
     """architecture.memory: the BRAM sizes and the kernel memory layout."""
     imem_bytes: PositiveInt
-    dmem_bytes: PositiveInt
+    shared_bytes: PositiveInt
     stack_bytes_per_lane: PositiveInt
     ddr_bytes: PositiveInt
     host_bytes: PositiveInt
@@ -48,15 +48,15 @@ def memory_layout(config: Config) -> Memory:
     """architecture.memory, checked: everything the RTL and the linker need must fit and align."""
     design = architecture(config)
     memory = design.memory
-    for key in ("imem_bytes", "dmem_bytes", "stack_bytes_per_lane"):
+    for key in ("imem_bytes", "shared_bytes", "stack_bytes_per_lane"):
         if not _power_of_two(getattr(memory, key)) or getattr(memory, key) < 16:
             raise GpgpuError(f"architecture.memory.{key} must be a power of two of at least 16")
-    if max(memory.imem_bytes, memory.dmem_bytes) // 4 >= 1 << 16:
-        raise GpgpuError("architecture.memory: IMEM and DMEM must hold fewer than 65536 words (INFO_MEM fields)")
+    if max(memory.imem_bytes, memory.shared_bytes) // 4 >= 1 << 16:
+        raise GpgpuError("architecture.memory: IMEM and SMEM must hold fewer than 65536 words (INFO_MEM fields)")
     stacks = design.num_cores * memory.stack_bytes_per_lane
-    if stacks >= memory.dmem_bytes:
+    if stacks >= memory.shared_bytes:
         raise GpgpuError(f"architecture.memory: the stacks ({design.num_cores} x {memory.stack_bytes_per_lane} B) "
-                         f"leave no shared memory in DMEM ({memory.dmem_bytes} B)")
+                         f"leave no shared memory in SMEM ({memory.shared_bytes} B)")
     ddr_map(memory)  # checks host_bytes
     return memory
 
@@ -91,7 +91,7 @@ def _write_config_package(memory: dict[str, int], output: Path) -> None:
         "package gpu_config_pkg;",
         "",
         f"    localparam int unsigned IMEM_BYTES = {memory['imem_bytes']};",
-        f"    localparam int unsigned DMEM_BYTES = {memory['dmem_bytes']};",
+        f"    localparam int unsigned SMEM_BYTES = {memory['shared_bytes']};",
         "",
         "    // DDR map from host_bytes (docs/runtime-spec.md 3.5): FB0, FB1, then GMEM to the end of DDR.",
         f"    localparam int unsigned FB0_BASE = 'h{memory['fb0_base'] >> 16:04X}_{memory['fb0_base'] & 0xFFFF:04X};",
@@ -107,7 +107,7 @@ def _write_config_package(memory: dict[str, int], output: Path) -> None:
 
 def config_package_step(config: Config) -> Step:
     memory = memory_layout(config)
-    sizes = {"imem_bytes": memory.imem_bytes, "dmem_bytes": memory.dmem_bytes, **ddr_map(memory)}
+    sizes = {"imem_bytes": memory.imem_bytes, "shared_bytes": memory.shared_bytes, **ddr_map(memory)}
     output = config_package_path(config)
     return Step(partial(_write_config_package, sizes, output), inputs=(Path(__file__),), outputs=(output,),
                 fingerprint=sizes)

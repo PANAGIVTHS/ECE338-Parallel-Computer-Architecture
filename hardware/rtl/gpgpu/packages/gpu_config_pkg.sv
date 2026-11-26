@@ -4,7 +4,7 @@
 package gpu_config_pkg;
 
     localparam int unsigned IMEM_BYTES = 16384;
-    localparam int unsigned DMEM_BYTES = 16384;
+    localparam int unsigned SMEM_BYTES = 16384;
 
     // DDR map from host_bytes (docs/runtime-spec.md 3.5): FB0, FB1, then GMEM to the end of DDR.
     localparam int unsigned FB0_BASE = 'h0400_0000;

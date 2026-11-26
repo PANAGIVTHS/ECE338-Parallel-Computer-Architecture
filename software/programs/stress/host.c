@@ -11,7 +11,7 @@
 
 static unsigned int buffer[DDR_BURSTS * CORES];
 
-static const char *const names[] = {"LOOP", "ALU", "MUL", "DMEM", "DDR", "XOR", "ADD", "ROT", "XOR_INDEP",
+static const char *const names[] = {"LOOP", "ALU", "MUL", "SMEM", "DDR", "XOR", "ADD", "ROT", "XOR_INDEP",
                                     "XOR_RING", "XOR_CONST"};
 
 /* One mode on the GPU; the number of lanes that differ from the host. */

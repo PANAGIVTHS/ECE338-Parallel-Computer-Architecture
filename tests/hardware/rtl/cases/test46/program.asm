@@ -1,7 +1,7 @@
 # Compiled from software/programs/memspaces/memspaces.c as of commit ae4c465, before the runtime
 # (test47 is the runtime's memspaces), with the GPGPU_ARGS interface (default profile: 32 lanes,
-# 128-byte stacks, GPGPU_ARGS at DMEM 0, .shared at 0x80, compiler data at GMEM_BASE).
-# Every memory space of linker.ld: GPGPU_ARGS (op = 0, DMEM cleared), out[] in .shared,
+# 128-byte stacks, GPGPU_ARGS at SMEM 0, .shared at 0x80, compiler data at GMEM_BASE).
+# Every memory space of linker.ld: GPGPU_ARGS (op = 0, SMEM cleared), out[] in .shared,
 # tmp[] on the stack, gain[] and a jump table in .rodata, call_count and bias[] in
 # .data, slots[] and last_op in .bss. ddr_seed.mem is the program's GMEM image.
 

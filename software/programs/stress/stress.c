@@ -10,7 +10,7 @@
  *   results     CORES words: each lane's result
  *   ddr         MODE_DDR's buffer, DDR_BURSTS * CORES words of a framebuffer
  *
- * MODE_DMEM works in this kernel's shared memory. The mode needs no jump
+ * MODE_SMEM works in this kernel's shared memory. The mode needs no jump
  * table: -fno-jump-tables is the default for every kernel (a table would be
  * .rodata in GMEM, a DDR load per dispatch).
  */

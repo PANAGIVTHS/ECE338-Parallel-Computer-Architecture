@@ -78,7 +78,7 @@ int gpgpu_backend_init(gpgpu_hardware_t *hardware)
         .name = "simulator",
         .lanes = config.lanes,
         .imem_words = config.imem_words,
-        .shared_bytes = 4u * config.dmem_words,
+        .shared_bytes = 4u * config.smem_words,
         .gmem_base = config.gmem_base,
         .gmem_size = config.gmem_size,
         .fb_base = {config.fb0_base, config.fb1_base},
@@ -89,7 +89,7 @@ int gpgpu_backend_init(gpgpu_hardware_t *hardware)
 
 int gpgpu_backend_reset(void)
 {
-    memset(gpgpu_sim_dmem(sim), 0, 4u * gpgpu_sim_config(sim)->dmem_words);
+    memset(gpgpu_sim_smem(sim), 0, 4u * gpgpu_sim_config(sim)->smem_words);
     return 0;
 }
 
@@ -115,9 +115,9 @@ void gpgpu_backend_invalidate(const void *address, size_t bytes)
 void gpgpu_backend_start(uint32_t timeout_ms)
 {
     const gpgpu_sim_config_t *config = gpgpu_sim_config(sim);
-    uint32_t *dmem = gpgpu_sim_dmem(sim);
-    for (uint32_t i = 0; i < config->dmem_words; i++)
-        dmem[i] = GPGPU_SIM_SHARED_FILL;
+    uint32_t *smem = gpgpu_sim_smem(sim);
+    for (uint32_t i = 0; i < config->smem_words; i++)
+        smem[i] = GPGPU_SIM_SHARED_FILL;
     deadline_ms = timeout_ms != 0 ? now_ms() + timeout_ms : 0;
     gpgpu_sim_run(sim, MAX_INSTRUCTIONS, divergence, out_of_time, NULL, &result);
 }

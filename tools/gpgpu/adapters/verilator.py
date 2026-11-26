@@ -180,7 +180,7 @@ class VerilatorFlow:
 
     def generate(self) -> Step:
         cases = _test_cases(self._tests / "cases")
-        seeds = [case / seed for case in cases for seed in ("dmem_seed.mem", "ddr_seed.mem") if (case / seed).is_file()]
+        seeds = [case / seed for case in cases for seed in ("smem_seed.mem", "ddr_seed.mem") if (case / seed).is_file()]
         outputs = [output for case in cases for output in (
             case / "program.mem", case / "data.mem", *(case / f"regfile_c{core}.mem" for core in range(self._cores)))]
         assembler, generator = _MODEL / "assembler.py", _MODEL / "expected_generator.py"

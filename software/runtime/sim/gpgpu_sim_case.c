@@ -5,7 +5,7 @@
  *
  *   gpgpu_sim_case <case directory> <output directory>
  *
- * Inputs: program.mem, and optionally dmem_seed.mem and ddr_seed.mem.
+ * Inputs: program.mem, and optionally smem_seed.mem and ddr_seed.mem.
  * Outputs: regfile_c<lane>.mem, data.mem, perf.mem and, when the case seeds
  * or writes DDR, ddr.mem. Exit status 0 on completion, 1 on a fault or a
  * simulation error, 2 on a usage or file error.
@@ -134,7 +134,7 @@ int main(int argc, char **argv)
         fail("out of memory", case_dir);
 
     load_words(case_dir, "program.mem", gpgpu_sim_imem(sim), config.imem_words, 1, 0);
-    load_words(case_dir, "dmem_seed.mem", gpgpu_sim_dmem(sim), config.dmem_words, 0, 1);
+    load_words(case_dir, "smem_seed.mem", gpgpu_sim_smem(sim), config.smem_words, 0, 1);
     load_ddr_seed(case_dir, ddr, touched, low, high);
 
     gpgpu_sim_result_t result;
@@ -158,15 +158,15 @@ int main(int argc, char **argv)
         fclose(file);
     }
     FILE *file = create(out_dir, "data.mem");
-    for (uint32_t i = 0; i < config.dmem_words; i++)
-        fprintf(file, "%08x\n", gpgpu_sim_dmem(sim)[i]);
+    for (uint32_t i = 0; i < config.smem_words; i++)
+        fprintf(file, "%08x\n", gpgpu_sim_smem(sim)[i]);
     fclose(file);
 
     file = create(out_dir, "perf.mem");
-    fprintf(file, "instructions %llu\nddr_lane_stores %llu\ndmem_lane_accesses %llu\nddr_lane_loads %llu\n"
+    fprintf(file, "instructions %llu\nddr_lane_stores %llu\nsmem_lane_accesses %llu\nddr_lane_loads %llu\n"
                   "ddr_read_bursts %llu\nddr_read_beats %llu\n",
             (unsigned long long)result.instructions, (unsigned long long)result.ddr_lane_stores,
-            (unsigned long long)result.dmem_lane_accesses, (unsigned long long)result.ddr_lane_loads,
+            (unsigned long long)result.smem_lane_accesses, (unsigned long long)result.ddr_lane_loads,
             (unsigned long long)result.ddr_read_bursts, (unsigned long long)result.ddr_read_beats);
     fclose(file);
 

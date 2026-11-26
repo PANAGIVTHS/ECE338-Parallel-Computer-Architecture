@@ -15,7 +15,7 @@
 struct gpgpu_sim {
     gpgpu_sim_config_t c;
     uint32_t *imem;
-    uint32_t *dmem;
+    uint32_t *smem;
     uint8_t *ddr;
     uint32_t ddr_low, ddr_high;
     uint8_t *touched;
@@ -27,8 +27,8 @@ gpgpu_sim_config_t gpgpu_sim_default_config(void)
     gpgpu_sim_config_t c = {
         .lanes = GPGPU_HW_NUM_CORES,
         .imem_words = GPGPU_HW_IMEM_ENTRIES,
-        .dmem_words = GPGPU_HW_DMEM_ENTRIES,
-        .dmem_base = GPGPU_HW_DMEM_BASE,
+        .smem_words = GPGPU_HW_SMEM_ENTRIES,
+        .smem_base = GPGPU_HW_SMEM_BASE,
         .fb0_base = GPGPU_HW_FB0_BASE,
         .fb1_base = GPGPU_HW_FB1_BASE,
         .fb_size = GPGPU_HW_FB_SIZE,
@@ -66,8 +66,8 @@ gpgpu_sim_t *gpgpu_sim_create(const gpgpu_sim_config_t *config, uint8_t *ddr, ui
         return NULL;
     sim->c = *config;
     sim->imem = calloc(config->imem_words, sizeof *sim->imem);
-    sim->dmem = calloc(config->dmem_words, sizeof *sim->dmem);
-    if (sim->imem == NULL || sim->dmem == NULL) {
+    sim->smem = calloc(config->smem_words, sizeof *sim->smem);
+    if (sim->imem == NULL || sim->smem == NULL) {
         gpgpu_sim_destroy(sim);
         return NULL;
     }
@@ -83,13 +83,13 @@ void gpgpu_sim_destroy(gpgpu_sim_t *sim)
     if (sim == NULL)
         return;
     free(sim->imem);
-    free(sim->dmem);
+    free(sim->smem);
     free(sim);
 }
 
 const gpgpu_sim_config_t *gpgpu_sim_config(const gpgpu_sim_t *sim) { return &sim->c; }
 uint32_t *gpgpu_sim_imem(gpgpu_sim_t *sim) { return sim->imem; }
-uint32_t *gpgpu_sim_dmem(gpgpu_sim_t *sim) { return sim->dmem; }
+uint32_t *gpgpu_sim_smem(gpgpu_sim_t *sim) { return sim->smem; }
 
 uint32_t gpgpu_sim_register(const gpgpu_sim_t *sim, uint32_t lane, uint32_t index)
 {
@@ -206,7 +206,7 @@ static inst_t decode(uint32_t w)
 
 /* ---- Memory ------------------------------------------------------------ */
 
-typedef enum { TGT_NONE, TGT_DMEM, TGT_DDR } target_t;
+typedef enum { TGT_NONE, TGT_SMEM, TGT_DDR } target_t;
 
 static int in_range(uint32_t addr, uint32_t base, uint32_t size)
 {
@@ -222,8 +222,8 @@ static target_t decode_access(const gpgpu_sim_config_t *c, uint32_t addr, uint32
         *status = c->st_misaligned;
         return TGT_NONE;
     }
-    if (in_range(addr, c->dmem_base, 4u * c->dmem_words))
-        return TGT_DMEM;
+    if (in_range(addr, c->smem_base, 4u * c->smem_words))
+        return TGT_SMEM;
     target_t target;
     if (in_range(addr, c->fb0_base, c->fb_size) || in_range(addr, c->fb1_base, c->fb_size)) {
         if (!write) {
@@ -246,8 +246,8 @@ static target_t decode_access(const gpgpu_sim_config_t *c, uint32_t addr, uint32
 
 static uint32_t *word_at(gpgpu_sim_t *sim, target_t target, uint32_t addr)
 {
-    if (target == TGT_DMEM)
-        return &sim->dmem[(addr - sim->c.dmem_base) >> 2];
+    if (target == TGT_SMEM)
+        return &sim->smem[(addr - sim->c.smem_base) >> 2];
     return (uint32_t *)(void *)(sim->ddr + ((addr & ~3u) - sim->ddr_low));
 }
 
@@ -416,8 +416,8 @@ void gpgpu_sim_run(gpgpu_sim_t *sim, uint64_t max_instructions, gpgpu_sim_diverg
                 uint32_t status;
                 addrs[lane] = sim->regs[lane][in.rs1] + (uint32_t)in.imm;
                 targets[lane] = decode_access(c, addrs[lane], size, write, &status);
-                if (targets[lane] == TGT_DMEM)
-                    r->dmem_lane_accesses++;
+                if (targets[lane] == TGT_SMEM)
+                    r->smem_lane_accesses++;
                 if (status != c->st_ok) {
                     bad |= 1u << lane;
                     kinds |= 1u << (status - 1u);

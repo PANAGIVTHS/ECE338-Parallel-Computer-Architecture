@@ -107,8 +107,8 @@ the configuration sets their sizes.
 | Space | Memory | What | How a kernel uses it |
 |---|---|---|---|
 | `.text` | IMEM (BRAM), own addresses from 0 | code | — |
-| `.shared` | DMEM (BRAM) from byte 0 | shared memory, undefined when a block starts, no initializers | `GPGPU_SHARED int t[64];` |
-| stack | top of DMEM, `stack_bytes_per_lane` per lane | locals and spills, private per lane | ordinary locals |
+| `.shared` | SMEM (BRAM) from byte 0 | shared memory, undefined when a block starts, no initializers | `GPGPU_SHARED int t[64];` |
+| stack | top of SMEM, `stack_bytes_per_lane` per lane | locals and spills, private per lane | ordinary locals |
 | launch block | GMEM (DDR, 440 MiB by default) at `GMEM_BASE`, 256 bytes | entry, grid and parameters, written by the runtime | the kernel's parameters |
 | `.rodata` | GMEM after the launch block | `const` tables, string literals | `static const int lut[] = {...};` |
 | `.data` | GMEM after `.rodata` | initialized globals | `GPGPU_DEVICE int count = 100;` |

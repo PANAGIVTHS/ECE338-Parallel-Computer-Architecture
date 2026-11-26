@@ -1,8 +1,8 @@
-# DMEM then DDR: each lane writes its square to DMEM, reads its neighbour's
+# SMEM then DDR: each lane writes its square to SMEM, reads its neighbour's
 # square back, and writes it to a framebuffer row.
 slli x6, x31, 2         # lane * 4
 mul  x7, x31, x31
-sw   x7, 0(x6)          # DMEM[lane] = lane^2
+sw   x7, 0(x6)          # SMEM[lane] = lane^2
 addi x8, x31, 1
 andi x8, x8, 31         # neighbour (lane + 1) mod 32
 slli x8, x8, 2
