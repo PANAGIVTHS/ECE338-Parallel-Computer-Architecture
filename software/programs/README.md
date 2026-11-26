@@ -81,5 +81,5 @@ SCP upload → verified binary IMEM load through the VM's UART → one kernel la
 The compiler is incremental; remote actions repeat. The board must already be
 programmed with the compatible host monitor. These tasks retain DMEM and do not
 initialize program-specific arguments, export CSVs or visualize results.
-See [FPGA CLI flow](../../docs/fpga-cli.md) for VM serial configuration,
-permissions, UART ownership and failure handling. `run.sh` remains untouched.
+See [the shared lab board](../../docs/manual/guides/fpga.md) for VM serial configuration,
+permissions, UART ownership and failure handling.

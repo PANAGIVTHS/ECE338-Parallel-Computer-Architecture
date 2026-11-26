@@ -2,8 +2,7 @@ architecture:
   num_cores: 32
   interface_version: 3
   # DDR backend of the memory subsystem (reported in INFO_FEATURES). Without
-  # it, framebuffer and texture accesses complete as ST_UNMAPPED. The DDR read
-  # path is not implemented yet: a texture load never completes.
+  # it, framebuffer and GMEM accesses complete as ST_UNMAPPED.
   ddr_enable: true
 
 hardware:
@@ -218,6 +217,14 @@ paths:
       gpgpu: hardware/rtl/gpgpu
   build:
     root: build
+
+# The user manual. `config` is the site's own configuration: its pages, navigation
+# and look. `gpgpu docs site:serve` serves it on host:port.
+docs:
+  site:
+    config: mkdocs.yml
+    host: 127.0.0.1
+    port: 8000
 
 # Commands are names or paths. Machine-specific paths belong in config/local.yaml.
 tools:

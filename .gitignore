@@ -2,6 +2,10 @@
 /build/
 /.Xil/
 
+# User manual: built site and Zensical's cache
+/site/
+/.cache/
+
 # Vivado/project generated state
 *.jou
 *.log

@@ -44,6 +44,7 @@ tools/gpgpu/
     vivado/             HardwareFlow, its Tcl scripts, and the ip and system projects
     vitis/              PlatformFlow, and the script that runs inside Vitis's Python
     board/              Board over SSH, and the UART driver that runs on the board's machine
+    manual.py           ManualSite: the user manual, built to HTML
   bootstrap.py        the only module that knows which adapter implements which port
 tools/tests/          the assembler and GPGPU model scripts that the rtl tasks run
 tools/board/          the UART client, shared with fpga_run.py and the host tests
@@ -147,35 +148,35 @@ from help.
 1. `api/ports.py`: describe the black box.
 
    ```python
-   class DocsFlow(Protocol):
+   class ManualSite(Protocol):
        def build(self) -> Step: ...
    ```
 
-2. `adapters/docs.py`: implement it. The constructor receives the `Config`. Declare the
+2. `adapters/manual.py`: implement it. The constructor receives the `Config`. Declare the
    settings it reads as a `Section`, and they are validated before any task runs.
 
    ```python
-   class _Docs(Section):
-       output: str
+   class _Site(Section):
+       config: str
 
-   class SphinxDocs:
+   class ZensicalManual:
        def __init__(self, config: Config) -> None:
-           self._s = config.section("docs", _Docs)
+           self._s = config.section("docs.site", _Site)
            ...
 
        def build(self) -> Step: ...
    ```
 
-3. `bootstrap.py`: add `DocsFlow: "gpgpu.adapters.docs:SphinxDocs"` to `_BACKENDS`.
+3. `bootstrap.py`: add `ManualSite: "gpgpu.adapters.manual:ZensicalManual"` to `_BACKENDS`.
 
 4. `plugins/docs.py`: declare the tasks. Its docstring's first line is the category's help.
 
    ```python
-   """Build the documentation."""
-   from gpgpu.api import Backends, DocsFlow, Task
+   """Build the user manual."""
+   from gpgpu.api import Backends, ManualSite, Task
 
    def tasks(backend: Backends) -> list[Task]:
-       return [Task("docs:build", "Build the HTML documentation.", backend(DocsFlow).build())]
+       return [Task("docs:site:build", "Build the manual's static site.", backend(ManualSite).build())]
    ```
 
 5. `config/profiles/default.yaml`: add the defaults for the new settings.

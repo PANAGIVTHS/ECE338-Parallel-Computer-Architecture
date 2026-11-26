@@ -46,7 +46,7 @@ asynchronous FIFO crosses from FCLK_CLK1 to the pixel clock.
 `rgb2dvi` makes the 5x TMDS serial clock itself with an MMCM in the TMDS pins' clock region
 (BUFIO for the serial clock, BUFR for the serializers' pixel clock), so the OSERDES clocks
 stay off the global clock network the GPGPU's switching disturbs (see
-[the HDMI investigation](../../docs/hdmi-blanking-investigation.md)). That region has one
+[the HDMI investigation](../../docs/notes/hdmi-blanking-investigation.md)). That region has one
 MMCM, so `clk_wiz_0` is a PLL.
 
 **Resets.** One per clock: `gpu_sys_reset` for FCLK_CLK0, `rst_ps7_0_35M` for FCLK_CLK1 and

@@ -1,5 +1,9 @@
 # HDMI blanking under GPU load: investigation notes
 
+> **Note:** This issue is resolved, and these notes are kept as history. They
+> describe the tree and the tools at the time they were written. For the current
+> design see `hardware/bd/README.md`.
+
 Status (2026-11-04): mitigated by a block-design change, no RTL change. The
 GPU's switching corrupts the TMDS data on the link; the FPGA's video pipeline
 itself never loses lock or sync. Clocking the serializers regionally
