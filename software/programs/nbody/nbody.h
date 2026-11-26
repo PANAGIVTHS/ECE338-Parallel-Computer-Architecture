@@ -1,5 +1,14 @@
 #ifndef nbody_h
 #define nbody_h
+
+/* What the kernel (nbody.c) and the host program (host.c) share: the initial
+ * bodies and the force between two. Branch-free: lanes branch with lane 0. */
+
+#include "gpgpu_types.h"
+
+/* One body per lane of a block. */
+#define NBODIES GPGPU_NUM_CORES
+
 static inline __attribute__((always_inline)) int nonzero_int(int x)
 {
     unsigned int ux = (unsigned int)x;
@@ -94,4 +103,22 @@ static inline __attribute__((always_inline)) int force_weight(int dx, int dy)
 
     return 1 + lt96 + (lt32 << 1);
 }
+/* The acceleration (times 4) of body i at (xi, yi) from all the bodies. */
+static inline __attribute__((always_inline)) void nbody_accel(int xi, int yi, const volatile int *pos_x,
+                                                              const volatile int *pos_y, int *ax, int *ay)
+{
+    int sx = 0, sy = 0;
+
+    for (unsigned int j = 0; j < NBODIES; j++) {
+        int dx = pos_x[j] - xi;
+        int dy = pos_y[j] - yi;
+        int w = force_weight(dx, dy) * body_mass(j);
+
+        sx += sign_int(dx) * w;
+        sy += sign_int(dy) * w;
+    }
+    *ax = sx;
+    *ay = sy;
+}
+
 #endif // nbody_h
