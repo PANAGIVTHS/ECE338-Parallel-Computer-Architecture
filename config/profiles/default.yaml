@@ -107,6 +107,8 @@ hardware:
     default_archive: tools/gpgpu/adapters/vitis/default-project.zip
     host_sources:
       - software/host/xc7z020/gpgpu_driver.c
+      - software/host/xc7z020/gpgpu_display.c
+      - software/host/xc7z020/gpgpu_loader.c
       - software/host/xc7z020/main.c
 
 software:

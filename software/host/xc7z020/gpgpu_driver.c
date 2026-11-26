@@ -472,7 +472,7 @@ int gpgpu_init(void)
     return GPGPU_OK;
 }
 
-int gpgpu_reset(void)
+int gpgpu_pl_reset(void)
 {
     const UINTPTR slcr = (UINTPTR)XPS_SYS_CTRL_BASEADDR;
 
@@ -486,9 +486,9 @@ int gpgpu_reset(void)
     return gpgpu_init();
 }
 
-/* `verbose` prints the start and idle messages, which the UART tools expect;
- * errors are always printed. */
-static int start_and_wait(int verbose)
+/* Arm the completion interrupt and start the kernel; does not wait. Errors are
+ * printed. */
+int gpgpu_start(void)
 {
     u32 status;
 
@@ -514,23 +514,28 @@ static int start_and_wait(int verbose)
     gpu_finished = 0U;
     gpu_write(GPGPU_REG_IRQ_ENABLE, GPGPU_IRQ_COMPLETE_MASK);
 #endif
-
-    if (verbose)
-        xil_printf("Starting core...\r\n");
     gpu_write(GPGPU_REG_CONTROL, GPGPU_CONTROL_START_MASK);
+    return GPGPU_OK;
+}
 
-    /* No timeout: a kernel that never completes blocks here forever. */
+int gpgpu_done(void)
+{
 #if GPGPU_USE_IRQ
-    while (gpu_finished == 0U) {
-        /* The ISR clears the GPU IRQ and sets gpu_finished. */
-    }
+    return gpu_finished != 0U; /* the ISR clears the GPU IRQ and sets it */
+#else
+    return (gpu_read(GPGPU_REG_IRQ_STATUS) & GPGPU_IRQ_COMPLETE_MASK) != 0U;
+#endif
+}
+
+int gpgpu_finish(int verbose)
+{
+    u32 status;
+
+#if GPGPU_USE_IRQ
     gpu_write(GPGPU_REG_IRQ_ENABLE, 0U);
 #else
-    while ((gpu_read(GPGPU_REG_IRQ_STATUS) & GPGPU_IRQ_COMPLETE_MASK) == 0U) {
-    }
     gpu_write(GPGPU_REG_IRQ_STATUS, GPGPU_IRQ_COMPLETE_MASK);
 #endif
-
     status = gpgpu_read_status();
     if ((status & GPGPU_STATUS_IDLE_MASK) == 0U) {
         xil_printf("ERROR: completion observed, but GPU is not IDLE\r\n");
@@ -539,12 +544,65 @@ static int start_and_wait(int verbose)
     }
     /* FAULTED stays set until `clear`, so callers that only check STATUS
      * (e.g. the UART tools) see the fault too. */
-    if ((status & GPGPU_STATUS_FAULTED_MASK) != 0U)
-        return report_fault();
-
-    if (verbose)
-        xil_printf("Core entered idle state.\r\n");
+    if ((status & GPGPU_STATUS_FAULTED_MASK) != 0U) {
+        if (verbose)
+            return report_fault();
+        return (gpu_read(GPGPU_REG_FAULT_INFO) & GPGPU_FAULT_CAUSE_MASK) == GPGPU_FAULT_FATAL ? GPGPU_ERR_FATAL
+                                                                                             : GPGPU_ERR_FAULT;
+    }
     return GPGPU_OK;
+}
+
+void gpgpu_read_fault(u32 *info, u32 *lanes, u32 *pc)
+{
+    *info = gpu_read(GPGPU_REG_FAULT_INFO);
+    *lanes = gpu_read(GPGPU_REG_FAULT_LANES);
+    *pc = gpu_read(GPGPU_REG_FAULT_PC);
+}
+
+int gpgpu_stop(void)
+{
+    gpu_write(GPGPU_REG_CONTROL, GPGPU_CONTROL_STOP_MASK);
+    for (u32 i = 0; (gpgpu_read_status() & GPGPU_STATUS_IDLE_MASK) == 0U; i++) {
+        if (i >= 100000U) /* 1 s */
+            return GPGPU_ERR_FATAL;
+        usleep(10);
+    }
+    gpu_write(GPGPU_REG_IRQ_ENABLE, 0U);
+    gpu_write(GPGPU_REG_IRQ_STATUS, GPGPU_IRQ_COMPLETE_MASK);
+#if GPGPU_USE_IRQ
+    gpu_finished = 0U;
+#endif
+    gpgpu_clear();
+    return GPGPU_OK;
+}
+
+void gpgpu_shutdown(void)
+{
+    Xil_ExceptionDisable();
+    gpu_write(GPGPU_REG_IRQ_ENABLE, 0U);
+#if GPGPU_USE_IRQ
+    XScuGic_Disable(&gic, GPGPU_IRQ_ID);
+#endif
+}
+
+/* `verbose` prints the start and idle messages, which the UART tools expect;
+ * errors are always printed. */
+static int start_and_wait(int verbose)
+{
+    if (verbose)
+        xil_printf("Starting core...\r\n");
+    int result = gpgpu_start();
+    if (result != GPGPU_OK)
+        return result;
+
+    /* No timeout: a kernel that never completes blocks here forever. */
+    while (!gpgpu_done()) {
+    }
+    result = gpgpu_finish(1);
+    if (result == GPGPU_OK && verbose)
+        xil_printf("Core entered idle state.\r\n");
+    return result;
 }
 
 int gpgpu_start_and_wait(void)

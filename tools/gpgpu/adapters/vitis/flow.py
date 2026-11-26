@@ -180,7 +180,9 @@ class VitisFlow:
         headers = sorted({header for source in sources for header in source.parent.glob("*.h")})
         command = [*self._prefix, "host", "--workspace", str(self._workspace), "--component", s.host_name,
                    "--platform", s.platform_name, "--domain", s.domain, "--template", s.template, "--base-address", self._base,
-                   "--archive", str(self._archive), "--repo-root", str(self._repo)]
+                   "--archive", str(self._archive), "--repo-root", str(self._repo),
+                   # The monitor's MiB from 0x0010_0000, minus the boot record (software/host/xc7z020/gpgpu_boot.h).
+                   "--ddr-length", "0xFF000"]
         command += [argument for source in sources for argument in ("--source", str(source))]
         outputs = (self._elf, self._host_metadata)
         return Step(partial(_run_vitis, command, self._repo, outputs, s.version),

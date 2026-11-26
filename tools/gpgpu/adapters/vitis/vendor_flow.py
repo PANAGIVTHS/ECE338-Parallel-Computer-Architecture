@@ -165,9 +165,23 @@ def configure_host(host_root: Path, sources: list[Path], base_address: str) -> N
         path.write_text(text, encoding="utf-8")
 
 
+def limit_ddr(host_root: Path, ddr_length: str) -> None:
+    """Keep the application in its share of DDR: the UART monitor loads programs above it."""
+    scripts = [path for path in (host_root / "src/lscript.ld", host_root / "lscript.ld") if path.is_file()]
+    if len(scripts) != 1:
+        raise ValueError(f"Expected exactly one lscript.ld in {host_root}: {scripts}")
+    text = scripts[0].read_text(encoding="utf-8")
+    text, count = re.subn(r"(ps7_ddr_0_memory_0\s*:\s*ORIGIN\s*=\s*0x[0-9a-fA-F]+\s*,\s*LENGTH\s*=\s*)0x[0-9a-fA-F]+",
+                          lambda match: match.group(1) + ddr_length, text, count=1)
+    if count != 1:
+        raise ValueError(f"No ps7_ddr_0_memory_0 region in {scripts[0]}")
+    if text != scripts[0].read_text(encoding="utf-8"):
+        scripts[0].write_text(text, encoding="utf-8")
+
+
 def build_host(workspace: Path, host_name: str, platform_name: str, domain: str,
                template: str, sources: list[Path], base_address: str, archive: Path,
-               repo_root: Path | None = None) -> None:
+               repo_root: Path | None = None, ddr_length: str | None = None) -> None:
     xpfm = workspace / platform_name / f"export/{platform_name}/{platform_name}.xpfm"
     if not xpfm.is_file():
         raise FileNotFoundError(f"Build platform before host: {xpfm}")
@@ -229,6 +243,8 @@ def build_host(workspace: Path, host_name: str, platform_name: str, domain: str,
         if config_text != config.read_text(encoding="utf-8"):
             config.write_text(config_text, encoding="utf-8")
         configure_host(root, sources, base_address)
+        if ddr_length is not None:
+            limit_ddr(root, ddr_length)
         prepare_bsp_output_directories(workspace / platform_name)
         if component.build() is False:
             raise RuntimeError(f"Vitis build failed for component {host_name!r}")
@@ -277,6 +293,7 @@ def main() -> None:
     host.add_argument("--base-address", required=True)
     host.add_argument("--archive", type=Path, required=True)
     host.add_argument("--repo-root", type=Path, required=True)
+    host.add_argument("--ddr-length", help="LENGTH of the application's DDR region, hexadecimal")
     # The vendor launcher may forward its argument separator to the script.
     argv = sys.argv[1:]
     if argv[:1] == ["--"]:
@@ -291,7 +308,7 @@ def main() -> None:
     elif arguments.action == "host":
         build_host(arguments.workspace, arguments.component, arguments.platform,
                    arguments.domain, arguments.template, arguments.source,
-                   arguments.base_address, arguments.archive, arguments.repo_root)
+                   arguments.base_address, arguments.archive, arguments.repo_root, arguments.ddr_length)
 
 
 if __name__ == "__main__":

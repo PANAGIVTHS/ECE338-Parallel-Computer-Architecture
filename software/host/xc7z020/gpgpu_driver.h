@@ -22,7 +22,7 @@
 #define GPGPU_OK               0
 #define GPGPU_ERR_STATE      (-1)
 #define GPGPU_ERR_FAULT      (-2)  /* a kernel memory access failed; `clear` to acknowledge */
-#define GPGPU_ERR_FATAL      (-3)  /* the memory subsystem locked up; needs gpgpu_reset() */
+#define GPGPU_ERR_FATAL      (-3)  /* the memory subsystem locked up; needs gpgpu_pl_reset() */
 
 int gpgpu_init(void);
 u32 gpgpu_read_status(void);
@@ -31,10 +31,25 @@ int gpgpu_start_and_wait(void);
 /* gpgpu_start_and_wait() without its progress messages, for timed loops. */
 int gpgpu_run_quiet(void);
 
+/* A launch in steps, for callers that do not wait (the runtime): start the
+ * kernel, poll gpgpu_done(), then gpgpu_finish() returns GPGPU_OK,
+ * GPGPU_ERR_FAULT or GPGPU_ERR_FATAL; with `verbose` it prints the fault. */
+int gpgpu_start(void);
+int gpgpu_done(void);
+int gpgpu_finish(int verbose);
+/* FAULT_INFO, FAULT_LANES and FAULT_PC of the last fault. */
+void gpgpu_read_fault(u32 *info, u32 *lanes, u32 *pc);
+/* Stop a running kernel and wait at most 1 s for IDLE, then clear the
+ * latches: GPGPU_OK, or GPGPU_ERR_FATAL if it did not stop. */
+int gpgpu_stop(void);
+/* Disable the GPU's interrupt and the CPU's exceptions, before control passes
+ * to another program (the monitor's loader, the runtime's exit). */
+void gpgpu_shutdown(void);
+
 /* Acknowledge STOPPED and FAULTED (W1C). A fatal fault stays until a reset. */
 void gpgpu_clear(void);
 /* Pulse the PL reset (FCLK_RESET0, which resets the GPU), then gpgpu_init(). */
-int gpgpu_reset(void);
+int gpgpu_pl_reset(void);
 
 /* Addresses are WORD INDICES, not AXI byte addresses. */
 int gpgpu_write_imem(u32 index, u32 word);

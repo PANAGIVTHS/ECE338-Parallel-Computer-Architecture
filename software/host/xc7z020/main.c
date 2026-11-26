@@ -1,4 +1,6 @@
 #include "gpgpu_driver.h"
+#include "gpgpu_display.h"
+#include "gpgpu_loader.h"
 
 #include "xparameters.h"
 #include "xil_cache.h"
@@ -16,125 +18,8 @@
 #include <string.h>
 #include <ctype.h>
 
-/* HDMI scanout: the AXI VDMA's MM2S channel reads one framebuffer and streams
- * it to the video output. The base address comes from the hardware's
- * xparameters.h. */
-#ifndef XPAR_XAXIVDMA_0_BASEADDR
-#error "XPAR_XAXIVDMA_0_BASEADDR is not defined: the hardware has no AXI VDMA"
-#endif
-
-/* MM2S registers (PG020). Writing VSIZE starts the channel. */
-#define VDMA_MM2S_VDMACR         0x00U
-#define VDMA_MM2S_VDMASR         0x04U
-#define VDMA_PARK_PTR            0x28U
-#define VDMA_MM2S_VSIZE          0x50U
-#define VDMA_MM2S_HSIZE          0x54U
-#define VDMA_MM2S_FRMDLY_STRIDE  0x58U
-#define VDMA_MM2S_START_ADDRESS  0x5CU  /* frame store n at + 4 * n */
-
-#define VDMA_CR_RS               0x00000001U
-#define VDMA_CR_RESET            0x00000004U  /* Circular_Park (bit 1) left 0: park mode */
-#define VDMA_SR_HALTED           0x00000001U
-#define VDMA_SR_ERRORS           0x00000070U  /* DMAIntErr, DMASlvErr, DMADecErr */
-#define VDMA_PARK_RD_MASK        0x0000001FU
-
-#define FB_STRIDE_BYTES          (GPGPU_FB_WIDTH * 4U)
-
-/* Frame store n of the VDMA holds framebuffer n; the block design gives it
- * one frame store per framebuffer (c_num_fstores). Its MM2S_FRMSTORE register
- * is not built in, so the count cannot be read back. */
-static const u32 framebuffers[] = { GPGPU_FB0_BASE, GPGPU_FB1_BASE };
-#define FB_COUNT                 (sizeof(framebuffers) / sizeof(framebuffers[0]))
-
 static u32 rx_buffer[GPGPU_MAX_WORDS];
-static u32 shown_fb = 0U;
 extern char inbyte(void);
-
-static inline u32 vdma_read(u32 offset) {
-    return Xil_In32((UINTPTR)XPAR_XAXIVDMA_0_BASEADDR + offset);
-}
-
-static inline void vdma_write(u32 offset, u32 value) {
-    Xil_Out32((UINTPTR)XPAR_XAXIVDMA_0_BASEADDR + offset, value);
-}
-
-/* Stop the MM2S channel and wait until it halts, so it has no read in flight.
- * A PL reset with a VDMA read outstanding leaves that read's data in the PS
- * HP2 port, which only a system reset clears: every later read then returns
- * the data of an earlier one and the picture stays rotated by whole bursts. */
-static int display_stop(void) {
-    u32 timeout = 1000U;
-
-    vdma_write(VDMA_MM2S_VDMACR, vdma_read(VDMA_MM2S_VDMACR) & ~VDMA_CR_RS);
-    while ((vdma_read(VDMA_MM2S_VDMASR) & VDMA_SR_HALTED) == 0U) {
-        if (--timeout == 0U) {
-            xil_printf("ERROR: VDMA did not halt (MM2S_VDMASR=0x%08x)\r\n",
-                       vdma_read(VDMA_MM2S_VDMASR));
-            return -1;
-        }
-        usleep(1);
-    }
-    return 0;
-}
-
-/* Reset the MM2S channel and start it parked on framebuffer `fb`: it scans
- * that one buffer every frame until display_show() parks it on another. */
-static int display_start(u32 fb) {
-    u32 timeout = 1000U;
-
-    vdma_write(VDMA_MM2S_VDMACR, VDMA_CR_RESET);
-    while ((vdma_read(VDMA_MM2S_VDMACR) & VDMA_CR_RESET) != 0U) {
-        if (--timeout == 0U) {
-            xil_printf("ERROR: VDMA reset did not complete\r\n");
-            return -1;
-        }
-        usleep(1);
-    }
-
-    if (fb >= FB_COUNT) {
-        xil_printf("ERROR: framebuffer %u does not exist (0..%u)\r\n", fb, (u32)FB_COUNT - 1U);
-        return -1;
-    }
-
-    vdma_write(VDMA_MM2S_VDMACR, VDMA_CR_RS);
-    for (u32 i = 0; i < FB_COUNT; i++)
-        vdma_write(VDMA_MM2S_START_ADDRESS + 4U * i, framebuffers[i]);
-    vdma_write(VDMA_PARK_PTR, fb & VDMA_PARK_RD_MASK);
-    vdma_write(VDMA_MM2S_FRMDLY_STRIDE, FB_STRIDE_BYTES);
-    vdma_write(VDMA_MM2S_HSIZE, FB_STRIDE_BYTES);
-    vdma_write(VDMA_MM2S_VSIZE, GPGPU_FB_HEIGHT);
-
-    if ((vdma_read(VDMA_MM2S_VDMASR) & (VDMA_SR_HALTED | VDMA_SR_ERRORS)) != 0U) {
-        xil_printf("ERROR: VDMA did not start (MM2S_VDMASR=0x%08x)\r\n",
-                   vdma_read(VDMA_MM2S_VDMASR));
-        return -1;
-    }
-
-    shown_fb = fb;
-    xil_printf("Display: FB%u at 0x%08x, %ux%u\r\n", fb, framebuffers[fb],
-               GPGPU_FB_WIDTH, GPGPU_FB_HEIGHT);
-    return 0;
-}
-
-/* Park the running channel on framebuffer `fb`; it switches at the next
- * frame boundary. */
-static int display_show(u32 fb) {
-    u32 status = vdma_read(VDMA_MM2S_VDMASR);
-
-    if ((status & (VDMA_SR_HALTED | VDMA_SR_ERRORS)) != 0U) {
-        xil_printf("VDMA stopped (MM2S_VDMASR=0x%08x); restarting\r\n", status);
-        return display_start(fb);
-    }
-    if (fb >= FB_COUNT) {
-        xil_printf("ERROR: framebuffer %u does not exist (0..%u)\r\n", fb, (u32)FB_COUNT - 1U);
-        return -1;
-    }
-
-    vdma_write(VDMA_PARK_PTR, fb & VDMA_PARK_RD_MASK);
-    shown_fb = fb;
-    xil_printf("Display: FB%u at 0x%08x\r\n", fb, framebuffers[fb]);
-    return 0;
-}
 
 /* Run the loaded kernel `frames` times back to back and report the rate, then
  * the performance counters of all the runs added up (the GPU clears them at
@@ -203,7 +88,7 @@ static inline u32 gmemtest_pixel(u32 x, u32 y) {
 
 static void gmemfill(u32 fb) {
     u32 *gmem = (u32 *)(UINTPTR)GPGPU_GMEM_BASE;
-    u32 *dst = (u32 *)(UINTPTR)framebuffers[fb];
+    u32 *dst = (u32 *)(UINTPTR)gpgpu_display_address(fb);
 
     for (u32 y = 0U; y < GPGPU_FB_HEIGHT; y++)
         for (u32 x = 0U; x < GPGPU_FB_WIDTH; x++)
@@ -218,7 +103,7 @@ static void gmemfill(u32 fb) {
 
 static void gmemcheck(u32 fb) {
     const u32 *gmem = (const u32 *)(UINTPTR)GPGPU_GMEM_BASE;
-    const u32 *dst = (const u32 *)(UINTPTR)framebuffers[fb];
+    const u32 *dst = (const u32 *)(UINTPTR)gpgpu_display_address(fb);
     u32 mismatches = 0U;
 
     Xil_DCacheInvalidateRange((INTPTR)dst, GMEMTEST_BYTES);
@@ -371,7 +256,7 @@ static void autorun(void) {
         gmem_words()[GPGPU_AUTORUN_BSS_WORD + i] = 0U;
     gmem_flush(GPGPU_AUTORUN_GMEM_WORD, AUTORUN_GMEM_WORDS);
     gmem_flush(GPGPU_AUTORUN_BSS_WORD, GPGPU_AUTORUN_BSS_WORDS);
-    if (display_show(GPGPU_AUTORUN_DISPLAY) != 0)
+    if (gpgpu_display_show(GPGPU_AUTORUN_DISPLAY, 1) != 0)
         return;
 
     xil_printf("AUTORUN: %s, args", GPGPU_AUTORUN_PROGRAM);
@@ -642,6 +527,9 @@ static void print_help(void) {
     xil_printf("  dumpgmem_bin <offset> <count>\r\n");
     xil_printf("  fillgmem <offset> <count> <word_hex>\r\n");
     xil_printf("  filldmem <offset> <count> <word_hex>\r\n");
+    xil_printf("  --------- PROGRAMS (docs/runtime-spec.md) ---------\r\n");
+    xil_printf("  load <entry_hex> <segments_hex>   (receive a program; `fpga programs:<p>:run` sends it)\r\n");
+    xil_printf("  exec <name> [arguments]   (run the loaded program; it returns here)\r\n");
     xil_printf("  --------- CONTROL ---------\r\n");
     xil_printf("  run\r\n");
     xil_printf("  bench <frames>   (run the kernel back to back, report frames/s and the perf counters)\r\n");
@@ -667,7 +555,7 @@ int main(void) {
     }
 
     gpgpu_print_status();
-    display_start(shown_fb);
+    gpgpu_display_start(gpgpu_display_shown());
 #if GPGPU_AUTORUN
     autorun();
 #endif
@@ -681,6 +569,7 @@ int main(void) {
         xil_printf("gpgpu> ");
         read_line(line, sizeof(line));
         trim(line);
+        const size_t line_length = strlen(line); /* before strtok cuts it */
 
         cmd = strtok(line, " \t");
         if (cmd == NULL)
@@ -865,6 +754,16 @@ int main(void) {
             else
                 fill_dmem(offset, count, word);
 
+        } else if (strcmp(cmd, "load") == 0) {
+            arg1 = strtok(NULL, " \t");
+            arg2 = strtok(NULL, " \t");
+            gpgpu_loader_load(arg1, arg2);
+
+        } else if (strcmp(cmd, "exec") == 0) {
+            /* The rest of the line: the program's name and arguments. */
+            size_t used = (size_t)(cmd - line) + strlen(cmd) + 1U;
+            gpgpu_loader_exec(used <= line_length ? cmd + strlen(cmd) + 1 : (char *)"");
+
         } else if (strcmp(cmd, "run") == 0) {
             gpgpu_start_and_wait();
 
@@ -893,11 +792,11 @@ int main(void) {
 
         } else if (strcmp(cmd, "reset") == 0) {
             /* The PL reset also resets the VDMA: stop it first. */
-            display_stop();
-            if (gpgpu_reset() != GPGPU_OK)
+            gpgpu_display_stop();
+            if (gpgpu_pl_reset() != GPGPU_OK)
                 xil_printf("ERROR: GPGPU initialization after reset failed\r\n");
             gpgpu_print_status();
-            display_start(shown_fb);
+            gpgpu_display_start(gpgpu_display_shown());
 
         } else if (strcmp(cmd, "display") == 0) {
             u32 fb;
@@ -908,14 +807,14 @@ int main(void) {
                 continue;
             }
 
-            display_show(fb);
+            gpgpu_display_show(fb, 1);
 
         } else if (strcmp(cmd, "gmemfill") == 0 || strcmp(cmd, "gmemcheck") == 0) {
             u32 fb;
 
             arg1 = strtok(NULL, " \t");
-            if (parse_count(arg1, &fb) != 0 || fb >= FB_COUNT) {
-                xil_printf("ERROR: usage: %s <fb>, fb 0..%u\r\n", cmd, (u32)FB_COUNT - 1U);
+            if (parse_count(arg1, &fb) != 0 || fb >= GPGPU_DISPLAY_FRAMEBUFFERS) {
+                xil_printf("ERROR: usage: %s <fb>, fb 0..%u\r\n", cmd, GPGPU_DISPLAY_FRAMEBUFFERS - 1U);
                 continue;
             }
 
