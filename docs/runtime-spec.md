@@ -3,8 +3,9 @@
 Version 0.4, 2026-11-26.
 
 **Status:** phase 1 (section 12) is implemented: the device ABI, the kernel generator, the module builder, the host
-runtime and the simulator, with `memspaces` as the first program. Phase 2, the board, is implemented and builds, but
-has not run on the board yet. Phases 3 to 5 are design. *(exists)* marks what is in
+runtime and the simulator, with `memspaces` as the first program. Phase 2, the board, is implemented: on 2026-11-26
+`memspaces` passed on the board three times in a row without a reset, returning to the monitor each time. Phases 3
+to 5 are design. *(exists)* marks what is in
 the repository; *(prototyped)* means that the construct was compiled with the project's compilers but is not in it.
 
 ## 1. Purpose
@@ -591,7 +592,7 @@ The PC tool sends the loadable segments of the ELF, not the file. Protocol:
 A program that crashes or hangs the A9 needs `fpga deploy`. Steps 3 and 5 are the part of this design with the most
 risk and must be tried on the board first.
 
-Implementation *(exists, not run on the board)*:
+Implementation *(exists; passed on the board)*:
 
 | Part | Where |
 |---|---|
@@ -725,8 +726,8 @@ Phase 5 depends on timing: the build of 2026-11-23 misses the 40 MHz clock by 0.
 | Point | How it is settled |
 |---|---|
 | Cost of a parameter load from DDR | measure in phase 1 with the RTL bench; a constant bank in RTL if it matters |
-| Return from a program to the monitor | implemented; to try on the board. Fallback: a deploy per program |
-| Link without a Vitis component | works: memspaces links against the BSP; not run on the board yet |
+| Return from a program to the monitor | works on the board: three programs in a row, then the old UART flow |
+| Link without a Vitis component | works: memspaces links against the BSP and runs on the board |
 | Baud rate above 115200 | try in phase 2 |
 | Timing of the stack BRAMs | separate RTL experiment after phase 5 |
 
