@@ -1,4 +1,4 @@
-"""Toolchain on GCC: native and RISC-V builds of software/programs, and the host headers."""
+"""Toolchain on GCC: the programs of software/programs (kernels, simulator and A9 builds) and the host headers."""
 from __future__ import annotations
 
 import re
@@ -15,8 +15,8 @@ from gpgpu.api import GpgpuError, Step
 from . import host_headers
 from .config import Config, Section
 from .design import (architecture, axi_address, memory_layout, program_names, program_output, rtl_constants_path,
-                     runtime_program, runtime_program_names, vitis_workspace)
-from .program_image import write_linker_layout, write_program_files
+                     vitis_workspace)
+from .kernel_elf import write_linker_layout
 from .runtime_build import check_cases, generate_kernels, write_hw_header, write_module
 from .tools import run
 
@@ -24,7 +24,9 @@ from .tools import run
 # every indirect jump; a kernel that wants one asks with optimize("jump-tables").
 # x31 holds the lane index; x3 (gp) and x4 (tp) the block index of the runtime's
 # block loop (docs/runtime-spec.md, section 6.2), so no code may allocate them.
-_RISCV_CFLAGS = ("-ffreestanding", "-fno-builtin", "-fomit-frame-pointer", "-ffixed-x31", "-ffixed-x3", "-ffixed-x4",
+# Shared memory starts at address 0, so a null pointer is a valid shared address:
+# -fno-delete-null-pointer-checks keeps GCC from treating a load from it as undefined.
+_RISCV_CFLAGS = ("-ffreestanding", "-fno-delete-null-pointer-checks", "-fno-builtin", "-fomit-frame-pointer", "-ffixed-x31", "-ffixed-x3", "-ffixed-x4",
                  "-ffunction-sections",
                  "-fdata-sections", "-msmall-data-limit=0", "-mno-relax", "-fno-jump-tables")
 _INSTRUCTION = re.compile(r"^\s*[0-9a-fA-F]+:\s+(\S+)(?:\s+(.*))?$")
@@ -81,10 +83,6 @@ def _write_assembly(listing: Path, output: Path) -> None:
     output.write_text("".join(f"{assembly}\n" for _, assembly in _instructions(listing)), encoding="utf-8")
 
 
-def _write_memory(listing: Path, output: Path) -> None:
-    output.write_text("".join(f"{code}\n" for code, _ in _instructions(listing) if len(code) == 8), encoding="utf-8")
-
-
 def _remove(directory: Path) -> None:
     if directory.exists():
         shutil.rmtree(directory)
@@ -97,9 +95,9 @@ class GccToolchain:
         self._cores = architecture(config).num_cores
         self._memory = memory_layout(config)
         stride = self._memory.stack_bytes_per_lane
-        # The memory ABI for both builds of a program: gpgpu_config.h documents each.
-        self._defines = (f"-DGPGPU_NUM_CORES={self._cores}", f"-DGPGPU_ARGS_WORDS={self._memory.args_words}",
-                         f"-DGPGPU_STACK_STRIDE={stride}", f"-DGPGPU_STACK_SHIFT={stride.bit_length() - 1}")
+        # The memory ABI for every build of a program: gpgpu_config.h documents each.
+        self._defines = (f"-DGPGPU_NUM_CORES={self._cores}", f"-DGPGPU_STACK_STRIDE={stride}",
+                         f"-DGPGPU_STACK_SHIFT={stride.bit_length() - 1}")
         self._layout = config.build_root / "software/programs/linker_layout.ld"
         self._optimization = config.section("software.programs", _Programs).optimization
         self._riscv = config.section("software.riscv", _Riscv)
@@ -124,10 +122,7 @@ class GccToolchain:
     def programs(self) -> list[str]:
         return program_names(self._config)
 
-    def runtime_programs(self) -> list[str]:
-        return runtime_program_names(self._config)
-
-    # ---- Runtime programs: <p>.c with GPGPU_GLOBAL kernels and host.c (docs/runtime-spec.md) ----
+    # ---- A program: <p>.c with GPGPU_GLOBAL kernels and host.c (docs/runtime-spec.md) ----
 
     def _riscv_command(self) -> list[str]:
         return [self._riscv_cc, self._optimization, f"-march={self._riscv.march}", f"-mabi={self._riscv.abi}",
@@ -254,25 +249,13 @@ class GccToolchain:
     def clean(self, program: str) -> Step:
         return Step(partial(_remove, self._out(program, "").parent), always_run=True)
 
-    def build_native(self, program: str) -> Step:
-        source, headers = self._sources(program)
-        executable = self._out(program, "_x86")
-        command = [self._native_cc, self._optimization, *self._defines, "-o", str(executable), str(source)]
-        # The whole command: a change of compiler, flags or core count rebuilds.
-        return Step(partial(run, command, creates=executable.parent), inputs=(source, *headers), outputs=(executable,),
-                    fingerprint={"command": command})
-
-    def run_native(self, program: str) -> Step:
-        return Step(partial(run, [str(self._out(program, "_x86"))]), always_run=True)
-
     def build_elf(self, program: str) -> Step:
         source, headers = self._sources(program)
         elf, link_map = self._out(program, ".elf"), self._out(program, ".map")
         linker_script = self._root / "linker.ld"
-        includes: list[str] = []
-        if runtime_program(self._config, program):  # the generated entry code includes the kernels' source
-            headers = [source, *headers, *self._runtime_sources("include", "device")]
-            source, includes = self._out(program, "_entry.c"), self._runtime_includes(program)
+        # The generated entry code includes the kernels' source.
+        headers = [source, *headers, *self._runtime_sources("include", "device")]
+        source, includes = self._out(program, "_entry.c"), self._runtime_includes(program)
         command = [self._riscv_cc, self._optimization, f"-march={self._riscv.march}", f"-mabi={self._riscv.abi}",
                    *self._defines, *_RISCV_CFLAGS, *includes, "-o", str(elf), str(source), "-nostdlib", "-nostartfiles",
                    f"-Wl,-L,{self._layout.parent}", f"-Wl,-T,{linker_script}", f"-Wl,-Map,{link_map}", "-Wl,--build-id=none"]
@@ -283,14 +266,9 @@ class GccToolchain:
     def linker_layout(self) -> Step:
         settings = {**self._memory.model_dump(), "num_cores": self._cores}
         constants = rtl_constants_path(self._config)
-        this = Path(__file__).with_name("program_image.py")
+        this = Path(__file__).with_name("kernel_elf.py")
         return Step(partial(write_linker_layout, settings, constants, self._layout), inputs=(constants, this),
                     outputs=(self._layout,), fingerprint=settings)
-
-    def program_image(self, program: str) -> Step:
-        elf, image, layout = self._out(program, ".elf"), self._out(program, "_gmem.mem"), self._out(program, "_layout.json")
-        this = Path(__file__).with_name("program_image.py")
-        return Step(partial(write_program_files, elf, image, layout, program), inputs=(elf, this), outputs=(image, layout))
 
     def disassemble(self, program: str) -> Step:
         elf, listing = self._out(program, ".elf"), self._out(program, "_dump_real.asm")
@@ -301,15 +279,5 @@ class GccToolchain:
         listing, output = self._out(program, "_dump_real.asm"), self._out(program, "_program.asm")
         return Step(partial(_write_assembly, listing, output), inputs=(listing,), outputs=(output,))
 
-    def memory_image(self, program: str) -> Step:
-        listing, output = self._out(program, "_dump_real.asm"), self._out(program, "_instructions.mem")
-        return Step(partial(_write_memory, listing, output), inputs=(listing,), outputs=(output,))
-
     def host_platform_header(self) -> Step:
         return host_headers.platform_step(self._config)
-
-    def host_autorun_header(self) -> Step:
-        return host_headers.autorun_step(self._config)
-
-    def autorun_program(self) -> str | None:
-        return host_headers.autorun_program(self._config)

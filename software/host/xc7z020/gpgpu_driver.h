@@ -14,10 +14,6 @@
  * map, memory depths and wait settings come from the generated
  * gpgpu_platform.h. */
 
-/* Largest memory in words: sizes the console's transfer buffer. */
-#define GPGPU_MAX_WORDS \
-    (GPGPU_IMEM_ENTRIES > GPGPU_DMEM_ENTRIES ? GPGPU_IMEM_ENTRIES : GPGPU_DMEM_ENTRIES)
-
 /* Return codes. Misuse (bad index, GPU not idle, ...) is GPGPU_ERR_STATE. */
 #define GPGPU_OK               0
 #define GPGPU_ERR_STATE      (-1)
@@ -27,9 +23,6 @@
 int gpgpu_init(void);
 u32 gpgpu_read_status(void);
 void gpgpu_print_status(void);
-int gpgpu_start_and_wait(void);
-/* gpgpu_start_and_wait() without its progress messages, for timed loops. */
-int gpgpu_run_quiet(void);
 
 /* A launch in steps, for callers that do not wait (the runtime): start the
  * kernel, poll gpgpu_done(), then gpgpu_finish() returns GPGPU_OK,

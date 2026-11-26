@@ -8,14 +8,13 @@ architecture:
   # Memory sizes and the kernel memory layout (software/programs/linker.ld).
   # `rtl:config` writes the BRAM sizes into packages/gpu_config_pkg.sv, which
   # is committed; a change needs a new bitstream and host application.
-  #   DMEM (BRAM, shared memory): GPGPU_ARGS at byte 0, then .shared
-  #   (GPGPU_SHARED variables), then num_cores stacks at the top.
+  #   DMEM (BRAM, shared memory): .shared (GPGPU_SHARED variables) from
+  #   byte 0, then num_cores stacks at the top.
   #   GMEM (DDR): .rodata, .data and .bss at GMEM_BASE, the rest is free for
   #   program buffers (__gmem_free_base).
   memory:
     imem_bytes: 16384           # instruction BRAM, a power of two
     dmem_bytes: 16384           # data BRAM, a power of two
-    args_words: 32              # GPGPU_ARGS words at DMEM byte 0
     stack_bytes_per_lane: 128   # a power of two; num_cores of them end DMEM
     gmem_data_bytes: 65536      # .rodata + .data + .bss at the start of GMEM
 
@@ -127,21 +126,6 @@ software:
     use_irq: true
     # GIC interrupt ID of the GPU interrupt: IRQ_F2P[0] is ID 61 on Zynq-7000.
     irq_id: 61
-    # Boot-time autorun: when enabled, the host loads `program` (a directory
-    # under software/programs) into IMEM, writes `args` to GPGPU_ARGS, shows
-    # framebuffer `display` and runs the kernel back to back until a key
-    # arrives on the UART; then the monitor starts. software:host:autorun
-    # generates `header` from these and the program's RISC-V build; it is
-    # committed, like platform_header, so the Vitis host build needs no
-    # RISC-V toolchain.
-    autorun:
-      header: software/host/xc7z020/gpgpu_autorun.h
-      enabled: false
-      program: ripple
-      # GPGPU_ARGS words in order: 32-bit integers, or names from
-      # platform_header such as GPGPU_FB0_BASE. Unlisted words are 0.
-      args: [GPGPU_FB0_BASE, GPGPU_FB_WIDTH, GPGPU_FB_HEIGHT, 0]
-      display: 0
   # The runtime of programs with a host program (host.c; docs/runtime-spec.md).
   runtime:
     # How long a launch may run before the runtime stops it and the next

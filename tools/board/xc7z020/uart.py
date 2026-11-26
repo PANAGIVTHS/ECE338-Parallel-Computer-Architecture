@@ -1,27 +1,24 @@
 #!/usr/bin/env python3
 """UART client for the GPGPU AXI4-Lite bare-metal monitor.
 
-The PC still talks to the Zynq over UART. The Zynq application translates
-commands to Xil_In32/Xil_Out32 accesses in one GPU AXI aperture; the host-PC
-serial protocol is intentionally compatible with the older GPIO-based monitor.
+The PC talks to the Zynq's monitor (software/host/xc7z020/main.c) over UART:
+it sends a program's A9 executable to the loader (`load`), runs it (`run`)
+and reads the GPU's status and memories for debugging.
 """
 
 from __future__ import annotations
 
 import re
 import struct
-import sys
 import time
 import zlib
-from pathlib import Path
-from typing import Iterable, cast
+from typing import Iterable
 
 try:
     import serial
 except ImportError:
     serial = None  # Parsing helpers work without pyserial installed.
 
-RET_INSTR = "00008067"
 # Upper bound for IMEM/DMEM word indices: INFO_MEM's 16-bit fields. The real
 # sizes come from architecture.memory; the monitor checks them on every command.
 DEPTH = 0xFFFF
@@ -35,10 +32,6 @@ def normalize_word(word: int | str) -> str:
     """Convert an integer or a hexadecimal string to eight hex digits."""
     value = word if isinstance(word, int) else int(str(word).strip(), 16)
     return f"{value & 0xFFFFFFFF:08x}"
-
-
-def words_to_le_bytes(words: Iterable[int | str]) -> bytes:
-    return b"".join(struct.pack("<I", int(normalize_word(w), 16)) for w in words)
 
 
 def parse_memory_dump(text: str) -> dict[int, str]:
@@ -83,65 +76,6 @@ def parse_status(text: str) -> dict[str, int | str]:
     return status
 
 
-def read_mem_file(path: str | Path) -> list[str]:
-    words: list[str] = []
-    with Path(path).open("r") as handle:
-        for line in handle:
-            line = line.split("#", 1)[0].strip()
-            if line:
-                words.append(normalize_word(line))
-    return words
-
-
-def write_mem_file(path: str | Path, words: dict[int, int | str] | Iterable[int | str]) -> None:
-    with Path(path).open("w") as handle:
-        if isinstance(words, dict):
-            word_map = cast(dict[int, int | str], words)
-            for index in sorted(word_map):
-                handle.write(f"{normalize_word(word_map[index])}\n")
-        else:
-            for word in words:
-                handle.write(f"{normalize_word(word)}\n")
-
-
-def read_gmem_image(path: str | Path) -> dict[int, str]:
-    """A program's <program>_gmem.mem: {byte address: word} of its .rodata and .data."""
-    words: dict[int, str] = {}
-    for line in Path(path).read_text().splitlines():
-        fields = line.split("//", 1)[0].split()
-        if fields:
-            words[int(fields[0], 16)] = normalize_word(fields[1])
-    return words
-
-
-def gmem_runs(image: dict[int, str], gmem_base: int) -> list[tuple[int, list[str]]]:
-    """Contiguous (word offset from GMEM_BASE, words) runs of a GMEM image."""
-    runs: list[tuple[int, list[str]]] = []
-    for address in sorted(image):
-        offset = (address - gmem_base) // 4
-        if runs and runs[-1][0] + len(runs[-1][1]) == offset:
-            runs[-1][1].append(image[address])
-        else:
-            runs.append((offset, [image[address]]))
-    return runs
-
-
-def load_program_data(monitor: "GpgpuUartMonitor", layout: dict, image: dict[int, str],
-                      verify: bool = True) -> None:
-    """What a program needs besides IMEM, once per program load (linker.ld):
-    .rodata/.data into GMEM, .bss (GMEM) and .shared (DMEM) zeroed.
-
-    `layout` is the program's <program>_layout.json; GPGPU_ARGS are the caller's."""
-    gmem_base = layout["gmem_data"]["start"]
-    for offset, words in gmem_runs(image, gmem_base):
-        monitor.load_gmem_bin(words, offset=offset)
-        if verify and monitor.dump_gmem_bin(len(words), offset=offset) != {offset + i: w for i, w in enumerate(words)}:
-            raise RuntimeError(f"GMEM readback mismatch at word offset {offset}")
-    bss, shared = layout["bss"], layout["shared"]
-    monitor.fill_gmem((bss["end"] - bss["start"]) // 4, offset=(bss["start"] - gmem_base) // 4)
-    monitor.fill_dmem((shared["end"] - shared["start"]) // 4, offset=shared["start"] // 4)
-
-
 def elf_load_segments(data: bytes) -> tuple[int, list[tuple[int, bytes]]]:
     """(entry, [(address, bytes)]) of the PT_LOAD segments of a 32-bit little-endian ELF,
     the file bytes only: the program's startup code clears the rest (.bss)."""
@@ -157,15 +91,6 @@ def elf_load_segments(data: bytes) -> tuple[int, list[tuple[int, bytes]]]:
     if not segments:
         raise ValueError("the ELF file has nothing to load")
     return entry, segments
-
-
-def trim_program_at_ret(words: Iterable[str]) -> list[str]:
-    """Legacy helper name: normalize the FULL image without trimming.
-
-    Functions may be linked after either RET or the runtime's ECALL. Neither
-    instruction marks the end of an image, so truncation is never safe.
-    """
-    return [normalize_word(word) for word in words]
 
 
 def _check_index(index: int) -> None:
@@ -289,14 +214,6 @@ class GpgpuUartMonitor:
     def status(self) -> dict[str, int | str]:
         return parse_status(self._command_expect_prompt_or_error("status"))
 
-    def run(self, timeout: float = 30.0) -> str:
-        self.write_line("run")
-        output, marker = self.read_until(["Core entered idle state.", "ERROR"], timeout=timeout)
-        if marker == "ERROR":
-            output += self.wait_prompt(timeout=5.0)
-            raise RuntimeError(f"GPU run failed:\n{output}")
-        return output + self.wait_prompt(timeout=5.0)
-
     # Single word indices in Python are DECIMAL integers. The existing UART
     # parser interprets single-word indices as HEX, so format with :x.
     def write_imem(self, addr: int, word: int | str) -> str:
@@ -315,27 +232,6 @@ class GpgpuUartMonitor:
         _check_index(addr)
         return parse_single_word(self._command_expect_prompt_or_error(f"rdmem {addr:x}"), "DMEM", addr)
 
-    def load_imem_ascii(self, words: Iterable[int | str], offset: int = 0) -> str:
-        return self._load_ascii("loadimem", "READY_FOR_BULK_IMEM", "IMEM_LOAD_COMPLETE", words, offset)
-
-    def load_dmem_ascii(self, words: Iterable[int | str], offset: int = 0) -> str:
-        return self._load_ascii("loaddmem", "READY_FOR_BULK_DMEM", "DMEM_LOAD_COMPLETE", words, offset)
-
-    def _load_ascii(self, cmd: str, ready: str, complete: str,
-                    words: Iterable[int | str], offset: int) -> str:
-        normalized = [normalize_word(w) for w in words]
-        _check_span(offset, len(normalized))
-        self.write_line(f"{cmd} {offset} {len(normalized)}")
-        first, marker = self.read_until([ready, "ERROR"], timeout=5.0)
-        if marker == "ERROR":
-            raise RuntimeError(f"ASCII load rejected:\n{first + self.wait_prompt()}")
-        for w in normalized:
-            self.write_line(w)
-        second, marker = self.read_until([complete, "ERROR"], timeout=60.0)
-        if marker == "ERROR":
-            raise RuntimeError(f"ASCII load failed:\n{first + second + self.wait_prompt()}")
-        return first + second + self.wait_prompt(timeout=10.0)
-
     def dump_imem_ascii(self, count: int, offset: int = 0) -> dict[int, str]:
         _check_span(offset, count)
         return parse_memory_dump(self._command_expect_prompt_or_error(f"dumpimem {offset} {count}", timeout=60.0))
@@ -343,51 +239,6 @@ class GpgpuUartMonitor:
     def dump_dmem_ascii(self, count: int, offset: int = 0) -> dict[int, str]:
         _check_span(offset, count)
         return parse_memory_dump(self._command_expect_prompt_or_error(f"dumpdmem {offset} {count}", timeout=60.0))
-
-    def load_imem_bin(self, words: Iterable[int | str], offset: int = 0) -> str:
-        return self._load_binary("loadimem_bin", "READY_IMEM_BIN", "IMEM_LOAD_COMPLETE", words, offset)
-
-    def load_dmem_bin(self, words: Iterable[int | str], offset: int = 0) -> str:
-        return self._load_binary("loaddmem_bin", "READY_DMEM_BIN", "DMEM_LOAD_COMPLETE", words, offset)
-
-    def load_gmem_bin(self, words: Iterable[int | str], offset: int = 0) -> str:
-        """Words into GMEM from word `offset` after GMEM_BASE (the monitor flushes its cache)."""
-        return self._load_binary("loadgmem_bin", "READY_GMEM_BIN", "GMEM_LOAD_COMPLETE", words, offset, GMEM_DEPTH)
-
-    def fill_gmem(self, count: int, offset: int = 0, word: int | str = 0) -> str:
-        _check_span(offset, count, GMEM_DEPTH)
-        return self._fill("fillgmem", count, offset, word)
-
-    def fill_dmem(self, count: int, offset: int = 0, word: int | str = 0) -> str:
-        _check_span(offset, count)
-        return self._fill("filldmem", count, offset, word)
-
-    def _fill(self, cmd: str, count: int, offset: int, word: int | str) -> str:
-        if count == 0:
-            return ""
-        self.write_line(f"{cmd} {offset} {count} {normalize_word(word)}")
-        output, marker = self.read_until(["FILL_COMPLETE", "ERROR"], timeout=60.0)
-        if marker == "ERROR":
-            raise RuntimeError(f"{cmd} failed:\n{output + self.wait_prompt()}")
-        return output + self.wait_prompt(timeout=10.0)
-
-    def _load_binary(self, cmd: str, ready: str, complete: str,
-                     words: Iterable[int | str], offset: int, depth: int = DEPTH) -> str:
-        normalized = [normalize_word(w) for w in words]
-        _check_span(offset, len(normalized), depth)
-        self.write_line(f"{cmd} {offset} {len(normalized)}")
-        first, marker = self.read_until([ready, "ERROR"], timeout=5.0)
-        if marker == "ERROR":
-            raise RuntimeError(f"Binary load rejected:\n{first + self.wait_prompt()}")
-        payload = words_to_le_bytes(normalized)
-        if self.verbose:
-            print(f"[INFO] Sending {len(payload)} raw bytes")
-        self.ser.write(payload)
-        self.ser.flush()
-        second, marker = self.read_until([complete, "ERROR"], timeout=60.0)
-        if marker == "ERROR":
-            raise RuntimeError(f"Binary load failed:\n{first + second + self.wait_prompt()}")
-        return first + second + self.wait_prompt(timeout=10.0)
 
     # ---- Runtime programs (docs/runtime-spec.md, section 9.2) ----
 
@@ -418,20 +269,20 @@ class GpgpuUartMonitor:
             raise RuntimeError(f"The program did not load:\n{output + text + self.wait_prompt()}")
         return output + text + self.wait_prompt(timeout=10.0)
 
-    def exec_program(self, arguments: list[str], timeout: float, echo=None) -> int:
+    def run_program(self, arguments: list[str], timeout: float, echo=None) -> int:
         """Run the loaded program, pass its console output to `echo` as it arrives, and
         return its status when it is back in the monitor."""
         if not arguments or any(not argument or re.search(r"\s", argument) for argument in arguments):
             raise ValueError("program arguments must be non-empty and contain no whitespace")
-        line = "exec " + " ".join(arguments)
+        line = "run " + " ".join(arguments)
         if len(line) > 120:
             raise ValueError("the program's name and arguments must fit 120 characters (the monitor's line)")
         echo = echo or (lambda text: print(text, end="", flush=True))
         self.write_line(line)
-        output, marker = self.read_until(["EXEC_START", "ERROR"], timeout=10.0)
+        output, marker = self.read_until(["RUN_START", "ERROR"], timeout=10.0)
         if marker == "ERROR":
             raise RuntimeError(f"The program did not start:\n{output + self.wait_prompt()}")
-        pattern = re.compile(rb"EXEC_RETURN (-?\d+)")
+        pattern = re.compile(rb"RUN_RETURN (-?\d+)")
         deadline = time.monotonic() + timeout
         shown = 0
         while True:

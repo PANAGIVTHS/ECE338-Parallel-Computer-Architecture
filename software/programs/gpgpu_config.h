@@ -1,17 +1,12 @@
 #ifndef GPGPU_CONFIG_H
 #define GPGPU_CONFIG_H
 
-/* The gpgpu CLI supplies these from the configuration for both native and
- * RISC-V builds: GPGPU_NUM_CORES from architecture.num_cores, the rest from
+/* The gpgpu CLI supplies these from the configuration for every build of a
+ * program (kernels, simulator, A9): GPGPU_NUM_CORES from architecture.num_cores, the rest from
  * architecture.memory. The fallbacks keep programs directly compilable; they
  * match the default profile. */
 #ifndef GPGPU_NUM_CORES
 #define GPGPU_NUM_CORES 32u
-#endif
-
-/* Words of GPGPU_ARGS, at DMEM byte 0. */
-#ifndef GPGPU_ARGS_WORDS
-#define GPGPU_ARGS_WORDS 32
 #endif
 
 /* Bytes of each lane's stack, a power of two: 1 << GPGPU_STACK_SHIFT. */

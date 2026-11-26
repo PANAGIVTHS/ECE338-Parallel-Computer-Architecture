@@ -20,11 +20,11 @@
 /* Each grid dimension is 1 to GPGPU_GRID_MAX: two block indices share a register. */
 #define GPGPU_GRID_MAX 65535u
 
-/* Byte address where shared memory starts in the BRAM: after the GPGPU_ARGS
- * words that kernels without the runtime still use, 16-byte aligned
- * (linker.ld). The host's reference of a kernel that addresses shared memory
+/* Byte address where shared memory starts in the BRAM (linker.ld). Address 0
+ * is a valid shared variable, so kernels must not test shared pointers
+ * against NULL. The host's reference of a kernel that addresses shared memory
  * directly (terrain) needs it too. */
-#define GPGPU_SHARED_BASE ((GPGPU_ARGS_WORDS * 4 + 15) & ~15)
+#define GPGPU_SHARED_BASE 0
 
 /* The launch block: GPGPU_LAUNCH_BYTES at GMEM_BASE, written by the host before
  * every launch and only read by the kernels. One 32-bit word per parameter. */

@@ -1,4 +1,4 @@
-"""Operate the board: upload, reset, program, and load and run programs."""
+"""Operate the board: upload, reset, program, and run programs through the monitor."""
 from gpgpu.api import Backends, Board, Task
 
 
@@ -20,19 +20,8 @@ def tasks(backend: Backends) -> list[Task]:
              needs=("fpga:upload",), setup=("fpga:program",)),
     ]
     for program in board.programs():
-        prefix = f"fpga:programs:{program}"
-        result += [
-            Task(f"{prefix}:upload", "Build the memory images and layout of the program and upload them.", board.upload_program(program),
-                 needs=(f"software:programs:{program}:riscv:build", f"software:programs:{program}:mem")),
-            Task(f"{prefix}:load-imem", "After upload, load and verify IMEM and the program's data over UART. No reset or programming.",
-                 board.load_program(program), needs=(f"{prefix}:upload",)),
-            Task(f"{prefix}:run", "After load-imem, run the kernel once and verify it returns to idle.",
-                 board.run_program(program), needs=(f"{prefix}:load-imem",)),
-            Task(f"{prefix}:all", "Build, upload, load and run the program.", needs=(f"{prefix}:run",)),
-        ]
-    for program in board.runtime_programs():
         result.append(Task(f"fpga:programs:{program}:run",
                            "Build the program for the A9, send it to the monitor over UART and run it "
                            "(software.runtime.arguments); its status is the task's.",
-                           board.run_runtime_program(program), needs=(f"software:programs:{program}:host",)))
+                           board.run_program(program), needs=(f"software:programs:{program}:host",)))
     return result

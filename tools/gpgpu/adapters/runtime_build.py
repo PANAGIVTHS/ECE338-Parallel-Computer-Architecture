@@ -19,7 +19,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-from .program_image import _STT_FUNC, _STT_OBJECT, ElfSection, _image_words, _sections, _symbols
+from .kernel_elf import _STT_FUNC, _STT_OBJECT, ElfSection, _image_words, _sections, _symbols
 
 _SHT_NOBITS = 8
 _SHF_EXECINSTR = 0x4

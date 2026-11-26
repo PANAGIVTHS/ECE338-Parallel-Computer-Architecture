@@ -12,65 +12,15 @@
 #include "xuartps_hw.h"
 #include "sleep.h"
 
-#include "gpgpu_autorun.h"
-
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
 
-static u32 rx_buffer[GPGPU_MAX_WORDS];
 extern char inbyte(void);
 
-/* Run the loaded kernel `frames` times back to back and report the rate, then
- * the performance counters of all the runs added up (the GPU clears them at
- * every START, so they are read after each run) and the result of their
- * consistency checks. The kernel must need no host writes between runs (e.g.
- * it advances its own frame counter). The time covers each run's START to
- * completion and the driver's checks, not the counter reads or UART traffic.
- *
- * XTime_GetTime (XilTimer) reads the Cortex-A9 global timer, which counts at
- * half the CPU clock. XilTimer starts that timer on the first sleep call, so
- * one usleep() comes first. */
-static int bench(u32 frames) {
-    const u64 counts_per_second = XGet_CpuFreq() / 2U;
-    static gpgpu_perf_t total, run;
-    XTime start, end;
-    u64 elapsed = 0U, rate_x100;
-
-    if (frames == 0U) {
-        xil_printf("ERROR: bench needs at least one frame\r\n");
-        return -1;
-    }
-
-    usleep(1);
-    memset(&total, 0, sizeof(total));
-    for (u32 i = 0; i < frames; i++) {
-        XTime_GetTime(&start);
-        if (gpgpu_run_quiet() != GPGPU_OK) {
-            xil_printf("ERROR: frame %u failed\r\n", i);
-            return -1;
-        }
-        XTime_GetTime(&end);
-        elapsed += end - start;
-        if (gpgpu_perf_read(&run) != GPGPU_OK)
-            return -1;
-        gpgpu_perf_add(&total, &run);
-    }
-
-    /* xil_printf has no floats or 64-bit integers: print fixed point. */
-    rate_x100 = ((u64)frames * counts_per_second * 100U) / elapsed;
-    xil_printf("%u frames in %u us: %u.%02u frames/s, %u us/frame\r\n", frames,
-               (u32)((elapsed * 1000000U) / counts_per_second),
-               (u32)(rate_x100 / 100U), (u32)(rate_x100 % 100U),
-               (u32)((elapsed * 1000000U) / counts_per_second / frames));
-
-    gpgpu_perf_report(&total, frames);
-    return 0;
-}
-
 /* DDR test picture: `gmemfill` writes a picture into GMEM (the GPU's
- * read-write DDR region) and clears a framebuffer, a kernel copies GMEM ->
- * framebuffer, and `gmemcheck` compares the two word by word. The GPU reaches DDR through an HP port that does not snoop
+ * read-write DDR region) and clears a framebuffer, a loaded program's kernel
+ * copies GMEM -> framebuffer, and `gmemcheck` compares the two word by word. The GPU reaches DDR through an HP port that does not snoop
  * the A9 caches: the A9 flushes what it writes before the GPU reads it, and
  * invalidates what the GPU wrote before reading it. */
 #define GMEMTEST_WORDS            (GPGPU_FB_WIDTH * GPGPU_FB_HEIGHT)
@@ -141,31 +91,6 @@ static int gmem_span_ok(const char *what, u32 offset, u32 count) {
     return 1;
 }
 
-static void gmem_flush(u32 offset, u32 count) {
-    Xil_DCacheFlushRange((INTPTR)(GPGPU_GMEM_BASE + 4U * offset), 4U * count);
-}
-
-/* Raw little-endian words straight into GMEM: no buffer, so any count fits. */
-static int load_gmem_binary(u32 offset, u32 count) {
-    volatile u32 *gmem = gmem_words();
-
-    if (!gmem_span_ok("binary load", offset, count))
-        return -1;
-
-    xil_printf("READY_GMEM_BIN\n");
-    for (u32 i = 0; i < count; i++) {
-        u32 val = 0;
-        val |= ((u32)inbyte() & 0xFF) << 0;
-        val |= ((u32)inbyte() & 0xFF) << 8;
-        val |= ((u32)inbyte() & 0xFF) << 16;
-        val |= ((u32)inbyte() & 0xFF) << 24;
-        gmem[offset + i] = val;
-    }
-    gmem_flush(offset, count);
-    xil_printf("GMEM_LOAD_COMPLETE\n");
-    return 0;
-}
-
 static int dump_gmem_binary(u32 offset, u32 count) {
     volatile u32 *gmem = gmem_words();
 
@@ -185,102 +110,6 @@ static int dump_gmem_binary(u32 offset, u32 count) {
     xil_printf("\r\n");
     return 0;
 }
-
-/* Zeroes .bss (GMEM) and .shared (DMEM) at program load, or fills any span. */
-static int fill_gmem(u32 offset, u32 count, u32 word) {
-    volatile u32 *gmem = gmem_words();
-
-    if (!gmem_span_ok("fill", offset, count))
-        return -1;
-
-    for (u32 i = 0; i < count; i++)
-        gmem[offset + i] = word;
-    gmem_flush(offset, count);
-    xil_printf("FILL_COMPLETE\n");
-    return 0;
-}
-
-static int fill_dmem(u32 offset, u32 count, u32 word) {
-    if (offset > GPGPU_DMEM_ENTRIES || count > (GPGPU_DMEM_ENTRIES - offset)) {
-        xil_printf("ERROR: DMEM fill range offset=%u count=%u exceeds GPGPU_DMEM_ENTRIES=%d\n",
-                   offset, count, GPGPU_DMEM_ENTRIES);
-        return -1;
-    }
-    for (u32 i = 0; i < count; i++) {
-        if (gpgpu_write_dmem(offset + i, word) != 0) {
-            xil_printf("ERROR_AXI_WRITE\n");
-            return -1;
-        }
-    }
-    xil_printf("FILL_COMPLETE\n");
-    return 0;
-}
-
-#if GPGPU_AUTORUN
-#define AUTORUN_IMAGE_WORDS (sizeof(gpgpu_autorun_image) / sizeof(gpgpu_autorun_image[0]))
-#define AUTORUN_ARG_WORDS   (sizeof(gpgpu_autorun_args) / sizeof(gpgpu_autorun_args[0]))
-#define AUTORUN_GMEM_WORDS  (sizeof(gpgpu_autorun_gmem) / sizeof(gpgpu_autorun_gmem[0]))
-
-_Static_assert(AUTORUN_IMAGE_WORDS <= GPGPU_IMEM_ENTRIES, "autorun image does not fit IMEM");
-
-/* Load the configured program (gpgpu_autorun.h, software.host.autorun) and run
- * it back to back until a key arrives on the UART or a run fails; then the
- * monitor starts. The key is consumed. The kernel must need no host writes
- * between runs (ripple advances its own frame counter). */
-static void autorun(void) {
-    u32 word, runs = 0U;
-
-    for (u32 i = 0U; i < AUTORUN_IMAGE_WORDS; i++) {
-        if (gpgpu_write_imem(i, gpgpu_autorun_image[i]) != 0 ||
-            gpgpu_read_imem(i, &word) != 0 || word != gpgpu_autorun_image[i]) {
-            xil_printf("AUTORUN: IMEM word %u did not load\r\n", i);
-            return;
-        }
-    }
-    for (u32 i = 0U; i < AUTORUN_ARG_WORDS; i++) {
-        if (gpgpu_write_dmem(GPGPU_AUTORUN_ARGS_WORD + i, gpgpu_autorun_args[i]) != 0) {
-            xil_printf("AUTORUN: argument word %u did not load\r\n", i);
-            return;
-        }
-    }
-    /* The program's data, once: .rodata/.data into GMEM, .bss and .shared zeroed. */
-    for (u32 i = 0U; i < GPGPU_AUTORUN_SHARED_WORDS; i++) {
-        if (gpgpu_write_dmem(GPGPU_AUTORUN_SHARED_WORD + i, 0U) != 0) {
-            xil_printf("AUTORUN: shared memory word %u did not clear\r\n", i);
-            return;
-        }
-    }
-    for (u32 i = 0U; i < AUTORUN_GMEM_WORDS; i++)
-        gmem_words()[GPGPU_AUTORUN_GMEM_WORD + i] = gpgpu_autorun_gmem[i];
-    for (u32 i = 0U; i < GPGPU_AUTORUN_BSS_WORDS; i++)
-        gmem_words()[GPGPU_AUTORUN_BSS_WORD + i] = 0U;
-    gmem_flush(GPGPU_AUTORUN_GMEM_WORD, AUTORUN_GMEM_WORDS);
-    gmem_flush(GPGPU_AUTORUN_BSS_WORD, GPGPU_AUTORUN_BSS_WORDS);
-    if (gpgpu_display_show(GPGPU_AUTORUN_DISPLAY, 1) != 0)
-        return;
-
-    xil_printf("AUTORUN: %s, args", GPGPU_AUTORUN_PROGRAM);
-    for (u32 i = 0U; i < AUTORUN_ARG_WORDS; i++)
-        xil_printf(" 0x%08x", gpgpu_autorun_args[i]);
-    xil_printf("; press a key to stop\r\n");
-
-    /* Drop what the UART received before now: the EMIO RX pin is undriven
-     * until the bitstream loads, and that latches junk bytes in the FIFO. */
-    while (XUartPs_IsReceiveData(STDIN_BASEADDRESS))
-        (void)inbyte();
-
-    while (!XUartPs_IsReceiveData(STDIN_BASEADDRESS)) {
-        if (gpgpu_run_quiet() != GPGPU_OK) {
-            xil_printf("AUTORUN: run %u failed\r\n", runs);
-            gpgpu_print_status();
-            return;
-        }
-        runs++;
-    }
-    (void)inbyte();
-    xil_printf("AUTORUN: stopped after %u runs\r\n", runs);
-}
-#endif
 
 static void read_line(char *buf, int max_len) {
     int idx = 0;
@@ -367,119 +196,6 @@ static int parse_count(const char *s, u32 *out) {
     return 0;
 }
 
-static int load_imem_from_uart(u32 offset, u32 count) {
-    char line[128];
-
-    if (offset > GPGPU_IMEM_ENTRIES || count > (GPGPU_IMEM_ENTRIES - offset)) {
-        xil_printf("ERROR: IMEM load range offset=%u count=%u exceeds GPGPU_IMEM_ENTRIES=%d\r\n",
-                   offset, count, GPGPU_IMEM_ENTRIES);
-        return -1;
-    }
-
-    xil_printf("READY_FOR_BULK_IMEM\r\n");
-    for (u32 i = 0; i < count; i++) {
-        read_line(line, sizeof(line));
-        trim(line);
-
-        if (parse_u32_hex(line, &rx_buffer[i]) != 0) {
-            xil_printf("ERROR_INVALID_HEX\r\n");
-            return -1;
-        }
-    }
-
-    for (u32 i = 0; i < count; i++) {
-        if (gpgpu_write_imem(offset + i, rx_buffer[i]) != 0) {
-            xil_printf("ERROR_AXI_WRITE\r\n");
-            return -1;
-        }
-    }
-    xil_printf("IMEM_LOAD_COMPLETE\r\n");
-
-    return 0;
-}
-
-static int load_dmem_from_uart(u32 offset, u32 count) {
-    char line[128];
-
-    if (offset > GPGPU_DMEM_ENTRIES || count > (GPGPU_DMEM_ENTRIES - offset)) {
-        xil_printf("ERROR: DMEM load range offset=%u count=%u exceeds GPGPU_DMEM_ENTRIES=%d\r\n",
-                   offset, count, GPGPU_DMEM_ENTRIES);
-        return -1;
-    }
-
-    xil_printf("Paste %u DMEM words as ASCII hex, one per line.\r\n", count);
-
-    xil_printf("READY_FOR_BULK_DMEM\r\n");
-    for (u32 i = 0; i < count; i++) {
-        read_line(line, sizeof(line));
-        trim(line);
-
-        if (parse_u32_hex(line, &rx_buffer[i]) != 0) {
-            xil_printf("ERROR_INVALID_HEX\r\n");
-            return -1;
-        }
-    }
-
-    for (u32 i = 0; i < count; i++) {
-        if (gpgpu_write_dmem(offset + i, rx_buffer[i]) != 0) {
-            xil_printf("ERROR_AXI_WRITE\r\n");
-            return -1;
-        }
-    }
-    xil_printf("DMEM_LOAD_COMPLETE\r\n");
-
-    return 0;
-}
-
-static int load_imem_binary(u32 offset, u32 count) {
-    if (offset > GPGPU_IMEM_ENTRIES || count > (GPGPU_IMEM_ENTRIES - offset)) {
-        xil_printf("ERROR: IMEM binary load range offset=%u count=%u exceeds GPGPU_IMEM_ENTRIES=%d\n",
-                   offset, count, GPGPU_IMEM_ENTRIES);
-        return -1;
-    }
-
-    xil_printf("READY_IMEM_BIN\n");
-    for (u32 i = 0; i < count; i++) {
-        u32 val = 0;
-        val |= ((u32)inbyte() & 0xFF) << 0;  // Byte 0 (LSB)
-        val |= ((u32)inbyte() & 0xFF) << 8;  // Byte 1
-        val |= ((u32)inbyte() & 0xFF) << 16; // Byte 2
-        val |= ((u32)inbyte() & 0xFF) << 24; // Byte 3 (MSB)
-        rx_buffer[i] = val;
-    }
-
-    for (u32 i = 0; i < count; i++) {
-        gpgpu_write_imem(offset + i, rx_buffer[i]);
-    }
-    xil_printf("IMEM_LOAD_COMPLETE\n");
-    return 0;
-}
-
-static int load_dmem_binary(u32 offset, u32 count) {
-    if (offset > GPGPU_DMEM_ENTRIES || count > (GPGPU_DMEM_ENTRIES - offset)) {
-        xil_printf("ERROR: DMEM binary load range offset=%u count=%u exceeds GPGPU_DMEM_ENTRIES=%d\n",
-                   offset, count, GPGPU_DMEM_ENTRIES);
-        return -1;
-    }
-
-    xil_printf("READY_DMEM_BIN\n");
-    for (u32 i = 0; i < count; i++) {
-        u32 val = 0;
-        val |= ((u32)inbyte() & 0xFF) << 0;
-        val |= ((u32)inbyte() & 0xFF) << 8;
-        val |= ((u32)inbyte() & 0xFF) << 16;
-        val |= ((u32)inbyte() & 0xFF) << 24;
-        rx_buffer[i] = val;
-    }
-
-    for (u32 i = 0; i < count; i++) {
-        gpgpu_write_dmem(offset + i, rx_buffer[i]);
-    }
-    
-    xil_printf("DMEM_LOAD_COMPLETE\n");
-    return 0;
-}
-
 static int gpgpu_dump_dmem_binary(u32 offset, u32 count) {
     if (offset > GPGPU_DMEM_ENTRIES || count > (GPGPU_DMEM_ENTRIES - offset)) {
         xil_printf("ERROR: DMEM binary dump range offset=%u count=%u exceeds GPGPU_DMEM_ENTRIES=%d\n",
@@ -517,30 +233,18 @@ static void print_help(void) {
     xil_printf("  dumpimem <offset> <count>\r\n");
     xil_printf("  dumpdmem <offset> <count>\r\n");
     xil_printf("  dumpdmem_bin <offset> <count>\r\n");
-    xil_printf("  --------- LOADING ---------\r\n");
-    xil_printf("  loadimem <offset> <count>\r\n");
-    xil_printf("  loaddmem <offset> <count>\r\n");
-    xil_printf("  loadimem_bin <offset> <count>\r\n");
-    xil_printf("  loaddmem_bin <offset> <count>\r\n");
-    xil_printf("  --------- GMEM (DDR; word offsets from GMEM_BASE) ---------\r\n");
-    xil_printf("  loadgmem_bin <offset> <count>\r\n");
-    xil_printf("  dumpgmem_bin <offset> <count>\r\n");
-    xil_printf("  fillgmem <offset> <count> <word_hex>\r\n");
-    xil_printf("  filldmem <offset> <count> <word_hex>\r\n");
+    xil_printf("  dumpgmem_bin <offset> <count>   (word offsets from GMEM_BASE)\r\n");
     xil_printf("  --------- PROGRAMS (docs/runtime-spec.md) ---------\r\n");
     xil_printf("  load <entry_hex> <segments_hex>   (receive a program; `fpga programs:<p>:run` sends it)\r\n");
-    xil_printf("  exec <name> [arguments]   (run the loaded program; it returns here)\r\n");
+    xil_printf("  run <name> [arguments]   (run the loaded program; it returns here)\r\n");
     xil_printf("  --------- CONTROL ---------\r\n");
-    xil_printf("  run\r\n");
-    xil_printf("  bench <frames>   (run the kernel back to back, report frames/s and the perf counters)\r\n");
-    xil_printf("  perf   (report the perf counters of the last run)\r\n");
+    xil_printf("  perf   (report the perf counters of the last kernel)\r\n");
     xil_printf("  clear   (acknowledge STOPPED/FAULTED)\r\n");
     xil_printf("  reset   (PL reset; needed after a fatal fault)\r\n");
     xil_printf("  --------- DISPLAY ---------\r\n");
     xil_printf("  display <fb>   (show framebuffer 0 or 1 on HDMI)\r\n");
     xil_printf("  --------- DDR TEST PICTURE ---------\r\n");
-    xil_printf("  gmemfill <fb>   (write the test picture to GMEM, clear framebuffer fb;\r\n");
-    xil_printf("                   overwrites the loaded program's GMEM data: reload it after)\r\n");
+    xil_printf("  gmemfill <fb>   (write the test picture to GMEM, clear framebuffer fb)\r\n");
     xil_printf("  gmemcheck <fb>  (compare framebuffer fb with GMEM)\r\n");
     xil_printf("\r\n");
 }
@@ -556,9 +260,6 @@ int main(void) {
 
     gpgpu_print_status();
     gpgpu_display_start(gpgpu_display_shown());
-#if GPGPU_AUTORUN
-    autorun();
-#endif
     print_help();
 
     while (1) {
@@ -673,55 +374,7 @@ int main(void) {
 
             gpgpu_dump_dmem_binary(offset, count);
 
-        } else if (strcmp(cmd, "loadimem") == 0) {
-            u32 offset, count;
-
-            arg1 = strtok(NULL, " \t");
-            arg2 = strtok(NULL, " \t");
-            if (parse_count(arg1, &offset) != 0 || parse_count(arg2, &count) != 0) {
-                xil_printf("Usage: loadimem <offset> <count>\r\n");
-                continue;
-            }
-
-            load_imem_from_uart(offset, count);
-
-        } else if (strcmp(cmd, "loaddmem") == 0) {
-            u32 offset, count;
-
-            arg1 = strtok(NULL, " \t");
-            arg2 = strtok(NULL, " \t");
-            if (parse_count(arg1, &offset) != 0 || parse_count(arg2, &count) != 0) {
-                xil_printf("Usage: loaddmem <offset> <count>\r\n");
-                continue;
-            }
-
-            load_dmem_from_uart(offset, count);
-
-        }  else if (strcmp(cmd, "loadimem_bin") == 0) {
-            u32 offset, count;
-
-            arg1 = strtok(NULL, " \t");
-            arg2 = strtok(NULL, " \t");
-            if (parse_count(arg1, &offset) != 0 || parse_count(arg2, &count) != 0) {
-                xil_printf("Usage: loadimem_bin <offset> <count>\r\n");
-                continue;
-            }
-
-            load_imem_binary(offset, count);
-
-        } else if (strcmp(cmd, "loaddmem_bin") == 0) {
-            u32 offset, count;
-
-            arg1 = strtok(NULL, " \t");
-            arg2 = strtok(NULL, " \t");
-            if (parse_count(arg1, &offset) != 0 || parse_count(arg2, &count) != 0) {
-                xil_printf("Usage: loaddmem_bin <offset> <count>\r\n");
-                continue;
-            }
-
-            load_dmem_binary(offset, count);
-
-        } else if (strcmp(cmd, "loadgmem_bin") == 0 || strcmp(cmd, "dumpgmem_bin") == 0) {
+        } else if (strcmp(cmd, "dumpgmem_bin") == 0) {
             u32 offset, count;
 
             arg1 = strtok(NULL, " \t");
@@ -731,52 +384,17 @@ int main(void) {
                 continue;
             }
 
-            if (strcmp(cmd, "loadgmem_bin") == 0)
-                load_gmem_binary(offset, count);
-            else
-                dump_gmem_binary(offset, count);
-
-        } else if (strcmp(cmd, "fillgmem") == 0 || strcmp(cmd, "filldmem") == 0) {
-            u32 offset, count, word;
-            char *arg3;
-
-            arg1 = strtok(NULL, " \t");
-            arg2 = strtok(NULL, " \t");
-            arg3 = strtok(NULL, " \t");
-            if (parse_count(arg1, &offset) != 0 || parse_count(arg2, &count) != 0 ||
-                arg3 == NULL || parse_u32_hex(arg3, &word) != 0) {
-                xil_printf("ERROR: usage: %s <offset> <count> <word_hex>\r\n", cmd);
-                continue;
-            }
-
-            if (strcmp(cmd, "fillgmem") == 0)
-                fill_gmem(offset, count, word);
-            else
-                fill_dmem(offset, count, word);
+            dump_gmem_binary(offset, count);
 
         } else if (strcmp(cmd, "load") == 0) {
             arg1 = strtok(NULL, " \t");
             arg2 = strtok(NULL, " \t");
             gpgpu_loader_load(arg1, arg2);
 
-        } else if (strcmp(cmd, "exec") == 0) {
+        } else if (strcmp(cmd, "run") == 0) {
             /* The rest of the line: the program's name and arguments. */
             size_t used = (size_t)(cmd - line) + strlen(cmd) + 1U;
-            gpgpu_loader_exec(used <= line_length ? cmd + strlen(cmd) + 1 : (char *)"");
-
-        } else if (strcmp(cmd, "run") == 0) {
-            gpgpu_start_and_wait();
-
-        } else if (strcmp(cmd, "bench") == 0) {
-            u32 frames;
-
-            arg1 = strtok(NULL, " \t");
-            if (parse_count(arg1, &frames) != 0) {
-                xil_printf("Usage: bench <frames>\r\n");
-                continue;
-            }
-
-            bench(frames);
+            gpgpu_loader_run(used <= line_length ? cmd + strlen(cmd) + 1 : (char *)"");
 
         } else if (strcmp(cmd, "perf") == 0) {
             static gpgpu_perf_t last;

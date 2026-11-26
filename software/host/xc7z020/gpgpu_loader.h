@@ -8,18 +8,18 @@
  *   load <entry_hex> <segments>   then, per segment, the PC sends a header of
  *                                 three little-endian words (address, size,
  *                                 CRC-32) and, after SEGMENT_READY, the bytes
- *   exec <name> [arguments]       run the loaded program; it returns here
+ *   run <name> [arguments]        run the loaded program; it returns here
  *
  * Replies, one per line: READY_LOAD, SEGMENT_READY, SEGMENT_OK, LOAD_COMPLETE;
- * EXEC_START, then the program's own output, then EXEC_RETURN <status>; or a
+ * RUN_START, then the program's own output, then RUN_RETURN <status>; or a
  * line starting with ERROR.
  */
 
 /* The `load` command; arguments are the rest of the command line. 0 or -1. */
 int gpgpu_loader_load(const char *entry, const char *segments);
 
-/* The `exec` command: `line` holds the program's name and arguments, separated
+/* The `run` command: `line` holds the program's name and arguments, separated
  * by spaces. Returns the program's status, or -1 if nothing is loaded. */
-int gpgpu_loader_exec(char *line);
+int gpgpu_loader_run(char *line);
 
 #endif /* GPGPU_LOADER_H */

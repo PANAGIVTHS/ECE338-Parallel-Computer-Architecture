@@ -10,7 +10,7 @@ def tasks(backend: Backends) -> list[Task]:
         Task("vitis:build:platform", "Build the software platform and verify its outputs.",
              flow.build_platform(), needs=("vitis:project",)),
         Task("vitis:build:host", "Build the host application after the platform.",
-             flow.build_host(), needs=("vitis:build:platform", "software:host:platform", "software:host:autorun")),
+             flow.build_host(), needs=("vitis:build:platform", "software:host:platform")),
         Task("vitis:build:all", "Build the software platform and the host application.",
              needs=("vitis:build:host",)),
         Task("vitis:export", "Replace the committed default project with a portable snapshot of the editable one.",

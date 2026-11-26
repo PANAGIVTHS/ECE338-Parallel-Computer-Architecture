@@ -1,20 +1,12 @@
-"""What the host loads besides IMEM: a program's GMEM data image and its memory layout.
-
-Both come from the linked ELF (software/programs/linker.ld):
-
-  <program>_gmem.mem     .rodata and .data as '<byte address> <word>' hex pairs, the
-                         format of the RTL cases' ddr_seed.mem
-  <program>_layout.json  GPGPU_ARGS, .shared, the stacks, .bss and every data symbol,
-                         for the loaders and the FPGA adapters
-
-The linker layout every program links against (linker_layout.ld) is written here too.
+"""The kernels' ELF: its sections, symbols and data words, which the module builder
+(runtime_build.py) reads, and the linker layout every program links against
+(linker_layout.ld, included by software/programs/linker.ld).
 """
 from __future__ import annotations
 
-import json
 import struct
 from pathlib import Path
-from typing import Any, NamedTuple
+from typing import NamedTuple
 
 _SHT_SYMTAB, _SHT_NOBITS = 2, 8
 _STT_OBJECT, _STT_FUNC, _STT_NOTYPE = 1, 2, 0
@@ -84,46 +76,6 @@ def _image_words(data: bytes, sections: list[ElfSection], names: tuple[str, ...]
     return words
 
 
-def write_program_files(elf: Path, gmem_image: Path, layout: Path, program: str) -> None:
-    data = elf.read_bytes()
-    sections = _sections(data)
-    symbols = _symbols(data, sections)
-    absolute = {symbol.name: symbol.value for symbol in symbols}
-    required = ("__gpu_args_base", "__gpu_args_end", "__shared_start", "__shared_end", "__gpu_stack_bottom",
-                "__stack_top", "__gmem_data_start", "__bss_start", "__bss_end", "__gmem_data_end",
-                "__gmem_free_base", "__gmem_free_end")
-    missing = [name for name in required if name not in absolute]
-    if missing:
-        raise ValueError(f"{elf}: linker symbols missing ({', '.join(missing)}): not linked with linker.ld")
-
-    image = _image_words(data, sections, (".rodata", ".data"))
-    lines = [f"// {program}: .rodata and .data, '<byte address> <word>' (GMEM image, written once per program load)"]
-    lines += [f"{address:08x} {word:08x}" for address, word in sorted(image.items())]
-    gmem_image.write_text("\n".join(lines) + "\n", encoding="utf-8")
-
-    by_index = dict(enumerate(sections))
-    objects = {symbol.name: {"address": symbol.value, "size": symbol.size, "section": by_index[symbol.section].name}
-               for symbol in symbols if symbol.kind == _STT_OBJECT and symbol.section in by_index}
-
-    def region(start: str, end: str) -> dict[str, int]:
-        return {"start": absolute[start], "end": absolute[end]}
-
-    description: dict[str, Any] = {
-        "program": program,
-        "args": {"base": absolute["__gpu_args_base"],
-                 "words": (absolute["__gpu_args_end"] - absolute["__gpu_args_base"]) // 4},
-        "shared": region("__shared_start", "__shared_end"),
-        "stack": region("__gpu_stack_bottom", "__stack_top"),
-        "gmem_data": region("__gmem_data_start", "__gmem_data_end"),
-        "bss": region("__bss_start", "__bss_end"),
-        "gmem_free": region("__gmem_free_base", "__gmem_free_end"),
-        "gmem_image": gmem_image.name,
-        "gmem_image_words": len(image),
-        "symbols": dict(sorted(objects.items())),
-    }
-    layout.write_text(json.dumps(description, indent=2) + "\n", encoding="utf-8")
-
-
 def write_linker_layout(settings: dict[str, int], constants_file: Path, output: Path) -> None:
     """MEMORY regions and ABI sizes: architecture.memory, and the RTL's memory map as elaborated."""
     constants = {}
@@ -151,7 +103,6 @@ def write_linker_layout(settings: dict[str, int], constants_file: Path, output: 
         "}",
         "",
         f"__gpu_num_cores    = {settings['num_cores']};",
-        f"__gpu_args_words   = {settings['args_words']};",
         f"__gpu_stack_stride = {settings['stack_bytes_per_lane']};",
         ""])
     output.parent.mkdir(parents=True, exist_ok=True)

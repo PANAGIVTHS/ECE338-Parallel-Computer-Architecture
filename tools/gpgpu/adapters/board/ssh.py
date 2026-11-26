@@ -18,7 +18,7 @@ from pydantic import AfterValidator, PositiveInt, StringConstraints
 from gpgpu.api import Step
 
 from ..config import Config, Section
-from ..design import bitstream_path, legacy_program_names, program_output, runtime_program_names, vitis_workspace
+from ..design import bitstream_path, program_names, program_output, vitis_workspace
 from ..tools import run
 
 _NAME = r"[A-Za-z0-9_][A-Za-z0-9_.-]*"
@@ -78,11 +78,7 @@ class SshBoard:
         self._names = (f"{self._platform}.bit", "ps7_init.tcl", f"{self._host}.elf")
 
     def programs(self) -> list[str]:
-        # Runtime programs (host.c) are loaded by the monitor's loader instead: run_runtime_program().
-        return legacy_program_names(self._config)
-
-    def runtime_programs(self) -> list[str]:
-        return runtime_program_names(self._config)
+        return program_names(self._config)
 
     def upload(self) -> Step:
         workspace = vitis_workspace(self._config)
@@ -90,11 +86,6 @@ class SshBoard:
                  workspace / self._platform / "export" / self._platform / "hw/sdt/ps7_init.tcl",
                  workspace / self._host / "build" / f"{self._host}.elf")
         return Step(partial(self._copy, tuple(zip(files, self._names))), always_run=True)
-
-    def upload_program(self, program: str) -> Step:
-        # IMEM, and what the host loads besides it: the GMEM data image and the layout.
-        files = tuple(program_output(self._config, program, suffix) for suffix in ("_instructions.mem", "_gmem.mem", "_layout.json"))
-        return Step(partial(self._copy, tuple((path, path.name) for path in files)), always_run=True)
 
     def _copy(self, files: tuple[tuple[Path, str], ...]) -> None:
         """Copy files under explicit remote names, after checking that all of them exist."""
@@ -167,26 +158,7 @@ class SshBoard:
     def program(self) -> Step:
         return Step(self._program, always_run=True)
 
-    def _uart(self, program: str, operation: str) -> None:
-        """Stream the shared UART client and driver to Python on the board's machine."""
-        uart = self._s.uart
-        client = (self._config.repo_root / "tools/board/xc7z020/uart.py").read_text()
-        driver = Path(__file__).with_name("program_uart.py").read_text()
-        directory = PurePosixPath(self._s.upload.directory)
-        memory, layout = (str(directory / f"{program}{suffix}") for suffix in ("_instructions.mem", "_layout.json"))
-        # Separate exec scopes keep __future__ imports working without rewriting the client.
-        payload = (f"exec({client!r}, globals())\nexec({driver!r}, globals())\n"
-                   f"remote_main({operation!r}, {memory!r}, {uart.port!r}, {uart.baud!r}, {layout!r})\n")
-        remote = (["sudo", "-n"] if uart.sudo else []) + [uart.python, "-"]
-        subprocess.run(self._argv(shlex.join(remote)), cwd=self._config.repo_root, input=payload, text=True, check=True)
-
-    def load_program(self, program: str) -> Step:
-        return Step(partial(self._uart, program, "load-imem"), always_run=True)
-
-    def run_program(self, program: str) -> Step:
-        return Step(partial(self._uart, program, "run"), always_run=True)
-
-    def _exec(self, program: str) -> None:
+    def _run(self, program: str) -> None:
         """Upload the A9 program, then load and run it through the monitor (docs/runtime-spec.md 9.2)."""
         elf = program_output(self._config, program, "_a9.elf")
         self._copy(((elf, elf.name),))
@@ -196,11 +168,11 @@ class SshBoard:
         driver = Path(__file__).with_name("program_uart.py").read_text()
         remote_elf = str(PurePosixPath(self._s.upload.directory) / elf.name)
         payload = (f"exec({client!r}, globals())\nexec({driver!r}, globals())\n"
-                   f"remote_exec({remote_elf!r}, {uart.port!r}, {uart.baud!r}, {arguments!r}, {_EXEC_TIMEOUT_S!r})\n")
+                   f"remote_run({remote_elf!r}, {uart.port!r}, {uart.baud!r}, {arguments!r}, {_EXEC_TIMEOUT_S!r})\n")
         remote = (["sudo", "-n"] if uart.sudo else []) + [uart.python, "-"]
         status = subprocess.run(self._argv(shlex.join(remote)), cwd=self._config.repo_root, input=payload, text=True).returncode
         if status != 0:
             raise RuntimeError(f"{program} on the board failed (status {status})")
 
-    def run_runtime_program(self, program: str) -> Step:
-        return Step(partial(self._exec, program), always_run=True)
+    def run_program(self, program: str) -> Step:
+        return Step(partial(self._run, program), always_run=True)

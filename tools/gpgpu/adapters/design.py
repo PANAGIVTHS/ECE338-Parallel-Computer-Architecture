@@ -17,7 +17,6 @@ class Memory(Section):
     """architecture.memory: the BRAM sizes and the kernel memory layout."""
     imem_bytes: PositiveInt
     dmem_bytes: PositiveInt
-    args_words: PositiveInt
     stack_bytes_per_lane: PositiveInt
     gmem_data_bytes: PositiveInt
 
@@ -55,9 +54,9 @@ def memory_layout(config: Config) -> Memory:
     if max(memory.imem_bytes, memory.dmem_bytes) // 4 >= 1 << 16:
         raise GpgpuError("architecture.memory: IMEM and DMEM must hold fewer than 65536 words (INFO_MEM fields)")
     stacks = design.num_cores * memory.stack_bytes_per_lane
-    if 4 * memory.args_words + stacks > memory.dmem_bytes:
-        raise GpgpuError(f"architecture.memory: GPGPU_ARGS ({4 * memory.args_words} B) and the stacks "
-                         f"({design.num_cores} x {memory.stack_bytes_per_lane} B) do not fit DMEM ({memory.dmem_bytes} B)")
+    if stacks >= memory.dmem_bytes:
+        raise GpgpuError(f"architecture.memory: the stacks ({design.num_cores} x {memory.stack_bytes_per_lane} B) "
+                         f"leave no shared memory in DMEM ({memory.dmem_bytes} B)")
     return memory
 
 
@@ -213,22 +212,11 @@ def vitis_workspace(config: Config) -> Path:
 
 
 def program_names(config: Config) -> list[str]:
+    """The programs (docs/runtime-spec.md): directories of software/programs with kernels in <p>.c and a
+    host program in host.c."""
     root = config.repo_root / "software/programs"
-    return sorted(path.name for path in root.iterdir() if path.is_dir() and (path / f"{path.name}.c").is_file())
-
-
-def runtime_program(config: Config, program: str) -> bool:
-    """A program of the runtime (docs/runtime-spec.md): kernels in <p>.c and a host program in host.c."""
-    return (config.repo_root / "software/programs" / program / "host.c").is_file()
-
-
-def runtime_program_names(config: Config) -> list[str]:
-    return [program for program in program_names(config) if runtime_program(config, program)]
-
-
-def legacy_program_names(config: Config) -> list[str]:
-    """Programs with the GPGPU_ARGS interface, loaded and run by the UART tools."""
-    return [program for program in program_names(config) if not runtime_program(config, program)]
+    return sorted(path.name for path in root.iterdir()
+                  if path.is_dir() and (path / f"{path.name}.c").is_file() and (path / "host.c").is_file())
 
 
 def program_output(config: Config, program: str, suffix: str) -> Path:

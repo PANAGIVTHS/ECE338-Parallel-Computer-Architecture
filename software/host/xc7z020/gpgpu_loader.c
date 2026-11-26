@@ -174,7 +174,7 @@ int gpgpu_loader_load(const char *entry_text, const char *segments_text)
 
 /* ---- Running ----------------------------------------------------------- */
 
-int gpgpu_loader_exec(char *line)
+int gpgpu_loader_run(char *line)
 {
     volatile gpgpu_boot_record_t *boot = GPGPU_BOOT_RECORD;
 
@@ -197,7 +197,7 @@ int gpgpu_loader_exec(char *line)
         argc++;
     }
     if (argc == 0U) {
-        xil_printf("ERROR: usage: exec <name> [arguments]\r\n");
+        xil_printf("ERROR: usage: run <name> [arguments]\r\n");
         return -1;
     }
     boot->argc = argc;
@@ -205,7 +205,7 @@ int gpgpu_loader_exec(char *line)
     boot->resume = (u32)(UINTPTR)gpgpu_monitor_resume_;
     boot->magic = GPGPU_BOOT_MAGIC;
 
-    xil_printf("EXEC_START\r\n");
+    xil_printf("RUN_START\r\n");
     gpgpu_shutdown();
     int status = monitor_call(loaded_entry);
 
@@ -213,6 +213,6 @@ int gpgpu_loader_exec(char *line)
     boot->magic = 0U;
     if (gpgpu_init() != GPGPU_OK)
         xil_printf("ERROR: GPGPU initialization after the program failed\r\n");
-    xil_printf("EXEC_RETURN %d\r\n", status);
+    xil_printf("RUN_RETURN %d\r\n", status);
     return status;
 }
