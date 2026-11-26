@@ -7,12 +7,12 @@ def tasks(backend: Backends) -> list[Task]:
     autorun = cc.autorun_program()
     result = [
         Task("software:host:platform", "Regenerate the platform header of the driver from the RTL and the configuration.",
-             cc.host_platform_header(), needs=("rtl:config",)),
+             cc.host_platform_header(), requires=("rtl:config",)),
         Task("software:host:autorun", "Regenerate the header of the program the host runs from boot.",
              cc.host_autorun_header(),
              needs=(f"software:programs:{autorun}:mem", f"software:programs:{autorun}:image") if autorun else ()),
         Task("software:programs:layout", "Write the linker layout (MEMORY regions) from architecture.memory and the RTL.",
-             cc.linker_layout(), needs=("rtl:constants",)),
+             cc.linker_layout(), requires=("rtl:constants",)),
     ]
     for program in cc.programs():
         prefix = f"software:programs:{program}"
