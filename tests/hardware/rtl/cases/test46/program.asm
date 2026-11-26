@@ -33,33 +33,33 @@ add	x13,x13,x12
 addi	x12,x0,5
 add	x13,x13,x15
 bltu	x12,x10,144 <__shared_end+0x44>
-lui	x11,0x18800
-addi	x11,x11,0 # 18800000 <__gmem_data_start>
+lui	x11,0x04800
+addi	x11,x11,0 # 04800000 <__gmem_data_start>
 slli	x12,x10,0x2
 add	x12,x12,x11
 lw	x12,0(x12)
 addi	x15,x14,0
 jalr	x0,0(x12)
 slli	x15,x14,0x4
-lui	x12,0x18800
+lui	x12,0x04800
 andi	x11,x14,7
 slli	x11,x11,0x2
-addi	x12,x12,24 # 18800018 <gain>
+addi	x12,x12,24 # 04800018 <gain>
 add	x12,x12,x11
 andi	x17,x14,3
-lui	x11,0x18800
+lui	x11,0x04800
 slli	x17,x17,0x2
-addi	x11,x11,56 # 18800038 <bias>
+addi	x11,x11,56 # 04800038 <bias>
 add	x11,x11,x17
 lw	x17,0(x12)
-lui	x12,0x18800
+lui	x12,0x04800
 lw	x11,0(x11)
 slli	x6,x14,0x2
-lui	x28,0x18800
-addi	x12,x12,76 # 1880004c <slots>
+lui	x28,0x04800
+addi	x12,x12,76 # 0480004c <slots>
 add	x15,x15,x17
 add	x12,x12,x6
-lw	x17,72(x28) # 18800048 <call_count>
+lw	x17,72(x28) # 04800048 <call_count>
 lw	x29,0(x12)
 add	x15,x15,x11
 add	x15,x15,x17
@@ -72,9 +72,9 @@ sw	x16,0(x12)
 sw	x15,0(x13)
 bne	x14,x0,118 <__shared_end+0x18>
 addi	x17,x17,1
-lui	x15,0x18800
+lui	x15,0x04800
 sw	x17,72(x28)
-sw	x10,204(x15) # 188000cc <last_op>
+sw	x10,204(x15) # 048000cc <last_op>
 addi	x2,x2,16
 jalr	x0,0(x1)
 xori	x15,x14,85

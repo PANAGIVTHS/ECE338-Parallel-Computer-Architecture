@@ -14,8 +14,8 @@ from gpgpu.api import GpgpuError, Step
 
 from . import host_headers
 from .config import Config, Section
-from .design import (architecture, axi_address, memory_layout, program_names, program_output, rtl_constants_path,
-                     vitis_workspace)
+from .design import (architecture, axi_address, host_map, memory_layout, program_names, program_output,
+                     rtl_constants_path, vitis_workspace)
 from .kernel_elf import write_linker_layout
 from .runtime_build import check_cases, generate_kernels, write_hw_header, write_module
 from .tools import run
@@ -47,11 +47,6 @@ class _Runtime(Section):
     board_stack_bytes: PositiveInt
     board_heap_bytes: PositiveInt
 
-
-
-# The DDR of programs on the board, from software/host/xc7z020/gpgpu_boot.h:
-# above the UART monitor's MiB, up to the first framebuffer.
-_PROGRAM_BASE = 0x0020_0000
 
 
 def _c_string(text: str) -> str:
@@ -220,13 +215,14 @@ class GccToolchain:
                    f"-Wl,-T,{script}", f"-L{bsp / 'lib'}", "-Wl,--start-group,-lxilstandalone,-lxiltimer,-lxil,-lgcc,-lc,--end-group"]
         template = self._runtime / "host/xc7z020/lscript.ld.in"
         constants = rtl_constants_path(self._config)
-        sizes = {"stack": self._runtime_settings.board_stack_bytes, "heap": self._runtime_settings.board_heap_bytes}
+        # The programs' DDR (software.host): above the monitor, up to FB0.
+        region = host_map(self._config)
+        sizes = {"stack": self._runtime_settings.board_stack_bytes, "heap": self._runtime_settings.board_heap_bytes,
+                 "origin": region["program_base"], "length": region["program_end"] - region["program_base"]}
 
         def build() -> None:
-            fb0 = next(int(line.partition("=")[2]) for line in constants.read_text(encoding="utf-8").splitlines()
-                       if line.startswith("gpu_pkg::FB0_BASE="))
             text = template.read_text(encoding="utf-8")
-            for key, value in {"ORIGIN": _PROGRAM_BASE, "LENGTH": fb0 - _PROGRAM_BASE,
+            for key, value in {"ORIGIN": sizes["origin"], "LENGTH": sizes["length"],
                                "STACK_SIZE": sizes["stack"], "HEAP_SIZE": sizes["heap"]}.items():
                 text = text.replace(f"@{key}@", f"0x{value:X}")
             script.parent.mkdir(parents=True, exist_ok=True)

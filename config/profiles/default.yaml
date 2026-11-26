@@ -5,18 +5,22 @@ architecture:
   # it, framebuffer and GMEM accesses complete as ST_UNMAPPED, and a kernel
   # cannot read its .rodata/.data/.bss, which live in GMEM.
   ddr_enable: true
-  # Memory sizes and the kernel memory layout (software/programs/linker.ld).
-  # `rtl:config` writes the BRAM sizes into packages/gpu_config_pkg.sv, which
-  # is committed; a change needs a new bitstream and host application.
+  # Memory sizes, the DDR map and the kernel memory layout
+  # (software/programs/linker.ld). `rtl:config` writes the BRAM sizes and the
+  # DDR map into packages/gpu_config_pkg.sv, which is committed; a change
+  # needs a new bitstream and host application.
   #   DMEM (BRAM, shared memory): .shared (GPGPU_SHARED variables) from
   #   byte 0, then num_cores stacks at the top.
-  #   GMEM (DDR): .rodata, .data and .bss at GMEM_BASE, the rest is free for
-  #   program buffers (__gmem_free_base).
+  #   DDR (512 MiB): the host (monitor and programs) below host_bytes, then
+  #   FB0 and FB1 (4 MiB each), then GMEM to the end of DDR: the launch block,
+  #   .rodata, .data and .bss (docs/runtime-spec.md 3.5).
   memory:
     imem_bytes: 16384           # instruction BRAM, a power of two
     dmem_bytes: 16384           # data BRAM, a power of two
     stack_bytes_per_lane: 128   # a power of two; num_cores of them end DMEM
-    gmem_data_bytes: 65536      # .rodata + .data + .bss at the start of GMEM
+    ddr_bytes: 0x20000000       # the board's DDR from address 0: 512 MiB
+    host_bytes: 0x04000000      # DDR below FB0, a multiple of 8 MiB: 64 MiB, so GMEM is 440 MiB
+    fb_slot_bytes: 0x00400000   # DDR for each framebuffer, at least FB_WIDTH x FB_HEIGHT x 4 bytes
 
 hardware:
   fpga:
@@ -126,6 +130,13 @@ software:
     use_irq: true
     # GIC interrupt ID of the GPU interrupt: IRQ_F2P[0] is ID 61 on Zynq-7000.
     irq_id: 61
+    # The host's share of DDR, below architecture.memory.host_bytes
+    # (docs/runtime-spec.md 9.2): the monitor from monitor_base, its last
+    # boot_record_bytes the boot record, then the programs it loads, up to FB0.
+    # monitor_base is where the standalone BSP's linker script starts DDR.
+    monitor_base: 0x00100000
+    monitor_bytes: 0x00100000
+    boot_record_bytes: 0x1000
     # A program (a directory under software/programs) that `fpga deploy` starts
     # in place of the UART monitor, with software.runtime.arguments built in
     # (software programs:<p>:boot). It stops when gpgpu_main returns. null: the

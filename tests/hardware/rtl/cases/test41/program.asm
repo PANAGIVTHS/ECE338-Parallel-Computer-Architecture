@@ -9,7 +9,7 @@ lui   x3, 0x1
 slli  x4, x31, 2
 add   x3, x3, x4        # x3: 0x1000 + lane * 4, one array every 128 bytes
 
-lui   x5, 0x18802       # GMEM_BASE + 0x2000
+lui   x5, 0x04802       # GMEM_BASE + 0x2000
 add   x6, x5, x4        # x6: this lane's word
 
 lui   x7, 0x9E378

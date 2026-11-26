@@ -11,16 +11,17 @@ package gpu_pkg;
     localparam int unsigned DMEM_AW = $clog2(DMEM_ENTRIES);
     localparam int unsigned DMEM_BASE = 'h0;
     localparam int unsigned DMEM_SIZE = DMEM_ENTRIES * 4;
-    (* host *) localparam int unsigned FB0_BASE = 'h1800_0000;
-    (* host *) localparam int unsigned FB1_BASE = 'h1840_0000;
+    // The DDR map, from architecture.memory.host_bytes (gpu_config_pkg)
+    (* host *) localparam int unsigned FB0_BASE = gpu_config_pkg::FB0_BASE;
+    (* host *) localparam int unsigned FB1_BASE = gpu_config_pkg::FB1_BASE;
     // GMEM: general data memory in DDR, readable and writable by the GPU
-    (* host *) localparam int unsigned GMEM_BASE = 'h1880_0000;
+    (* host *) localparam int unsigned GMEM_BASE = gpu_config_pkg::GMEM_BASE;
     // Framebuffers hold FB_WIDTH x FB_HEIGHT pixels of one word (0x00RRGGBB),
     // rows packed; the display scans them out at this resolution.
     (* host *) localparam int unsigned FB_WIDTH = 1280;
     (* host *) localparam int unsigned FB_HEIGHT = 720;
     (* host *) localparam int unsigned FB_SIZE = FB_WIDTH * FB_HEIGHT * BYTES_PER_WORD;
-    (* host *) localparam int unsigned GMEM_SIZE = 'h0080_0000;
+    (* host *) localparam int unsigned GMEM_SIZE = gpu_config_pkg::GMEM_SIZE;
 
     localparam logic [XLEN-1:0] INITIAL_PC = 32'h0000_0000;
     localparam logic [XLEN-1:0] NOP_INSTR = 32'h0000_0013;

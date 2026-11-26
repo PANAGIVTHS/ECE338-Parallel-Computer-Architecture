@@ -9,8 +9,8 @@
  *
  * linker_layout.ld is generated for every build (software:programs:layout)
  * from architecture.memory in the configuration and the RTL's memory map. It
- * defines the regions IMEM, DMEM, GDATA (the compiler data at GMEM_BASE) and
- * GFREE (the rest of GMEM), and the symbols __gpu_num_cores and
+ * defines the regions IMEM, DMEM and GDATA (all of GMEM, from GMEM_BASE), and
+ * the symbols __gpu_num_cores and
  * __gpu_stack_stride.
  *
  * DMEM, from byte 0:
@@ -25,8 +25,7 @@
  *                     every launch (software/runtime, docs/runtime-spec.md)
  *   __gmem_data_start .rodata and .data: the image the host writes at load
  *   __bss_start       .bss: zeroed when the module loads
- *   __gmem_data_end
- *   __gmem_free_base  .. __gmem_free_end: free for program buffers
+ *   __gmem_data_end   the rest of GMEM is unused: there is no dynamic allocation
  *
  * The runtime loads the data once per module, with IMEM, not before every
  * launch: globals keep their values from one launch to the next.
@@ -102,8 +101,6 @@ SECTIONS
     } > GDATA
 
     __gmem_data_end  = .;
-    __gmem_free_base = ORIGIN(GFREE);
-    __gmem_free_end  = ORIGIN(GFREE) + LENGTH(GFREE);
 
     /DISCARD/ :
     {

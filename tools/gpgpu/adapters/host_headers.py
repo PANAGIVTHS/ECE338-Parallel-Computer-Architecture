@@ -12,7 +12,7 @@ from pydantic import Field, NonNegativeInt, PositiveInt, StringConstraints
 from gpgpu.api import Step
 
 from .config import Config, Section
-from .design import architecture, rtl_root, rtl_sources
+from .design import architecture, host_map, rtl_root, rtl_sources
 
 CName = Annotated[str, StringConstraints(pattern=r"^[A-Za-z_][A-Za-z0-9_]*$")]
 Header = Annotated[str, StringConstraints(pattern=r".*\.h$")]
@@ -25,6 +25,9 @@ class _Host(Section):
     use_irq: bool
     irq_id: PositiveInt
     boot_program: str | None  # read by design.boot_program()
+    monitor_base: PositiveInt  # these three: design.host_map()
+    monitor_bytes: PositiveInt
+    boot_record_bytes: PositiveInt
 
 
 def _guard(header: Path) -> str:
@@ -57,6 +60,9 @@ def _write_platform(sources: list[Path], include_directory: Path, settings: dict
             package = export.package
             lines += ["", f"/* {package} */"]
         define(export.name, _c_value(export.value, export.hex_digits))
+    lines += ["", "/* The host's share of DDR (software.host): the monitor, its boot record, the programs. */"]
+    for name in ("monitor_base", "monitor_bytes", "boot_record_bytes"):
+        define(name.upper(), f"0x{settings['host_map'][name]:08X}U")
     lines += ["", "/* Completion wait: PS interrupt or IRQ_STATUS polling (software.host). */"]
     define("USE_IRQ", "1" if settings["use_irq"] else "0")
     define("IRQ_ID", f"{settings['irq_id']}U")
@@ -68,7 +74,8 @@ def platform_step(config: Config) -> Step:
     host = config.section("software.host", _Host)
     sources, headers = rtl_sources(config, list(config.get("hardware.vivado.exclude_sources")))
     settings = {"export_attribute": host.export_attribute, "define_prefix": host.define_prefix,
-                "interface_version": architecture(config).interface_version, "use_irq": host.use_irq, "irq_id": host.irq_id}
+                "interface_version": architecture(config).interface_version, "use_irq": host.use_irq, "irq_id": host.irq_id,
+                "host_map": host_map(config)}
     output = config.repo_root / host.platform_header
     return Step(partial(_write_platform, sources, rtl_root(config), settings, output),
                 inputs=(*sources, *headers, Path(__file__)), outputs=(output,), fingerprint=settings)

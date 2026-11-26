@@ -104,29 +104,31 @@ GMEM_BASE + 0x100    constants and globals           up to the end of GMEM
 ```
 
 All device buffers are global variables, placed by the linker. There is no dynamic allocation in this version, so the
-compiler data may fill GMEM and the setting `gmem_data_bytes` goes away. A program that does not fit fails to link.
-The linker script defines `__gpu_launch` and the data sections.
+compiler data may fill GMEM and the setting `gmem_data_bytes` goes away *(done)*. A program that does not fit fails to
+link. The linker script defines `__gpu_launch` and the data sections.
 
 ### 3.5 DDR map
 
-`architecture.memory.host_bytes` is the size of the host region. It determines the rest:
+`architecture.memory` sets the map *(exists)*: `ddr_bytes` is the board's DDR, `host_bytes` the size of the host
+region and `fb_slot_bytes` the DDR of each framebuffer. They determine the rest:
 
-| Region | Rule | Default (`host_bytes` ends at 64 MiB) |
+| Region | Rule | Default |
 |---|---|---|
-| Host: loader and program | `0x0010_0000` to `host_bytes` | `0x0010_0000`, 63 MiB |
+| Host: monitor, boot record, programs | `software.host.monitor_base` to `host_bytes` | `0x0010_0000`, 63 MiB |
 | FB0 | `host_bytes` | `0x0400_0000` |
-| FB1 | FB0 + 4 MiB | `0x0440_0000` |
-| GMEM | FB1 + 4 MiB, to the end of the 512 MiB | `0x0480_0000`, 440 MiB |
+| FB1 | FB0 + `fb_slot_bytes` | `0x0440_0000` |
+| GMEM | FB1 + `fb_slot_bytes`, to `ddr_bytes` | `0x0480_0000`, 440 MiB |
 
-`host_bytes` must be a multiple of 8 MiB, so the RTL decodes GMEM with the upper address bits only. `rtl:config`
-writes the three bases and `GMEM_SIZE` to `gpu_config_pkg.sv`.
+`ddr_bytes`, `host_bytes` and twice `fb_slot_bytes` must be multiples of 8 MiB, so the RTL decodes GMEM with the upper
+address bits only; the decode compares an address with constant bounds. `rtl:config` writes the three bases and
+`GMEM_SIZE` to `gpu_config_pkg.sv`, and the RTL checks that a framebuffer fits its slot. The Vivado flow checks that
+`ddr_bytes` is the PS's DDR (`PCW_DDR_RAM_HIGHADDR`) and gives the GPGPU (HP0) and the VDMA (HP2) a window over all of
+it. Until phase 5 FB0 was `0x1800_0000`, FB1 `0x1840_0000` and GMEM `0x1880_0000` with 8 MiB; the RTL cases that use
+DDR moved with the map, by the same `-0x1400_0000`.
 
-Today FB0 is `0x1800_0000`, FB1 `0x1840_0000` and GMEM `0x1880_0000` with 8 MiB *(exists)*. The change of map needs a
-new bitstream and is phase 5 (section 12). Everything before it works with both maps, because all addresses come
-from `gpgpu_platform.h` and `linker_layout.ld`.
-
-The A9 linker script currently claims all 512 MiB, so nothing stops the host program from growing into the
-framebuffers. The build must end the host region at FB0.
+The host region's layout is `software.host.monitor_base`, `monitor_bytes` and `boot_record_bytes` *(exists)*, written
+to `gpgpu_platform.h` for the monitor and the loader, and used by the Vitis build (the monitor's linker script) and
+the programs' linker script, which ends at FB0.
 
 ### 3.6 Cache coherency
 

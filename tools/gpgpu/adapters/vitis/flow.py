@@ -15,7 +15,7 @@ from tempfile import NamedTemporaryFile
 from gpgpu.api import Step
 
 from ..config import Config, Section
-from ..design import axi_address, vitis_workspace, xsa_path
+from ..design import axi_address, host_map, vitis_workspace, xsa_path
 from ..tools import check_version, version_current
 
 _VENDOR_FLOW = Path(__file__).with_name("vendor_flow.py")
@@ -151,6 +151,7 @@ class VitisFlow:
         self._archive = self._repo / s.default_archive
         self._xsa = xsa_path(config)
         self._base, self._range = axi_address(config)
+        self._host_map = host_map(config)
         self._prefix = [config.tool("vitis"), "-s", str(_VENDOR_FLOW), "--"]
         self._version_current = partial(version_current, "Vitis", config.tool("vitis"), "--version", s.version)
         platform, host = self._workspace / s.platform_name, self._workspace / s.host_name
@@ -181,8 +182,9 @@ class VitisFlow:
         command = [*self._prefix, "host", "--workspace", str(self._workspace), "--component", s.host_name,
                    "--platform", s.platform_name, "--domain", s.domain, "--template", s.template, "--base-address", self._base,
                    "--archive", str(self._archive), "--repo-root", str(self._repo),
-                   # The monitor's MiB from 0x0010_0000, minus the boot record (software/host/xc7z020/gpgpu_boot.h).
-                   "--ddr-length", "0xFF000"]
+                   # The monitor's region (software.host), minus the boot record at its end.
+                   "--ddr-origin", f"0x{self._host_map['monitor_base']:08X}",
+                   "--ddr-length", f"0x{self._host_map['monitor_bytes'] - self._host_map['boot_record_bytes']:X}"]
         command += [argument for source in sources for argument in ("--source", str(source))]
         outputs = (self._elf, self._host_metadata)
         return Step(partial(_run_vitis, command, self._repo, outputs, s.version),

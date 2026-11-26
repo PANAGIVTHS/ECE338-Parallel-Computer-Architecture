@@ -307,7 +307,8 @@ package Perf;
 endpackage
 """)
     header = tmp_path / "platform.h"
-    settings = {"export_attribute": "host", "define_prefix": "GPGPU_", "interface_version": 3, "use_irq": True, "irq_id": 61}
+    settings = {"export_attribute": "host", "define_prefix": "GPGPU_", "interface_version": 3, "use_irq": True, "irq_id": 61,
+                "host_map": {"monitor_base": 0x100000, "monitor_bytes": 0x100000, "boot_record_bytes": 0x1000}}
     _write_platform([package], tmp_path, settings, header)
     lines = {line.split()[1]: line.split(None, 2)[2] for line in header.read_text().splitlines()
              if line.startswith("#define GPGPU_")}

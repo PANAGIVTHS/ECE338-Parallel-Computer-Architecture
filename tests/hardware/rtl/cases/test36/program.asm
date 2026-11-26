@@ -1,7 +1,7 @@
 # DDR: byte and halfword stores over a seeded framebuffer (ddr_seed.mem). WSTRB
 # selects single bytes, so the seed around them must survive, and lanes that
 # share a word must merge. Every store is one burst for up to 32 lanes.
-lui   x5, 0x18002       # x5: FB0 + 0x2000
+lui   x5, 0x04002       # x5: FB0 + 0x2000
 lui   x6, 0x55555
 add   x6, x6, x31
 addi  x6, x6, 0x40      # 0x55555040 + lane: the upper bytes must not land

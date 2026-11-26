@@ -62,8 +62,10 @@ package MemorySubsystemPkg;
         mem_status_t status;
     } decode_t;
 
-    function automatic logic in_range(word_t a, base, size);
-        return (a >= base) && (a - base < size);
+    // Compares with constant bounds, not a - base: with bases and sizes that
+    // are multiples of a large power of two only the upper bits are compared.
+    function automatic logic in_range(word_t a, int unsigned base, int unsigned size);
+        return (a >= base) && ({1'b0, a} < {1'b0, base} + {1'b0, size});
     endfunction
 
     // Every access must be aligned to its own size.

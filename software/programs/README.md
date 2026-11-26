@@ -109,11 +109,10 @@ the configuration sets their sizes.
 | `.text` | IMEM (BRAM), own addresses from 0 | code | — |
 | `.shared` | DMEM (BRAM) from byte 0 | shared memory, undefined when a block starts, no initializers | `GPGPU_SHARED int t[64];` |
 | stack | top of DMEM, `stack_bytes_per_lane` per lane | locals and spills, private per lane | ordinary locals |
-| launch block | GMEM (DDR) at `GMEM_BASE`, 256 bytes | entry, grid and parameters, written by the runtime | the kernel's parameters |
+| launch block | GMEM (DDR, 440 MiB by default) at `GMEM_BASE`, 256 bytes | entry, grid and parameters, written by the runtime | the kernel's parameters |
 | `.rodata` | GMEM after the launch block | `const` tables, string literals | `static const int lut[] = {...};` |
 | `.data` | GMEM after `.rodata` | initialized globals | `GPGPU_DEVICE int count = 100;` |
 | `.bss` | GMEM after `.data` | zero-initialized globals | `GPGPU_DEVICE int slots[32];` |
-| free GMEM | `__gmem_free_base` .. `__gmem_free_end` | free | — |
 
 - The runtime loads the data **once per module load**, with IMEM: it writes
   `.rodata`/`.data` into GMEM and zeroes `.bss`. Globals keep their values from

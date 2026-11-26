@@ -3,7 +3,8 @@
 
 /*
  * How the monitor and the programs it loads share the A9's DDR
- * (docs/runtime-spec.md, section 9.2):
+ * (docs/runtime-spec.md, section 9.2), from software.host in the
+ * configuration (gpgpu_platform.h); by default:
  *
  *   0x0010_0000  the monitor: code, data, stacks and heap, 1 MiB minus 4 KiB
  *   0x001F_F000  the boot record, the last 4 KiB of the monitor's MiB
@@ -18,9 +19,6 @@
 #include "xil_types.h"
 #include "gpgpu_platform.h"
 
-#define GPGPU_MONITOR_BASE        0x00100000U
-#define GPGPU_MONITOR_BYTES       0x00100000U
-#define GPGPU_BOOT_RECORD_BYTES   0x00001000U
 #define GPGPU_BOOT_RECORD_ADDRESS (GPGPU_MONITOR_BASE + GPGPU_MONITOR_BYTES - GPGPU_BOOT_RECORD_BYTES)
 #define GPGPU_PROGRAM_BASE        (GPGPU_MONITOR_BASE + GPGPU_MONITOR_BYTES)
 #define GPGPU_PROGRAM_END         GPGPU_FB0_BASE
@@ -37,7 +35,7 @@ typedef struct {
     char args[GPGPU_BOOT_ARGS_BYTES]; /* argc strings, each ending in '\0' */
 } gpgpu_boot_record_t;
 
-_Static_assert(sizeof(gpgpu_boot_record_t) <= GPGPU_BOOT_RECORD_BYTES, "the boot record must fit its 4 KiB");
+_Static_assert(sizeof(gpgpu_boot_record_t) <= GPGPU_BOOT_RECORD_BYTES, "the boot record must fit software.host.boot_record_bytes");
 
 #define GPGPU_BOOT_RECORD ((volatile gpgpu_boot_record_t *)(UINTPTR)GPGPU_BOOT_RECORD_ADDRESS)
 

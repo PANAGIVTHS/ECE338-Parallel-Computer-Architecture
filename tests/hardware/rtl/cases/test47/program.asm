@@ -7,16 +7,16 @@ slli	x6,x31,0x7
 lui	x2,0x4
 addi	x2,x2,0 # 4000 <__stack_top>
 sub	x2,x2,x6
-lui	x5,0x18800
-lw	x5,0(x5) # 18800000 <__gpu_launch>
+lui	x5,0x04800
+lw	x5,0(x5) # 04800000 <__gpu_launch>
 jalr	x1,0(x5)
 addi	x17,x0,0
 ecall
 addi	x15,x0,5
 bltu	x15,x10,78 <op_result+0x54>
-lui	x14,0x18800
+lui	x14,0x04800
 slli	x15,x10,0x2
-addi	x14,x14,256 # 18800100 <__gmem_data_start>
+addi	x14,x14,256 # 04800100 <__gmem_data_start>
 add	x15,x15,x14
 lw	x15,0(x15)
 jalr	x0,0(x15)
@@ -80,35 +80,35 @@ lw	x20,0(x15)
 auipc	x1,0x0
 jalr	x1,-260(x1) # 24 <op_result>
 andi	x15,x8,7
-lui	x13,0x18800
+lui	x13,0x04800
 slli	x15,x15,0x2
-addi	x13,x13,288 # 18800120 <gain>
+addi	x13,x13,288 # 04800120 <gain>
 add	x13,x13,x15
 andi	x12,x8,3
-lui	x15,0x18800
+lui	x15,0x04800
 slli	x12,x12,0x2
-addi	x15,x15,324 # 18800144 <bias>
+addi	x15,x15,324 # 04800144 <bias>
 add	x15,x15,x12
 lw	x17,0(x13)
-lui	x14,0x18800
+lui	x14,0x04800
 lw	x13,0(x15)
-addi	x14,x14,596 # 18800254 <slots>
-lui	x11,0x18800
-lw	x16,320(x11) # 18800140 <call_count>
+addi	x14,x14,596 # 04800254 <slots>
+lui	x11,0x04800
+lw	x16,320(x11) # 04800140 <call_count>
 add	x15,x10,x17
 add	x14,x14,x21
 lw	x12,0(x14)
 add	x15,x15,x13
-lui	x13,0x18800
+lui	x13,0x04800
 slli	x10,x18,0x2
-addi	x13,x13,280 # 18800118 <offsets>
+addi	x13,x13,280 # 04800118 <offsets>
 add	x13,x13,x10
 add	x15,x15,x16
 lw	x10,0(x13)
 add	x15,x15,x12
 slli	x13,x18,0x5
-lui	x12,0x18800
-lw	x12,4(x12) # 18800004 <__gpu_launch+0x4>
+lui	x12,0x04800
+lw	x12,4(x12) # 04800004 <__gpu_launch+0x4>
 add	x15,x15,x9
 add	x13,x13,x8
 add	x15,x15,x20
@@ -119,11 +119,11 @@ sw	x15,0(x13)
 addi	x15,x12,-1
 bne	x15,x18,1e4 <__shared_end+0xe4>
 lw	x15,320(x11)
-lui	x13,0x18800
+lui	x13,0x04800
 sw	x19,0(x14)
 addi	x15,x15,1
 sw	x15,320(x11)
-sw	x23,724(x13) # 188002d4 <last_op>
+sw	x23,724(x13) # 048002d4 <last_op>
 lw	x1,60(x2)
 lw	x8,56(x2)
 lw	x9,52(x2)
@@ -142,9 +142,9 @@ lw	x14,0(x10)
 add	x11,x11,x15
 sw	x14,0(x11)
 jalr	x0,0(x1)
-lui	x15,0x18800
+lui	x15,0x04800
 addi	x2,x2,-48
-addi	x15,x15,0 # 18800000 <__gpu_launch>
+addi	x15,x15,0 # 04800000 <__gpu_launch>
 sw	x24,8(x2)
 lw	x24,12(x15)
 sw	x1,44(x2)
@@ -199,9 +199,9 @@ beq	x18,x24,2ec <__gpgpu_kernel_memspaces+0xc0>
 addi	x18,x18,1
 bne	x18,x24,2fc <__gpgpu_kernel_memspaces+0xd0>
 jal	x0,2ec <__gpgpu_kernel_memspaces+0xc0>
-lui	x15,0x18800
+lui	x15,0x04800
 addi	x2,x2,-48
-addi	x15,x15,0 # 18800000 <__gpu_launch>
+addi	x15,x15,0 # 04800000 <__gpu_launch>
 sw	x24,8(x2)
 lw	x24,12(x15)
 sw	x1,44(x2)
