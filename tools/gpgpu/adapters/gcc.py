@@ -18,7 +18,10 @@ from .tools import run
 
 # -fno-jump-tables: a switch's table would be .rodata in GMEM, a DDR load before
 # every indirect jump; a kernel that wants one asks with optimize("jump-tables").
-_RISCV_CFLAGS = ("-ffreestanding", "-fno-builtin", "-fomit-frame-pointer", "-ffixed-x31", "-ffunction-sections",
+# x31 holds the lane index; x3 (gp) and x4 (tp) the block index of the runtime's
+# block loop (docs/runtime-spec.md, section 6.2), so no code may allocate them.
+_RISCV_CFLAGS = ("-ffreestanding", "-fno-builtin", "-fomit-frame-pointer", "-ffixed-x31", "-ffixed-x3", "-ffixed-x4",
+                 "-ffunction-sections",
                  "-fdata-sections", "-msmall-data-limit=0", "-mno-relax", "-fno-jump-tables")
 _INSTRUCTION = re.compile(r"^\s*[0-9a-fA-F]+:\s+(\S+)(?:\s+(.*))?$")
 

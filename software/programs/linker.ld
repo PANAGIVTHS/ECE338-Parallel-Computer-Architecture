@@ -22,6 +22,8 @@
  *
  * GMEM, from GMEM_BASE:
  *
+ *   __gpu_launch      the launch block: 256 bytes the runtime host writes before
+ *                     every launch (software/runtime, docs/runtime-spec.md)
  *   __gmem_data_start .rodata and .data: the image the host writes at load
  *   __bss_start       .bss: zeroed when the program loads
  *   __gmem_data_end
@@ -73,7 +75,15 @@ SECTIONS
     __stack_top        = ORIGIN(DMEM) + LENGTH(DMEM);
     __gpu_stack_bottom = __stack_top - __gpu_num_cores * __gpu_stack_stride;
 
-    /* ---- GMEM: compiler data ------------------------------------------- */
+    /* ---- GMEM: launch block, then compiler data ------------------------- */
+
+    /* Entry, grid and parameters of a launch (gpgpu_launch_block_t). Only the
+     * host writes it, so it is not part of the image. */
+    .launch (NOLOAD) :
+    {
+        __gpu_launch = .;
+        . += 256;
+    } > GDATA
 
     .rodata : ALIGN(4)
     {
@@ -116,5 +126,5 @@ SECTIONS
  * fit; these check what the regions cannot. */
 ASSERT(__shared_end <= __gpu_stack_bottom, "GPGPU DMEM overflow: GPGPU_SHARED variables collide with the per-lane stacks")
 ASSERT(__gpu_stack_bottom >= __gpu_args_end, "GPGPU DMEM overflow: the per-lane stacks collide with GPGPU_ARGS")
-ASSERT(__gmem_data_start == ORIGIN(GDATA), "GPGPU layout error: compiler data must start at GMEM_BASE")
+ASSERT(__gpu_launch == ORIGIN(GDATA), "GPGPU layout error: the launch block must be at GMEM_BASE")
 ASSERT(__shared_start == ((__gpu_args_end + 15) & ~15), "GPGPU layout error: .shared must start where GPGPU_SHARED_BASE says")
