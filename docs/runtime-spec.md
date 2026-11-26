@@ -1,19 +1,20 @@
 # GPGPU runtime specification
 
-Version 0.4, 2026-11-26.
+Version 0.5, 2026-11-26.
 
 **Status:** phase 1 (section 12) is implemented: the device ABI, the kernel generator, the module builder, the host
 runtime and the simulator, with `memspaces` as the first program. Phase 2, the board, is implemented: on 2026-11-26
 `memspaces` passed on the board three times in a row without a reset, returning to the monitor each time. Phase 3
 is implemented: every program has a `host.c` and passed in the simulator and on the board on 2026-11-26, loaded one
-after another without a reset. Phases 4 and 5 are design. *(exists)* marks what is in
+after another without a reset. Phase 4 is implemented: the old flow is removed, the monitor's command is `run`,
+and `software.host.boot_program` runs a program in place of the monitor. Phase 5 is design. *(exists)* marks what is in
 the repository; *(prototyped)* means that the construct was compiled with the project's compilers but is not in it.
 
 ## 1. Purpose
 
-Today a program runs on the board through a chain of PC tools: `fpga_run.py`, a per-program `fpga.py` adapter,
-`uart.py` and the commands of the UART monitor. The host side of every application is Python on another machine, and
-a kernel call is a series of word writes over UART.
+Before this runtime, a program ran on the board through a chain of PC tools: `fpga_run.py`, a per-program `fpga.py`
+adapter, `uart.py` and the commands of the UART monitor. The host side of every application was Python on another
+machine, and a kernel call was a series of word writes over UART. Phase 4 removed that flow.
 
 This specification defines a programming model like CUDA's:
 
@@ -84,8 +85,9 @@ holds the `GPGPU_SHARED` variables, and the stacks are at its top.
 - An initializer on a `GPGPU_SHARED` variable is a build error. The linker cannot detect one in a NOLOAD section,
   so the module builder must check.
 - The BRAM serves two accesses per cycle. A load by 32 lanes takes about 20 cycles (measured), not one.
-- `GPGPU_SHARED_FIXED` (terrain) *(exists)* stays, with `GPGPU_SHARED_BASE` equal to 0. Address 0 is then a valid
-  address of a variable, so kernels must not test shared pointers against `NULL`.
+- `GPGPU_SHARED_FIXED` (terrain) *(exists)* stays, with `GPGPU_SHARED_BASE` equal to 0 *(exists)*. Address 0 is then
+  a valid address of a variable, so kernels must not test shared pointers against `NULL`, and they build with
+  `-fno-delete-null-pointer-checks` *(exists)*.
 
 **The stacks stay in this BRAM for now**, 128 bytes per lane. They are logically local memory. Kernels may not assume
 where the stack is, so it can move without changing a kernel. The planned home is one BRAM per lane (32 RAMB18,
@@ -580,8 +582,9 @@ The PC tool sends the loadable segments of the ELF, not the file. Protocol:
 
 1. `load <entry> <segments>`, then for each segment the address, size, CRC-32 and data. The monitor rejects a segment
    outside the program region before it receives data, and checks each CRC.
-2. `exec <name> <arguments>`. The monitor writes the arguments and its return address into the boot record. The
-   command is `exec`, not `run`, until phase 4 removes the old `run`, which starts a kernel.
+2. `run <name> <arguments>`. The monitor writes the arguments and its return address into the boot record. It
+   prints `RUN_START`, then the program's output, then `RUN_RETURN <status>`. (Until phase 4 the command was `exec`,
+   because the old `run` started a kernel.)
 3. The monitor disables interrupts, cleans the data caches and jumps to the entry. Cleaning is required: the program's
    startup code invalidates the caches without writing them back.
 4. The program starts normally: its own vectors, MMU table, stack and `.bss`. The runtime initializes the GPU and the
@@ -598,10 +601,10 @@ Implementation *(exists; passed on the board)*:
 | Part | Where |
 |---|---|
 | Memory map and boot record | `software/host/xc7z020/gpgpu_boot.h` |
-| `load`, `exec`, the jump and the return | `software/host/xc7z020/gpgpu_loader.c` |
+| `load`, `run`, the jump and the return | `software/host/xc7z020/gpgpu_loader.c` |
 | The runtime's backend and `main()` of a program | `software/runtime/host/xc7z020/gpgpu_backend_xc7z020.c` |
 | A program's linker script | `software/runtime/host/xc7z020/lscript.ld.in`, filled by `software programs:<p>:host` |
-| Sending and running a program | `GpgpuUartMonitor.load_program` and `exec_program` in `tools/board/xc7z020/uart.py` |
+| Sending and running a program | `GpgpuUartMonitor.load_program` and `run_program` in `tools/board/xc7z020/uart.py` |
 
 Before the jump the monitor saves its registers on its stack, cleans L1 and L2 and invalidates the instruction cache
 and the branch predictor. On the return it sets VBAR and TTBR0 back to its own vector table and MMU table, resets the
@@ -617,10 +620,16 @@ data waits for an SD card or Ethernet.
 |---|---|
 | `help`, `status`, `perf`, `clear`, `reset`, `display`, `gmemcheck` and its fill | `loadimem*`, `loaddmem*`, `loadgmem_bin` |
 | single word read and write, dumps | `fillgmem`, `filldmem`, `bench` |
-| new: `load`, `exec` | the old `run` |
+| new: `load`, `run` | the old `run`, the autorun |
 
-With `software.host.boot_program` set, `fpga deploy` sends that program in place of the monitor. This replaces the
-autorun header. Such a program has no monitor to return to and stops when `gpgpu_main` returns.
+The table is implemented *(exists)*. `tests/software/host`, which ran the RTL cases on the board over `loadimem`, went
+with the old commands; the simulator and the RTL suites cover the cases.
+
+With `software.host.boot_program` set, `fpga deploy` sends that program in place of the monitor *(exists)*. This
+replaces the autorun header. `software programs:<p>:boot` builds it (`<p>_boot_a9.elf`, `GPGPU_BOOT_PROGRAM`): the
+arguments are `software.runtime.arguments`, built in, because there is no monitor to pass them. It starts the display
+itself, never reads the boot record, which an earlier monitor may have left in DDR, and stops when `gpgpu_main`
+returns. `fpga upload` sends it under the monitor's remote name, so `fpga program` starts whichever it is.
 
 ### 9.4 Commands
 
@@ -632,7 +641,8 @@ autorun header. Such a program has no monitor to return to and stops when `gpgpu
 | `./gpgpu software programs:<p>:sim` | build for the PC and run *(exists)* |
 | `./gpgpu software runtime:check` | every RTL case on the simulator, compared with the Python model *(exists)* |
 | `./gpgpu fpga programs:<p>:run` | build, send over UART, run, show the console, return the program's status *(exists)* |
-| `./gpgpu fpga deploy` | bitstream and monitor, as today |
+| `./gpgpu software programs:<p>:boot` | A9 executable to run in place of the monitor *(exists)* |
+| `./gpgpu fpga deploy` | bitstream and monitor, or `software.host.boot_program` *(exists)* |
 
 Arguments come from `software.runtime.arguments` or `--set`. The UART tool knows the loader protocol and
 nothing about the program.
@@ -662,17 +672,17 @@ It is validated against the Python model: both must produce the same registers, 
 
 | Item | Change |
 |---|---|
-| `fpga_run.py`, `*/fpga.py`, load paths of `program_uart.py` and `uart.py` | removed |
+| `fpga_run.py`, `*/fpga.py`, load paths of `program_uart.py` and `uart.py` | removed *(done)* |
 | `visualize.py` of nbody and differences | reads results printed by the host program |
-| `gpgpu_autorun.h` and its generator | removed |
-| `GPGPU_ARGS`, `GPGPU_START`, `args_words` | removed; C parameters and `GPGPU_GLOBAL` |
-| native x86 `main()` in the kernels | removed once the program runs in the simulator; a reference computation moves to `host.c` |
+| `gpgpu_autorun.h` and its generator | removed *(done)* |
+| `GPGPU_ARGS`, `GPGPU_START`, `args_words` | removed; C parameters and `GPGPU_GLOBAL` *(done)* |
+| native x86 `main()` in the kernels | removed once the program runs in the simulator; a reference computation moves to `host.c` *(done)* |
 | cube, metaballs, julia, mandelbrot, terrain, ripple | the frame number is a parameter; the host counts frames |
 | nbody, nbody-3d | state moves from shared memory to `GPGPU_DEVICE` arrays ; nbody-3d's masses, which the old program never wrote, are set by the host |
 | differences | input in a `GPGPU_DEVICE` array instead of shared memory |
 | memspaces | results in a `GPGPU_DEVICE` array; `call_count` becomes `GPGPU_DEVICE` |
 | simple, stress, memfault, stacktest, subword | buffer addresses become pointer parameters |
-| RTL cases compiled from C (test46) | regenerated in phase 4, launch block in `ddr_seed.mem`; until then test46 is the old `memspaces` |
+| RTL cases compiled from C (test46) | test47 is the runtime's `memspaces`, with the launch block in `ddr_seed.mem`; test46 stays as the old `memspaces`, frozen assembly that the hardware still runs |
 | DOOM | after it merges; its `gp_gmem_*` and `gp_gpu_*` calls map to this API |
 
 ## 12. Implementation order
@@ -687,8 +697,8 @@ Each phase ends with all RTL suites passing and is its own pull request. Phases 
 | 4 | Removal of the old flow, documentation | no reference to the removed tools remains |
 | 5 | RTL: DDR map from config, 440 MiB GMEM, `DMEM` to `SMEM`, `interface_version` 4 | all suites pass, the bitstream meets timing, all programs pass on the board |
 
-Until phase 4 the old flow works for the programs that have not moved. For that time `linker.ld` keeps the `.args`
-region for programs that use `GPGPU_ARGS`, and gives the launch block its place in GMEM for all.
+Until phase 4 the old flow worked for the programs that had not moved, and `linker.ld` kept the `.args` region for
+them. Phase 4 removed both: shared memory starts at DMEM byte 0.
 
 Phase 5 depends on timing: the build of 2026-11-23 misses the 40 MHz clock by 0.106 ns with 84 % of the LUTs in use.
 `perf/timing-closure` should merge first. `feature/doom` changes `GMEM_SIZE` on the same line.

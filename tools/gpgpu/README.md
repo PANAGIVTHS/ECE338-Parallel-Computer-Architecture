@@ -2,7 +2,7 @@
 
 ```bash
 ./gpgpu vivado ip:create             # gpgpu <category> <task>, with its dependencies
-./gpgpu fpga programs:simple:all
+./gpgpu fpga programs:simple:run
 ./gpgpu --set architecture.num_cores=2 vivado system:build
 ./gpgpu vivado system:bitstream      # or stop at any stage of the hardware build
 ./gpgpu vivado --help                # every task of a category, in flow order
@@ -46,7 +46,7 @@ tools/gpgpu/
     board/              Board over SSH, and the UART driver that runs on the board's machine
   bootstrap.py        the only module that knows which adapter implements which port
 tools/tests/          the assembler and GPGPU model scripts that the rtl tasks run
-tools/board/          the UART client, shared with fpga_run.py and the host tests
+tools/board/          the UART client, streamed to the board's machine by the board adapter
 tests/cli/            basic checks, including the import rules below
 ```
 
@@ -93,7 +93,7 @@ warning: `gpgpu vivado system:build` is out of date (ALU.sv changed): using its 
 ```
 
 The one exception is `software`, whose tasks only generate files, in seconds: `needs` may name
-them, so `gpgpu fpga programs:simple:all` still compiles the program it runs, and a stale image
+them, so `gpgpu fpga programs:simple:run` still compiles the program it runs, and a stale image
 cannot reach the board with only a warning. `tests/cli/test_cli.py` enforces this rule.
 
 Only the tasks of the run reach the engine. pydoit would otherwise run the producer of any input

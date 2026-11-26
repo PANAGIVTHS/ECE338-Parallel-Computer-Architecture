@@ -3,39 +3,31 @@
 The `fpga:*` namespace contains board-operation tasks, separate from the Vivado
 and Vitis build stages.
 
-## Upload, load and execute a RISC-V program
+## Run a program
+
+A program (`software/programs/<program>/` with `<program>.c` and `host.c`,
+docs/runtime-spec.md) is an A9 executable that the monitor loads and runs:
 
 ```bash
-./gpgpu fpga programs:simple:upload
-./gpgpu fpga programs:simple:load-imem
-./gpgpu fpga programs:simple:run
-./gpgpu fpga programs:simple:all
+./gpgpu fpga programs:memspaces:run
+./gpgpu --set 'software.runtime.arguments=["8"]' fpga programs:memspaces:run
 ```
 
-For every discovered `<program>/<program>.c`, the dependency chain is:
+The task builds `<program>_a9.elf` (`software programs:<program>:host`),
+copies it to `hardware.fpga.upload.directory` and, on the board's machine,
+sends its loadable segments to the monitor with `load` (each with its CRC-32),
+then starts it with `run <program> <arguments>`. The program's console output
+is shown as it arrives; the task ends when the program returns to the monitor
+(`RUN_RETURN <status>`), with the program's status. A program that hangs the
+A9 never returns: the client gives up after 600 s, and the board needs
+`./gpgpu fpga deploy`. Programs load one after another without a reset.
 
-```text
-RISC-V assembly build + instruction-memory generation
-  → fpga:programs:<program>:upload
-  → fpga:programs:<program>:load-imem
-  → fpga:programs:<program>:run
-  → fpga:programs:<program>:all (aggregate)
-```
-
-Each task includes its predecessors. Compiler outputs remain incremental;
-upload, program load and execution repeat on every invocation. Upload copies
-`<program>_instructions.mem` (IMEM), `<program>_gmem.mem` (the .rodata/.data
-image) and `<program>_layout.json` (the memory layout) from
-`<build-root>/software/programs/<program>/` to `hardware.fpga.upload.directory`
-via SCP. It does not transfer or program the board bitstream/host ELF.
-
-Runtime uses the existing baremetal UART monitor **on the board-connected VM**.
 The CLI streams the repository's shared `tools/board/xc7z020/uart.py` and a small
-driver to VM Python over SSH stdin; it does not install files/packages remotely,
-use minicom interactively, or invent an Agent runtime API. IMEM filenames use
-the SSH upload namespace (`/home/njason/upload`), not the Agent namespace (`/app`).
+driver to the board machine's Python over SSH stdin; it does not install
+files or packages remotely. File names use the SSH upload namespace
+(`/home/njason/upload`), not the Agent namespace (`/app`).
 
-Default runtime configuration:
+Default UART configuration:
 
 ```yaml
 hardware:
@@ -51,60 +43,33 @@ Override these in `config/local.yaml` or with global `--set` options. For exampl
 if the SSH user already has serial access:
 
 ```bash
-./gpgpu --set hardware.fpga.uart.sudo=false fpga programs:simple:all
+./gpgpu --set hardware.fpga.uart.sudo=false fpga programs:simple:run
 ```
 
-The VM interpreter must have `pyserial` installed. With `sudo: true`, commands
-use `sudo -n`; password prompts are never handled. Close minicom and coordinate
-UART ownership with the Agent or other serial clients first. The driver uses a
-nonblocking per-port advisory lock and pyserial exclusive opening, but unrelated
-clients that do not cooperate with those locks can still interfere.
-
-Before opening UART, the uploaded image must contain at least one nonempty
-word, each exactly eight hexadecimal digits (the monitor checks the IMEM size). The driver requires an idle, non-running,
-non-busy device with a complete `idle/running/busy/done` status. Legacy
-`loading/dumping` host monitors are rejected before IMEM mutation; build and
-deploy matching PL and host ELF artifacts before using these tasks.
-IMEM is loaded at word offset zero using `loadimem_bin`, then read back and
-compared. Then the program's data (software/programs/linker.ld) is loaded once:
-`loadgmem_bin` writes .rodata/.data into GMEM, read back with `dumpgmem_bin`,
-and `fillgmem`/`filldmem` zero .bss (GMEM) and the GPGPU_SHARED variables
-(DMEM). GPGPU_ARGS are not written. The run stage rechecks IMEM under its own UART lock before sending
-`run`, preventing a different CLI session's loaded program from being launched
-silently. The host returns to idle automatically after completion; the driver
-checks status again and never sends the removed `done` command. Failures stop
-the dependency chain and retain normal CLI stage logs.
-
-**Scope:** one generic kernel launch after the program load; GPGPU_ARGS keep
-whatever DMEM holds. There is no program-specific adapter initialization,
-GPGPU_ARGS loading, output export, CSV generation or visualization: use
-`software/programs/fpga_run.py` with the program's `fpga.py` adapter for that. Programs such as nbody may require prepared
-DMEM/arguments to produce meaningful results. The board must already be in
-PROJECT mode with the compatible PL and host monitor running. These tasks do
-not reset the board, change mode, or depend on `fpga:program`/`fpga:deploy`.
-The legacy `software/programs/run.sh` is left untouched.
-
-## Run a runtime program
-
-Programs with a `host.c` (docs/runtime-spec.md) are A9 executables that the
-monitor loads and runs:
-
-```bash
-./gpgpu fpga programs:memspaces:run
-./gpgpu --set 'software.runtime.arguments=["8"]' fpga programs:memspaces:run
-```
-
-The task builds `<program>_a9.elf` (`software programs:<program>:host`),
-copies it to `hardware.fpga.upload.directory` and, on the board's machine,
-sends its loadable segments to the monitor with `load` (each with its CRC-32),
-then starts it with `exec <program> <arguments>`. The program's console output
-is shown as it arrives; the task ends when the program returns to the monitor
-(`EXEC_RETURN <status>`), with the program's status. A program that hangs the
-A9 never returns: the client gives up after 600 s, and the board needs
-`./gpgpu fpga deploy`.
+The board machine's interpreter must have `pyserial` installed. With
+`sudo: true`, commands use `sudo -n`; password prompts are never handled. Close
+minicom and coordinate UART ownership with the Agent or other serial clients
+first. The driver uses a nonblocking per-port advisory lock and pyserial
+exclusive opening, but unrelated clients that do not cooperate with those
+locks can still interfere.
 
 The board must run a bitstream and a monitor built from the same branch. A
-monitor without the loader answers `load` with an unknown command.
+monitor without the loader answers `load` with an unknown command. These tasks
+do not reset the board, change mode, or depend on `fpga:program`/`fpga:deploy`.
+
+## A program in place of the monitor
+
+```bash
+./gpgpu --set 'software.runtime.arguments=["0"]' software programs:ripple:boot
+./gpgpu --set software.host.boot_program=ripple fpga deploy
+```
+
+With `software.host.boot_program` set, `fpga:upload` sends that program's
+`<program>_boot_a9.elf` under the monitor's remote name, so `fpga:program`
+starts it instead of the monitor. Its arguments are `software.runtime.arguments`
+at the time of the `:boot` build. It has no monitor to return to and stops when
+`gpgpu_main` returns; `./gpgpu fpga deploy` with `boot_program: null` puts the
+monitor back.
 
 ## Program only or upload and program
 
@@ -148,7 +113,7 @@ With the default configuration, the mapping is:
 | --- | --- |
 | `build/hardware/bitstream/gpgpu_block_design_wrapper.bit` | `gpgpu_platform.bit` |
 | `build/software/vitis/gpgpu_platform/export/gpgpu_platform/hw/sdt/ps7_init.tcl` | `ps7_init.tcl` |
-| `build/software/vitis/gpgpu_host/build/gpgpu_host.elf` | `gpgpu_host.elf` |
+| `build/software/vitis/gpgpu_host/build/gpgpu_host.elf` (the monitor), or `build/software/programs/<p>/<p>_boot_a9.elf` with `software.host.boot_program` | `gpgpu_host.elf` |
 
 The default destination is `njason@192.168.1.13:/home/njason/upload/`. Renaming
 the bitstream on upload keeps the existing manual programming workflow's

@@ -1,16 +1,12 @@
 # GPGPU programs
 
-There are two kinds of programs:
+Every program is a CUDA-like pair, written with the runtime of
+[docs/runtime-spec.md](../../docs/runtime-spec.md): kernels in `<program>.c`
+and a host program in `host.c` that launches them. Programs run in the
+functional simulator on a PC and on the board through the UART monitor's
+loader.
 
-- **Runtime programs** have a `host.c`: kernels in `<program>.c`, written with
-  the runtime of [docs/runtime-spec.md](../../docs/runtime-spec.md), and a host
-  program that launches them like a CUDA program. `memspaces` is the first.
-  They run in the functional simulator on a PC, and on the board through the
-  UART monitor's loader.
-- **Kernel programs** have no `host.c`: one kernel with `GPGPU_ARGS`, run by
-  the UART tools (`fpga_run.py`). The sections after this one are about them.
-
-## Runtime programs
+## Writing a program
 
 ```text
 software/programs/<program>/
@@ -55,10 +51,15 @@ int gpgpu_main(int argc, char **argv)
 
 On the board the monitor (`software/host/xc7z020/main.c`, deployed with
 `./gpgpu fpga deploy`) receives the program over UART with `load`, runs it
-with `exec` and gets it back when `gpgpu_main` returns, without a reset. The
+with `run` and gets it back when `gpgpu_main` returns, without a reset. The
 console output comes back to the PC, and the task's status is the program's.
 The board needs a bitstream and a monitor built from this branch: an older
 monitor has no `load` command.
+
+With `software.host.boot_program: <program>` in the configuration,
+`./gpgpu fpga deploy` starts that program in place of the monitor. Build it
+first with `./gpgpu software programs:<program>:boot`: its arguments are
+`software.runtime.arguments`, built in, and it stops when `gpgpu_main` returns.
 
 The build scans the kernels (`<program>:kernels`), generates their entry code
 and launch functions, links the kernels and turns them into the module
@@ -73,7 +74,11 @@ most 32 bits, a division or high multiply, a call chain deeper than the lane's
 <program>_kernels.h   gpgpu_launch(<kernel>, ...) and <program>_sym_<variable>, for host.c
 <program>_module.c    IMEM and GMEM images, kernel entries, variable addresses
 <program>.elf         the kernels, linked with linker.ld
+<program>.map         its link map
+<program>_dump_real.asm, <program>_program.asm   its disassembly and cleaned listing
 <program>_sim         host.c with the runtime and the simulator, for this PC
+<program>_a9.elf      host.c with the runtime and the board's backend, for the A9
+<program>_boot_a9.elf the same, to run in place of the monitor (software.host.boot_program)
 ```
 
 The simulator follows the hardware: lanes in lockstep, branches decided by
@@ -82,97 +87,55 @@ lanes disagree on, lanes storing different values to one DDR byte. Shared
 memory holds `0xDEADBEEF` when a launch starts. With `GPGPU_SIM_FRAMES=<dir>`,
 every `gpgpu_display()` writes the framebuffer there as a PPM picture.
 
-## Kernel programs
+Rules that come from the hardware:
 
-Each program lives in `software/programs/<program>/` and keeps only source inputs there. A program normally provides `<program>.c` with separate native and RISC-V paths selected by `__riscv`.
-
-```c
-#ifdef __riscv
-#include "../gpgpu_runtime.h"
-
-void kernel_main(void) {
-    unsigned int tid = gpgpu_thread_id();
-
-    // RISC-V kernel code; ordinary C returns to the wrapper.
-}
-GPGPU_START(kernel_main)
-#else
-#include <stdio.h>
-int main(void) {
-    // Native reference implementation
-}
-#endif
-```
-
-`GPGPU_START` places `_start` at PC 0, initializes a private per-lane stack,
-then calls the kernel as a normal function. After it returns, the wrapper loads
-`a7` (`x17`) with service number 0 and executes `ecall` to complete the kernel;
-a defensive infinite loop follows. Other service numbers are currently no-ops.
-`a7` remains an ordinary caller-saved ABI register, not a fixed/reserved
-register. A `ret` / `jalr x0,0(x1)` only returns from a function and does not
-signal completion. Custom entrypoints must use the same service-0 ECALL
-sequence at their real termination sites.
-
-Assembly and IMEM generation retain the complete linked instruction listing,
-including subroutines after RET or ECALL instructions; neither instruction is
-an image boundary.
+- **Branches must be uniform.** Until divergence is implemented all lanes
+  follow lane 0: a kernel computes per-lane choices with masks or arithmetic
+  (`gpgpu_math.h`), and the problem size is a multiple of the 32 lanes (no
+  per-lane `if (i < n)`).
+- **Every array is its own pointer parameter**, and per-frame or per-call
+  setup that is the same for every lane runs on the host and goes in through a
+  `GPGPU_DEVICE` variable.
+- `gpgpu_frames.h` is the host's frame loop for animated programs: draw into
+  the framebuffer that is not shown, show it, report the frame rate.
 
 ## Memory spaces
 
-`linker.ld` places a kernel in three memories; `architecture.memory` in the
-configuration sets their sizes (see `docs/memory-layout.html` to try values).
+`linker.ld` places the kernels in three memories; `architecture.memory` in
+the configuration sets their sizes.
 
 | Space | Memory | What | How a kernel uses it |
 |---|---|---|---|
 | `.text` | IMEM (BRAM), own addresses from 0 | code | — |
-| `GPGPU_ARGS` | DMEM byte 0, `args_words` words | host-written arguments | `GPGPU_ARGS[i]` |
-| `.shared` | DMEM after the args | shared memory, zero at load, no initializers | `GPGPU_SHARED int t[64];` |
+| `.shared` | DMEM (BRAM) from byte 0 | shared memory, undefined when a block starts, no initializers | `GPGPU_SHARED int t[64];` |
 | stack | top of DMEM, `stack_bytes_per_lane` per lane | locals and spills, private per lane | ordinary locals |
-| `.rodata` | GMEM (DDR) from `GMEM_BASE` | `const` tables, string literals | `static const int lut[] = {...};` |
-| `.data` | GMEM after `.rodata` | initialized globals | `int count = 100;` |
-| `.bss` | GMEM after `.data` | zero-initialized globals | `int slots[32];` |
-| free GMEM | `__gmem_free_base` .. `__gmem_free_end` | program buffers | `GPGPU_GMEM_FREE` |
+| launch block | GMEM (DDR) at `GMEM_BASE`, 256 bytes | entry, grid and parameters, written by the runtime | the kernel's parameters |
+| `.rodata` | GMEM after the launch block | `const` tables, string literals | `static const int lut[] = {...};` |
+| `.data` | GMEM after `.rodata` | initialized globals | `GPGPU_DEVICE int count = 100;` |
+| `.bss` | GMEM after `.data` | zero-initialized globals | `GPGPU_DEVICE int slots[32];` |
+| free GMEM | `__gmem_free_base` .. `__gmem_free_end` | free | — |
 
-- The host loads the data **once per program load**, with IMEM: it writes
-  `.rodata`/`.data` into GMEM and zeroes `.bss` and `.shared`. Globals keep
-  their values from one launch to the next, as in CUDA after a module load.
+- The runtime loads the data **once per module load**, with IMEM: it writes
+  `.rodata`/`.data` into GMEM and zeroes `.bss`. Globals keep their values from
+  one launch to the next, as in CUDA. The host reaches the ones marked
+  `GPGPU_DEVICE` or `GPGPU_CONSTANT` with `gpgpu_memcpy_to/from_symbol`.
 - Every lane sees the same globals: a global written by several lanes is a
   race, as on any GPU. Only locals (the stack) are per lane.
-- GMEM is DDR: a load costs far more than a DMEM (BRAM) load. Tables a kernel
-  reads often belong in `GPGPU_SHARED` memory, filled by the kernel or the host.
+- GMEM is DDR: a load costs far more than a shared memory (BRAM) load. Data a
+  kernel reads often belongs in `GPGPU_SHARED` memory, copied in by the block.
+- Shared memory starts at address 0, so a shared pointer may be `NULL`: kernels
+  must not test shared pointers against `NULL` (they build with
+  `-fno-delete-null-pointer-checks`).
 - `-fno-jump-tables` is the default: a `switch` becomes compares and branches.
   A kernel that wants a table (`.rodata`, so a DDR load per dispatch) asks
   with `__attribute__((optimize("jump-tables")))`, and the switch value must be
   the same in every lane.
-- `GPGPU_SHARED_FIXED` reserves one block at `GPGPU_SHARED_BASE`, before the
-  other shared variables, for kernels that need constant addresses (terrain).
-- Host adapters find a variable through `<program>_layout.json`:
-  `self.symbol("name")` and `self.symbol_window("name")` in `fpga.py`.
-- `memspaces`, a runtime program, touches every space of the runtime and its
-  `host.c` checks them.
+- `GPGPU_SHARED_FIXED` reserves one block at `GPGPU_SHARED_BASE` (0), before
+  the other shared variables, for kernels that need constant addresses
+  (terrain).
+- `memspaces` touches every space and its `host.c` checks them.
 
-## Build
-
-Use the task runner so compiler settings, `architecture.num_cores`, and `paths.build.root` come from the resolved configuration:
-
-```bash
-./gpgpu software programs:<program>:all
-./gpgpu software programs:<program>:mem
-```
-
-Generated files are written to:
-
-```text
-<build-root>/software/programs/<program>/
-├── <program>_x86
-├── <program>.elf
-├── <program>.map
-├── <program>_dump_real.asm
-├── <program>_program.asm
-├── <program>_instructions.mem   IMEM image
-├── <program>_gmem.mem           .rodata/.data, '<byte address> <word>' (an RTL case's ddr_seed.mem format)
-└── <program>_layout.json        GPGPU_ARGS, .shared, stacks, .bss and every global's address
-```
+## Build directory
 
 `linker_layout.ld` (the MEMORY regions, from `architecture.memory` and the RTL)
 is written once for all programs to `<build-root>/software/programs/`.
@@ -188,20 +151,5 @@ The source directory is not used for generated artifacts. To select an external 
 The build root must not overlap the repository root or any source/config/tool
 directory; unsafe values are rejected before task dispatch.
 
-## FPGA execution through the VM
-
-```bash
-./gpgpu fpga programs:<program>:upload
-./gpgpu fpga programs:<program>:load-imem
-./gpgpu fpga programs:<program>:run
-./gpgpu fpga programs:<program>:all
-```
-
-Each command includes its prerequisites: RISC-V build, IMEM and data images →
-SCP upload → verified IMEM and GMEM data load through the VM's UART → one kernel launch.
-The compiler is incremental; remote actions repeat. The board must already be
-programmed with the compatible host monitor. These tasks do not write
-program-specific arguments, export CSVs or visualize results; `fpga_run.py`
-with the program's `fpga.py` adapter does.
-See [FPGA CLI flow](../../docs/fpga-cli.md) for VM serial configuration,
-permissions, UART ownership and failure handling. `run.sh` remains untouched.
+See [FPGA CLI flow](../../docs/fpga-cli.md) for the board machine's serial
+configuration, permissions and UART ownership.
