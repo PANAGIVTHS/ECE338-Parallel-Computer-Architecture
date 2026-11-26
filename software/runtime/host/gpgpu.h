@@ -57,6 +57,7 @@ typedef struct {
     uint32_t clock_khz;    /* 0 in the simulator */
     uint32_t imem_bytes;
     uint32_t shared_bytes; /* the BRAM: GPGPU_SHARED variables and the stacks */
+    uint32_t gmem_base;    /* device address of GMEM */
     uint32_t gmem_bytes;
     uint32_t build_id;     /* RTL commit and dirty bit (BUILD_ID), 0 in the simulator */
 } gpgpu_properties_t;

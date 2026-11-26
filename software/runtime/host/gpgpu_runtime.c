@@ -220,6 +220,7 @@ gpgpu_error_t gpgpu_get_properties(gpgpu_properties_t *properties)
     properties->clock_khz = hardware.clock_khz;
     properties->imem_bytes = 4u * hardware.imem_words;
     properties->shared_bytes = hardware.shared_bytes;
+    properties->gmem_base = hardware.gmem_base;
     properties->gmem_bytes = hardware.gmem_size;
     properties->build_id = hardware.build_id;
     return GPGPU_SUCCESS;
