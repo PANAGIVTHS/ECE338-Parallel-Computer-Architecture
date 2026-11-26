@@ -84,6 +84,28 @@ PROJECT mode with the compatible PL and host monitor running. These tasks do
 not reset the board, change mode, or depend on `fpga:program`/`fpga:deploy`.
 The legacy `software/programs/run.sh` is left untouched.
 
+## Run a runtime program
+
+Programs with a `host.c` (docs/runtime-spec.md) are A9 executables that the
+monitor loads and runs:
+
+```bash
+./gpgpu fpga programs:memspaces:run
+./gpgpu --set 'software.runtime.arguments=["8"]' fpga programs:memspaces:run
+```
+
+The task builds `<program>_a9.elf` (`software programs:<program>:host`),
+copies it to `hardware.fpga.upload.directory` and, on the board's machine,
+sends its loadable segments to the monitor with `load` (each with its CRC-32),
+then starts it with `exec <program> <arguments>`. The program's console output
+is shown as it arrives; the task ends when the program returns to the monitor
+(`EXEC_RETURN <status>`), with the program's status. A program that hangs the
+A9 never returns: the client gives up after 600 s, and the board needs
+`./gpgpu fpga deploy`.
+
+The board must run a bitstream and a monitor built from the same branch. A
+monitor without the loader answers `load` with an unknown command.
+
 ## Program only or upload and program
 
 ```bash

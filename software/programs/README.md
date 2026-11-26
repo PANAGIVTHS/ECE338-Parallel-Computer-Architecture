@@ -5,7 +5,8 @@ There are two kinds of programs:
 - **Runtime programs** have a `host.c`: kernels in `<program>.c`, written with
   the runtime of [docs/runtime-spec.md](../../docs/runtime-spec.md), and a host
   program that launches them like a CUDA program. `memspaces` is the first.
-  They run in the functional simulator on a PC; the board follows in phase 2.
+  They run in the functional simulator on a PC, and on the board through the
+  UART monitor's loader.
 - **Kernel programs** have no `host.c`: one kernel with `GPGPU_ARGS`, run by
   the UART tools (`fpga_run.py`). The sections after this one are about them.
 
@@ -48,7 +49,16 @@ int gpgpu_main(int argc, char **argv)
 ./gpgpu --set 'software.runtime.arguments=["8"]' software programs:<program>:sim
 ./gpgpu software programs:<program>:all        # kernels, their listing and the simulator program
 ./gpgpu software runtime:check                 # the simulator against the Python model, every RTL case
+./gpgpu software programs:<program>:host       # the A9 executable, against the platform's BSP
+./gpgpu fpga programs:<program>:run            # send it to the board's monitor over UART and run it
 ```
+
+On the board the monitor (`software/host/xc7z020/main.c`, deployed with
+`./gpgpu fpga deploy`) receives the program over UART with `load`, runs it
+with `exec` and gets it back when `gpgpu_main` returns, without a reset. The
+console output comes back to the PC, and the task's status is the program's.
+The board needs a bitstream and a monitor built from this branch: an older
+monitor has no `load` command.
 
 The build scans the kernels (`<program>:kernels`), generates their entry code
 and launch functions, links the kernels and turns them into the module

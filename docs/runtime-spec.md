@@ -3,7 +3,8 @@
 Version 0.4, 2026-11-26.
 
 **Status:** phase 1 (section 12) is implemented: the device ABI, the kernel generator, the module builder, the host
-runtime and the simulator, with `memspaces` as the first program. Phases 2 to 5 are design. *(exists)* marks what is in
+runtime and the simulator, with `memspaces` as the first program. Phase 2, the board, is implemented and builds, but
+has not run on the board yet. Phases 3 to 5 are design. *(exists)* marks what is in
 the repository; *(prototyped)* means that the construct was compiled with the project's compilers but is not in it.
 
 ## 1. Purpose
@@ -577,7 +578,8 @@ The PC tool sends the loadable segments of the ELF, not the file. Protocol:
 
 1. `load <entry> <segments>`, then for each segment the address, size, CRC-32 and data. The monitor rejects a segment
    outside the program region before it receives data, and checks each CRC.
-2. `run <arguments>`. The monitor writes the arguments and its return address into the boot record.
+2. `exec <name> <arguments>`. The monitor writes the arguments and its return address into the boot record. The
+   command is `exec`, not `run`, until phase 4 removes the old `run`, which starts a kernel.
 3. The monitor disables interrupts, cleans the data caches and jumps to the entry. Cleaning is required: the program's
    startup code invalidates the caches without writing them back.
 4. The program starts normally: its own vectors, MMU table, stack and `.bss`. The runtime initializes the GPU and the
@@ -589,6 +591,21 @@ The PC tool sends the loadable segments of the ELF, not the file. Protocol:
 A program that crashes or hangs the A9 needs `fpga deploy`. Steps 3 and 5 are the part of this design with the most
 risk and must be tried on the board first.
 
+Implementation *(exists, not run on the board)*:
+
+| Part | Where |
+|---|---|
+| Memory map and boot record | `software/host/xc7z020/gpgpu_boot.h` |
+| `load`, `exec`, the jump and the return | `software/host/xc7z020/gpgpu_loader.c` |
+| The runtime's backend and `main()` of a program | `software/runtime/host/xc7z020/gpgpu_backend_xc7z020.c` |
+| A program's linker script | `software/runtime/host/xc7z020/lscript.ld.in`, filled by `software programs:<p>:host` |
+| Sending and running a program | `GpgpuUartMonitor.load_program` and `exec_program` in `tools/board/xc7z020/uart.py` |
+
+Before the jump the monitor saves its registers on its stack, cleans L1 and L2 and invalidates the instruction cache
+and the branch predictor. On the return it sets VBAR and TTBR0 back to its own vector table and MMU table, resets the
+stack of every processor mode to its own, and returns from the call with the program's status. The monitor occupies
+1 MiB minus the 4 KiB of the boot record: the Vitis host build limits its DDR region to that.
+
 At 115200 baud 72 KB, the size of the current host image, takes 6 to 7 seconds. Input data is linked into the program. Large
 data waits for an SD card or Ethernet.
 
@@ -598,7 +615,7 @@ data waits for an SD card or Ethernet.
 |---|---|
 | `help`, `status`, `perf`, `clear`, `reset`, `display`, `gmemcheck` and its fill | `loadimem*`, `loaddmem*`, `loadgmem_bin` |
 | single word read and write, dumps | `fillgmem`, `filldmem`, `bench` |
-| new: `load`, `run` | the old `run` |
+| new: `load`, `exec` | the old `run` |
 
 With `software.host.boot_program` set, `fpga deploy` sends that program in place of the monitor. This replaces the
 autorun header. Such a program has no monitor to return to and stops when `gpgpu_main` returns.
@@ -609,18 +626,18 @@ autorun header. Such a program has no monitor to return to and stops when `gpgpu
 |---|---|
 | `./gpgpu software programs:<p>:kernels` | `<p>_entry.c` and `<p>_kernels.h` *(exists)* |
 | `./gpgpu software programs:<p>:module` | kernel ELF and module *(exists)* |
-| `./gpgpu software programs:<p>:host` | A9 executable |
+| `./gpgpu software programs:<p>:host` | A9 executable *(exists)* |
 | `./gpgpu software programs:<p>:sim` | build for the PC and run *(exists)* |
 | `./gpgpu software runtime:check` | every RTL case on the simulator, compared with the Python model *(exists)* |
-| `./gpgpu fpga programs:<p>:run` | build, send over UART, run, show the console, return the program's status |
+| `./gpgpu fpga programs:<p>:run` | build, send over UART, run, show the console, return the program's status *(exists)* |
 | `./gpgpu fpga deploy` | bitstream and monitor, as today |
 
 Arguments come from `software.runtime.arguments` or `--set`. The UART tool knows the loader protocol and
 nothing about the program.
 
-The A9 executable is meant to be linked with `arm-none-eabi-gcc` directly against the exported board support package,
-without one Vitis component per program. If that does not work, the fallback is one component per program, as
-`feature/doom` does.
+The A9 executable is linked with `arm-none-eabi-gcc` (`tools.arm_gcc`) directly against the board support package
+that `vitis build:platform` exports, without one Vitis component per program *(exists)*. Its stack and heap are
+`software.runtime.board_stack_bytes` and `board_heap_bytes`.
 
 ## 10. Functional simulator
 
@@ -708,8 +725,8 @@ Phase 5 depends on timing: the build of 2026-11-23 misses the 40 MHz clock by 0.
 | Point | How it is settled |
 |---|---|
 | Cost of a parameter load from DDR | measure in phase 1 with the RTL bench; a constant bank in RTL if it matters |
-| Return from a program to the monitor | try on the board at the start of phase 2; fallback is a deploy per program |
-| Link without a Vitis component | try at the start of phase 2 |
+| Return from a program to the monitor | implemented; to try on the board. Fallback: a deploy per program |
+| Link without a Vitis component | works: memspaces links against the BSP; not run on the board yet |
 | Baud rate above 115200 | try in phase 2 |
 | Timing of the stack BRAMs | separate RTL experiment after phase 5 |
 
