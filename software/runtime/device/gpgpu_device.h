@@ -50,6 +50,13 @@
  * in the BRAM. Its contents are undefined when a block starts; no initializer. */
 #define GPGPU_SHARED __attribute__((section(".shared")))
 
+/* GPGPU_SHARED_BASE (gpgpu_types.h) is where it starts. */
+
+/* One block of shared memory at exactly GPGPU_SHARED_BASE, before every other
+ * GPGPU_SHARED variable: for a kernel that needs the addresses as constants,
+ * e.g. to load with `lw rd, OFFSET(x0)` (terrain). One per program. */
+#define GPGPU_SHARED_FIXED __attribute__((section(".shared.fixed"), used))
+
 /* ---- Indices ----------------------------------------------------------- */
 
 /* The launch block at GMEM_BASE (linker.ld): grid and parameters. */
