@@ -1,10 +1,12 @@
 #ifndef mandelbrot_h
 #define mandelbrot_h
 
-#include "../gpgpu_math.h"
+#include "gpgpu_math.h"
 
 /*
- * Escape-time fractals (mandelbrot, julia) drawn into a framebuffer.
+ * Escape-time fractals (mandelbrot, julia) drawn into a framebuffer. The host
+ * computes each frame's view (fractal_t) and checks frames with
+ * fractal_sample(); the kernel draws them with fractal_render().
  *
  * Fixed-point format: Q20 (1.0 = 1048576).
  *
@@ -120,81 +122,117 @@ INLINE unsigned int fractal_sample(int px, int py, int width, int height, int fr
     return ((unsigned int)r << 16) | ((unsigned int)g << 8) | (unsigned int)b;
 }
 
-#ifdef __riscv
-
-#include "../gpgpu_runtime.h"
+/* ---- The Mandelbrot zoom (mandelbrot.c): the view of each frame ---- */
 
 /*
- * Draw one frame of *f into the framebuffer, then advance the frame counter.
+ * Endless Mandelbrot zoom: from the whole set down to the small copy of it
+ * on the antenna at (-1.7685, 0), then over again.
  *
- * Args (the ripple convention):
- *   GPGPU_ARGS[0] = framebuffer base, byte address (GPGPU_FB0_BASE or GPGPU_FB1_BASE)
- *   GPGPU_ARGS[1] = width in pixels, a multiple of 2 * GPGPU_NUM_CORES
- *   GPGPU_ARGS[2] = height in pixels, even
- *   GPGPU_ARGS[3] = frame number
+ * Each frame shrinks the view by 1/2^MANDEL_ZOOM_SHIFT, for MANDEL_ZOOM_FRAMES
+ * frames (about 7.6x). That is about as deep as Q20 with the pre-shifted
+ * multiply goes before the picture turns blocky (see mandelbrot.h). The
+ * view's center moves from the whole set's to the copy's as the zoom goes,
+ * so the copy glides into the middle while it grows. The palette cycles with
+ * the frame.
+ *
+ * mandelbrot.h draws it: every pixel runs all MANDEL_ITER iterations (no
+ * early exit, so no divergence), one sample per 2x2 pixels.
+ */
+
+/* Iterations per sample; the cost of a frame is close to proportional. */
+#define MANDEL_ITER 32
+
+/* Centers, Q20: the whole set's (-0.75, 0) and the copy's (-1.7685, 0). */
+#define MANDEL_START_RE (-786432)
+#define MANDEL_START_IM 0
+#define MANDEL_TARGET_RE (-1854407)
+#define MANDEL_TARGET_IM 0
+
+/* Pixel step at the start of each zoom: 2.5 across 1280 pixels, Q20. */
+#define MANDEL_START_STEP 2048
+
+/* Frames per zoom (a power of two: frame & (MANDEL_ZOOM_FRAMES - 1) picks
+ * the frame within it), and the step shrinks by step >> MANDEL_ZOOM_SHIFT
+ * per frame: (31/32)^63 = 1 / 7.4 at the last frame. */
+#define MANDEL_ZOOM_FRAMES 64
+#define MANDEL_ZOOM_SHIFT 5
+
+/* The share of the way left to go, as (step - end) / (start - end), in Q12. */
+#define MANDEL_BLEND_SHIFT 12
+
+INLINE void mandel_setup(volatile fractal_t *f, int frame)
+{
+    int k = frame & (MANDEL_ZOOM_FRAMES - 1);
+    int step = MANDEL_START_STEP, end = MANDEL_START_STEP;
+
+    /* The same counts in every lane. */
+    for (int i = 1; i < MANDEL_ZOOM_FRAMES; i++) {
+        end -= end >> MANDEL_ZOOM_SHIFT;
+        if (i == k)
+            step = end;
+    }
+
+    /* (start - target) / 4 * left stays under 2^31 for the centers above;
+     * the / 4 costs 2 of 20 fraction bits. */
+    int left = (int)udiv_uniform((unsigned int)(step - end) << MANDEL_BLEND_SHIFT,
+                                 (unsigned int)(MANDEL_START_STEP - end));
+
+    f->julia = 0;
+    f->cx = MANDEL_TARGET_RE +
+            ((((MANDEL_START_RE - MANDEL_TARGET_RE) >> 2) * left) >> (MANDEL_BLEND_SHIFT - 2));
+    f->cy = MANDEL_TARGET_IM +
+            ((((MANDEL_START_IM - MANDEL_TARGET_IM) >> 2) * left) >> (MANDEL_BLEND_SHIFT - 2));
+    f->step = step;
+    f->max_iter = MANDEL_ITER;
+}
+
+#ifdef __riscv
+
+#include "gpgpu_device.h"
+
+/*
+ * Row pair `block_idx_y` of one frame of *view: launch over
+ * gpgpu_dim3(1, height / 2). width is a multiple of 2 * GPGPU_NUM_CORES.
  *
  * Each sample colors a 2x2 block: lane j computes the sample of pixels
  * x0 + 2j, x0 + 2j + 1 in rows y and y + 1, and the lanes swap samples
- * through `samples` in DMEM so each store still writes GPGPU_NUM_CORES
- * consecutive pixels (one DDR burst). That is a quarter of the escape loops
- * of full resolution.
+ * through `samples` in shared memory so each store still writes
+ * GPGPU_NUM_CORES consecutive pixels (one DDR burst). That is a quarter of
+ * the escape loops of full resolution.
  *
- * Each lane's stack is only GPGPU_STACK_STRIDE bytes, too small for the
- * spills of this loop nest. So the loops keep only y and x0 in registers
- * across the escape loop: the arguments are reloaded (GPGPU_ARGS is
- * volatile) and *f is in DMEM.
+ * The view is copied from GMEM into shared memory first (`local`), so the
+ * escape loop reads it from the BRAM. Every lane stores the same values.
  */
-INLINE void fractal_render(volatile const fractal_t *f, volatile unsigned int *samples)
+INLINE void fractal_render(unsigned int *fb, int width, int height, int frame, const fractal_t *view,
+                           volatile fractal_t *local, volatile unsigned int *samples)
 {
     const int cores = (int)GPGPU_NUM_CORES;
+    const int y = FRACTAL_BLOCK * (int)gpgpu_block_idx_y();
 
-    for (int y = 0; y < GPGPU_ARGS[2]; y += FRACTAL_BLOCK) {
-        for (int x0 = 0; x0 < GPGPU_ARGS[1]; x0 += FRACTAL_BLOCK * cores) {
-            int tid = (int)gpgpu_thread_id();
+    local->julia = view->julia;
+    local->cx = view->cx;
+    local->cy = view->cy;
+    local->step = view->step;
+    local->max_iter = view->max_iter;
+    gpgpu_syncthreads();
 
-            samples[tid] = fractal_sample(x0 + FRACTAL_BLOCK * tid, y, GPGPU_ARGS[1],
-                                          GPGPU_ARGS[2], GPGPU_ARGS[3], f);
+    for (int x0 = 0; x0 < width; x0 += FRACTAL_BLOCK * cores) {
+        int tid = (int)gpgpu_thread_idx();
 
-            /* The store above completes in every lane before these loads:
-             * the warp waits for all lanes' responses to each access.
-             * Output pixel x0 + tid shows sample tid / 2, and x0 + cores +
-             * tid shows sample cores / 2 + tid / 2. */
-            tid = (int)gpgpu_thread_id();
-            unsigned int a = samples[tid >> 1];
-            unsigned int b = samples[(cores >> 1) + (tid >> 1)];
-            int width = GPGPU_ARGS[1];
-            volatile unsigned int *p =
-                (volatile unsigned int *)(uintptr_t)GPGPU_ARGS[0] + y * width + x0 + tid;
+        samples[tid] = fractal_sample(x0 + FRACTAL_BLOCK * tid, y, width, height, frame, local);
+        gpgpu_syncthreads();
 
-            p[0] = a;
-            p[cores] = b;
-            p[width] = a;
-            p[width + cores] = b;
-        }
-    }
+        /* Output pixel x0 + tid shows sample tid / 2, and x0 + cores + tid
+         * shows sample cores / 2 + tid / 2. */
+        unsigned int a = samples[tid >> 1];
+        unsigned int b = samples[(cores >> 1) + (tid >> 1)];
+        volatile unsigned int *p = fb + y * width + x0 + tid;
 
-    /* Every lane stores the same value. */
-    GPGPU_ARGS[3] = GPGPU_ARGS[3] + 1;
-}
-
-#else
-
-#include <stdio.h>
-
-/* The x86 reference: the same frame as a binary PPM on stdout. */
-static void fractal_ppm(const fractal_t *f, int width, int height, int frame)
-{
-    printf("P6\n%d %d\n255\n", width, height);
-    for (int y = 0; y < height; y++) {
-        for (int x = 0; x < width; x++) {
-            /* The sample of the 2x2 block the pixel is in. */
-            unsigned int color = fractal_sample(x & ~(FRACTAL_BLOCK - 1), y & ~(FRACTAL_BLOCK - 1),
-                                                width, height, frame, f);
-
-            putchar((color >> 16) & 0xFF);
-            putchar((color >> 8) & 0xFF);
-            putchar(color & 0xFF);
-        }
+        p[0] = a;
+        p[cores] = b;
+        p[width] = a;
+        p[width + cores] = b;
+        gpgpu_syncthreads();
     }
 }
 

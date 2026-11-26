@@ -12,7 +12,7 @@ from pydantic import Field, NonNegativeInt, PositiveInt, StringConstraints
 from gpgpu.api import Step
 
 from .config import Config, Section
-from .design import architecture, program_names, program_output, rtl_root, rtl_sources
+from .design import architecture, legacy_program_names, program_output, rtl_root, rtl_sources
 
 CName = Annotated[str, StringConstraints(pattern=r"^[A-Za-z_][A-Za-z0-9_]*$")]
 Header = Annotated[str, StringConstraints(pattern=r".*\.h$")]
@@ -158,8 +158,9 @@ def autorun_program(config: Config) -> str | None:
 def autorun_step(config: Config) -> Step:
     host = config.section("software.host", _Host)
     autorun = host.autorun
-    if autorun.enabled and autorun.program not in program_names(config):
-        raise ValueError(f"software.host.autorun.program must be one of: {', '.join(program_names(config))}")
+    # Autorun runs a GPGPU_ARGS kernel; runtime programs (host.c) get software.host.boot_program (runtime-spec 9.3).
+    if autorun.enabled and autorun.program not in legacy_program_names(config):
+        raise ValueError(f"software.host.autorun.program must be one of: {', '.join(legacy_program_names(config))}")
     settings = {**autorun.model_dump(), "define_prefix": host.define_prefix}
     output = config.repo_root / autorun.header
     this = Path(__file__)

@@ -62,7 +62,7 @@ def test_the_real_graph_loads_with_valid_categories():
     catalog = workspace._catalog
     assert not catalog.failures and not catalog.unavailable
     assert {"fpga", "rtl", "software", "vitis", "vivado"} <= {task.category for task in catalog.tasks.values()}
-    assert {"vivado:ip:create", "rtl:identity", "fpga:programs:simple:run", "fpga:programs:ripple:all"} <= catalog.tasks.keys()
+    assert {"vivado:ip:create", "rtl:identity", "fpga:programs:simple:run"} <= catalog.tasks.keys()
     assert workspace.projects() == ["ip", "system"]
     assert [task.command for task in workspace.tasks("vivado")] == [
         "ip:create", "ip:build", "system:create", "system:synthesis", "system:implementation", "system:bitstream", "system:build"]
