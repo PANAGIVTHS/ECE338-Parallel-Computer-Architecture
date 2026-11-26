@@ -2,8 +2,9 @@
 
 Version 0.4, 2026-11-26.
 
-**Status: design.** Nothing here is implemented unless it is marked *(exists)*. *(prototyped)* means that the
-construct was compiled with the project's compilers but is not in the repository.
+**Status:** phase 1 (section 12) is implemented: the device ABI, the kernel generator, the module builder, the host
+runtime and the simulator, with `memspaces` as the first program. Phases 2 to 5 are design. *(exists)* marks what is in
+the repository; *(prototyped)* means that the construct was compiled with the project's compilers but is not in it.
 
 ## 1. Purpose
 
@@ -245,15 +246,14 @@ Parameter rules:
 - A kernel has at most 56 parameters.
 - A type that a parameter points to must be a C type, or be defined in `<p>.h`, because the host sees it too.
 
-The build adds to `<p>.c` what `nvcc` adds to a CUDA kernel *(prototyped: a generator of about 45 lines of Python,
-compiled with the RISC-V, ARM and x86 compilers; not run)*:
+The build adds to `<p>.c` what `nvcc` adds to a CUDA kernel *(exists: `tools/gpgpu/adapters/runtime_build.py`)*:
 
 1. **Scan.** `<p>.c` is compiled with `-DGPGPU_SCAN -aux-info`. In this pass `GPGPU_GLOBAL` places a function in a
    marker section of the object file, so the object's symbols are the list of kernels. `-aux-info` makes GCC write the
    prototype of every function, so no C parser is needed. An error in a kernel is reported here, at its line in `<p>.c`.
 2. **Entry code.** `<p>_entry.c` includes `<p>.c` and adds `__gpgpu_kernel_<kernel>` for each kernel: it loads the
    parameters and the grid and calls the kernel for every block. In this pass `GPGPU_GLOBAL` is
-   `static inline __attribute__((always_inline))`, so the call disappears. The kernel ELF is built from this file.
+   `static __attribute__((noinline))`. The kernel ELF is built from this file.
 3. **Host header.** `<p>_kernels.h` has a typed function `<kernel>_launch(grid, ...)` for each kernel and the symbols of
    section 5.3. It includes `<p>.h` if there is one.
 
@@ -293,7 +293,7 @@ for (z = 0; z < grid_z; z++)
         for (x = 0; x < grid_x; x++) {
             tp = x | y << 16;
             gp = z;
-            my_kernel(factor); /* inlined */
+            my_kernel(factor); /* a call, section 6.3 */
         }
 ```
 
@@ -436,8 +436,11 @@ returns, `_start` executes `ecall` with `a7 = 0`.
 
 There is one START and one completion interrupt per launch, whatever the grid size. No RTL change is needed.
 
-For small test kernels, GCC inlined the body into the block loop and used no stack. The parameters were loaded
-before the loop. A kernel with many live values will still spill *(prototyped)*.
+The kernel is a function of its own, called once per block, not inlined into the loop. Inlined, GCC keeps the
+kernel's loop invariants live across the block loop: for `memspaces` the frame grew to 160 bytes, past the 128 of a
+lane, and the lanes overwrote each other's stacks. Called, the kernel recomputes them in each block, which costs ALU
+instructions instead of shared-memory spills, and the entry needs 48 bytes. The module builder adds up the frames of
+every call chain from each entry and rejects a kernel that does not fit the lane's stack.
 
 A fault ends the whole launch. The fault report has the PC and the lanes, not the block index.
 
@@ -536,7 +539,7 @@ The call is asynchronous with one slot: the host can work while one kernel runs.
 A launch error is returned by the first call that waits. The contents of global variables after a
 fault or timeout are undefined.
 
-**Timeout.** `software.host.launch_timeout_ms`, 0 for none, counts from START. A waiting call that sees it expire
+**Timeout.** `software.runtime.launch_timeout_ms`, 0 for none, counts from START. A waiting call that sees it expire
 writes STOP, waits a short fixed time for IDLE and clears the STOPPED latch. The limit is checked only while the host
 waits. Today the driver waits forever *(exists)*.
 
@@ -604,14 +607,15 @@ autorun header. Such a program has no monitor to return to and stops when `gpgpu
 
 | Command | Action |
 |---|---|
-| `./gpgpu software programs:<p>:kernels` | `<p>_entry.c` and `<p>_kernels.h` |
-| `./gpgpu software programs:<p>:module` | kernel ELF and module |
+| `./gpgpu software programs:<p>:kernels` | `<p>_entry.c` and `<p>_kernels.h` *(exists)* |
+| `./gpgpu software programs:<p>:module` | kernel ELF and module *(exists)* |
 | `./gpgpu software programs:<p>:host` | A9 executable |
-| `./gpgpu software programs:<p>:sim` | build for the PC and run |
+| `./gpgpu software programs:<p>:sim` | build for the PC and run *(exists)* |
+| `./gpgpu software runtime:check` | every RTL case on the simulator, compared with the Python model *(exists)* |
 | `./gpgpu fpga programs:<p>:run` | build, send over UART, run, show the console, return the program's status |
 | `./gpgpu fpga deploy` | bitstream and monitor, as today |
 
-Arguments come from `software.programs.arguments.<p>` or `--set`. The UART tool knows the loader protocol and
+Arguments come from `software.runtime.arguments` or `--set`. The UART tool knows the loader protocol and
 nothing about the program.
 
 The A9 executable is meant to be linked with `arm-none-eabi-gcc` directly against the exported board support package,
