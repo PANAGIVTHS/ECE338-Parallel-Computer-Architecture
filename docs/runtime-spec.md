@@ -10,8 +10,9 @@ after another without a reset. Phase 4 is implemented: the old flow is removed, 
 and `software.host.boot_program` runs a program in place of the monitor. Phase 5 is implemented: the DDR map comes from
 the configuration (GMEM 440 MiB at `0x0480_0000`), DMEM is shared memory (`SMEM`) everywhere and `interface_version` is
 4. On 2026-11-26 every program passed on the board with that bitstream, loaded one after another without a reset. The
-bitstream misses 40 MHz by 0.308 ns on 63 endpoints, all in the display's `v_axi4s_vid_out` FIFO on `clk_fpga_0`
-(mostly routing, 82 % of the LUTs in use), so phase 5's timing condition waits for `perf/timing-closure`. *(exists)* marks what is in
+bitstream misses 40 MHz by 0.308 ns on 63 endpoints of `clk_fpga_0`: the `len` field of the DDR read and write rings,
+at the end of the single-cycle path that forms a DDR burst from the lanes' addresses (`ddrGroupFormer`, 33 logic levels,
+72 % routing, 82 % of the LUTs in use). The same path missed by 0.309 ns on 2026-11-12 and by 0.106 ns on 2026-11-23. *(exists)* marks what is in
 the repository; *(prototyped)* means that the construct was compiled with the project's compilers but is not in it.
 
 ## 1. Purpose
