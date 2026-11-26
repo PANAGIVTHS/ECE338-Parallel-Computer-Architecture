@@ -35,9 +35,10 @@
 #define GPGPU_CONSTANT __attribute__((used, section(".gpgpu_constant")))
 #else
 /* A kernel: a function returning void whose parameters are pointers or
- * integers of at most 32 bits. The entry code calls it for every block, and
- * it is inlined there. */
-#define GPGPU_GLOBAL   static inline __attribute__((always_inline))
+ * integers of at most 32 bits. The entry code calls it for every block. It is
+ * not inlined there: the compiler would keep the kernel's loop invariants live
+ * across the block loop, and spill them into the 128-byte stack of the lane. */
+#define GPGPU_GLOBAL   static __attribute__((noinline))
 /* A global variable in GMEM that the host reaches by symbol. In .data, or in
  * .bss without a value, like any global; not static. */
 #define GPGPU_DEVICE   __attribute__((used))

@@ -140,6 +140,13 @@ software:
       # platform_header such as GPGPU_FB0_BASE. Unlisted words are 0.
       args: [GPGPU_FB0_BASE, GPGPU_FB_WIDTH, GPGPU_FB_HEIGHT, 0]
       display: 0
+  # The runtime of programs with a host program (host.c; docs/runtime-spec.md).
+  runtime:
+    # How long a launch may run before the runtime stops it and the next
+    # call that waits returns GPGPU_ERROR_TIMEOUT; 0 for no limit.
+    launch_timeout_ms: 10000
+    # Arguments of gpgpu_main(argc, argv) for `software programs:<p>:sim`.
+    arguments: []
   # Every build of a program, RISC-V kernel and native x86 alike, so both
   # builds of a program are compiled the same way: -O0, -O1, -O2, -O3, -Os
   # or -Og.

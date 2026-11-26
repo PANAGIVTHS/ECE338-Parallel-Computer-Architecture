@@ -8,12 +8,16 @@ from functools import partial
 from pathlib import Path
 from typing import Literal
 
+from pydantic import NonNegativeInt
+
 from gpgpu.api import GpgpuError, Step
 
 from . import host_headers
 from .config import Config, Section
-from .design import architecture, memory_layout, program_names, program_output, rtl_constants_path
+from .design import (architecture, memory_layout, program_names, program_output, rtl_constants_path, runtime_program,
+                     runtime_program_names)
 from .program_image import write_linker_layout, write_program_files
+from .runtime_build import check_cases, generate_kernels, write_hw_header, write_module
 from .tools import run
 
 # -fno-jump-tables: a switch's table would be .rodata in GMEM, a DDR load before
@@ -33,6 +37,19 @@ class _Programs(Section):
 class _Riscv(Section):
     march: str
     abi: str
+
+
+class _Runtime(Section):
+    launch_timeout_ms: NonNegativeInt
+    arguments: list[str]
+
+
+def _run_program(command: list[str], cwd: Path) -> None:
+    """Run a host program in the simulator; its status is the task's."""
+    cwd.mkdir(parents=True, exist_ok=True)
+    status = subprocess.run(command, cwd=cwd).returncode
+    if status != 0:
+        raise RuntimeError(f"{Path(command[0]).name} exited with status {status}")
 
 
 def _instructions(listing: Path) -> list[tuple[str, str]]:
@@ -81,6 +98,10 @@ class GccToolchain:
         self._native_cc, self._riscv_cc = config.tool("native_cc"), config.tool("riscv_gcc")
         if not self._riscv_cc.endswith("-gcc"):
             raise GpgpuError("tools.riscv_gcc.command must end in '-gcc', so objdump and nm can be derived from it")
+        self._runtime = config.repo_root / "software/runtime"
+        self._runtime_build = config.build_root / "software/runtime"
+        self._runtime_settings = config.section("software.runtime", _Runtime)
+        self._ddr_enable = architecture(config).ddr_enable
 
     def _binutil(self, tool: str) -> str:
         return f"{self._riscv_cc[:-3]}{tool}"
@@ -94,6 +115,94 @@ class GccToolchain:
 
     def programs(self) -> list[str]:
         return program_names(self._config)
+
+    def runtime_programs(self) -> list[str]:
+        return runtime_program_names(self._config)
+
+    # ---- Runtime programs: <p>.c with GPGPU_GLOBAL kernels and host.c (docs/runtime-spec.md) ----
+
+    def _riscv_command(self) -> list[str]:
+        return [self._riscv_cc, self._optimization, f"-march={self._riscv.march}", f"-mabi={self._riscv.abi}",
+                *self._defines, *_RISCV_CFLAGS]
+
+    def _runtime_includes(self, program: str) -> list[str]:
+        return [f"-I{self._runtime / 'include'}", f"-I{self._runtime / 'device'}", f"-I{self._root}",
+                f"-I{self._root / program}"]
+
+    def _runtime_sources(self, *parts: str) -> list[Path]:
+        return sorted(path for part in parts for path in (self._runtime / part).glob("*.[ch]"))
+
+    def _header(self, program: str) -> Path | None:
+        header = self._root / program / f"{program}.h"
+        return header if header.is_file() else None
+
+    def generate_kernels(self, program: str) -> Step:
+        source, headers = self._sources(program)
+        outputs = [self._out(program, suffix) for suffix in ("_scan.o", "_aux.txt", "_entry.c", "_kernels.h", "_scan.json")]
+        command = [*self._riscv_command(), *self._runtime_includes(program)]
+        generator = Path(__file__).with_name("runtime_build.py")
+        return Step(partial(generate_kernels, command, source, self._header(program), program, *outputs),
+                    inputs=(source, *headers, *self._runtime_sources("include", "device"), generator),
+                    outputs=tuple(outputs), fingerprint={"command": command})
+
+    def build_module(self, program: str) -> Step:
+        elf, scan, module = self._out(program, ".elf"), self._out(program, "_scan.json"), self._out(program, "_module.c")
+        constants = rtl_constants_path(self._config)
+        settings = {"num_cores": self._cores, "stack_bytes": self._memory.stack_bytes_per_lane}
+        builder = Path(__file__).with_name("runtime_build.py")
+        return Step(partial(write_module, elf, scan, constants, settings, module), inputs=(elf, scan, constants, builder),
+                    outputs=(module,), fingerprint=settings)
+
+    def hardware_header(self) -> Step:
+        constants, output = rtl_constants_path(self._config), self._runtime_build / "gpgpu_hw.h"
+        settings = {"num_cores": self._cores, "ddr_enable": self._ddr_enable}
+        builder = Path(__file__).with_name("runtime_build.py")
+        return Step(partial(write_hw_header, constants, settings, output), inputs=(constants, builder),
+                    outputs=(output,), fingerprint=settings)
+
+    def _simulator_command(self, sources: list[Path], includes: list[Path], executable: Path) -> list[str]:
+        timeout = self._runtime_settings.launch_timeout_ms
+        return [self._native_cc, "-std=gnu11", "-O2", "-g", "-Wall", "-Wextra", *self._defines,
+                f"-DGPGPU_LAUNCH_TIMEOUT_MS={timeout}u", *(f"-I{path}" for path in includes),
+                "-o", str(executable), *map(str, sources)]
+
+    def build_simulator_program(self, program: str) -> Step:
+        executable = self._out(program, "_sim")
+        sources = [self._root / program / "host.c", self._runtime / "host/gpgpu_runtime.c",
+                   self._runtime / "host/sim/gpgpu_backend_sim.c", self._runtime / "sim/gpgpu_sim.c",
+                   self._out(program, "_module.c")]
+        includes = [self._runtime / "include", self._runtime / "host", self._runtime / "sim", self._runtime_build,
+                    self._root, self._root / program, executable.parent]
+        command = self._simulator_command(sources, includes, executable)
+        headers = [*self._runtime_sources("include", "host", "sim"), *(self._root / program).glob("*.h"),
+                   self._out(program, "_kernels.h"), self._runtime_build / "gpgpu_hw.h", self._root / "gpgpu_config.h"]
+        return Step(partial(run, command, creates=executable.parent), inputs=(*sources, *headers), outputs=(executable,),
+                    fingerprint={"command": command})
+
+    def run_simulator_program(self, program: str) -> Step:
+        executable = self._out(program, "_sim")
+        command = [str(executable), *self._runtime_settings.arguments]
+        return Step(partial(_run_program, command, executable.parent / "sim"), always_run=True)
+
+    def runtime_check(self) -> Step:
+        runner = self._runtime_build / "gpgpu_sim_case"
+        sources = [self._runtime / "sim/gpgpu_sim.c", self._runtime / "sim/gpgpu_sim_case.c"]
+        includes = [self._runtime / "sim", self._runtime_build]
+        build = self._simulator_command(sources, includes, runner)
+        cases_root = self._config.repo_root / "tests/hardware/rtl/cases"
+        cases = sorted((path.parent for path in cases_root.glob("test*/program.asm")
+                        if re.fullmatch(r"test\d+", path.parent.name)), key=lambda path: int(path.name[4:]))
+        expected = [case / name for case in cases for name in ("program.mem", "data.mem")]
+        seeds = [case / name for case in cases for name in ("dmem_seed.mem", "ddr_seed.mem") if (case / name).is_file()]
+        log = self._runtime_build / "check/check.log"
+
+        def check() -> None:
+            run(build, creates=runner.parent)
+            check_cases(runner, cases, self._cores, self._runtime_build / "check", log)
+
+        return Step(check, inputs=(*sources, self._runtime / "sim/gpgpu_sim.h", self._runtime_build / "gpgpu_hw.h",
+                                   *expected, *seeds, Path(__file__).with_name("runtime_build.py")),
+                    outputs=(log,), fingerprint={"command": build})
 
     def clean(self, program: str) -> Step:
         return Step(partial(_remove, self._out(program, "").parent), always_run=True)
@@ -113,8 +222,12 @@ class GccToolchain:
         source, headers = self._sources(program)
         elf, link_map = self._out(program, ".elf"), self._out(program, ".map")
         linker_script = self._root / "linker.ld"
+        includes: list[str] = []
+        if runtime_program(self._config, program):  # the generated entry code includes the kernels' source
+            headers = [source, *headers, *self._runtime_sources("include", "device")]
+            source, includes = self._out(program, "_entry.c"), self._runtime_includes(program)
         command = [self._riscv_cc, self._optimization, f"-march={self._riscv.march}", f"-mabi={self._riscv.abi}",
-                   *self._defines, *_RISCV_CFLAGS, "-o", str(elf), str(source), "-nostdlib", "-nostartfiles",
+                   *self._defines, *_RISCV_CFLAGS, *includes, "-o", str(elf), str(source), "-nostdlib", "-nostartfiles",
                    f"-Wl,-L,{self._layout.parent}", f"-Wl,-T,{linker_script}", f"-Wl,-Map,{link_map}", "-Wl,--build-id=none"]
         # The whole command: a change of compiler, flags, march/abi, core count or memory layout rebuilds.
         return Step(partial(run, command, creates=elf.parent), inputs=(source, linker_script, self._layout, *headers),

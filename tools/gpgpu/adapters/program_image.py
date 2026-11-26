@@ -28,6 +28,7 @@ class ElfSection(NamedTuple):
     size: int
     link: int
     entry_size: int
+    flags: int = 0
 
 
 class ElfSymbol(NamedTuple):
@@ -50,7 +51,7 @@ def _sections(data: bytes) -> list[ElfSection]:
         start = names[4] + offset
         return data[start:data.index(b"\0", start)].decode()
 
-    return [ElfSection(name(r[0]), r[1], r[3], r[4], r[5], r[6], r[9]) for r in raw]
+    return [ElfSection(name(r[0]), r[1], r[3], r[4], r[5], r[6], r[9], r[2]) for r in raw]
 
 
 def _symbols(data: bytes, sections: list[ElfSection]) -> list[ElfSymbol]:

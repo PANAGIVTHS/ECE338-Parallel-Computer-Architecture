@@ -217,5 +217,19 @@ def program_names(config: Config) -> list[str]:
     return sorted(path.name for path in root.iterdir() if path.is_dir() and (path / f"{path.name}.c").is_file())
 
 
+def runtime_program(config: Config, program: str) -> bool:
+    """A program of the runtime (docs/runtime-spec.md): kernels in <p>.c and a host program in host.c."""
+    return (config.repo_root / "software/programs" / program / "host.c").is_file()
+
+
+def runtime_program_names(config: Config) -> list[str]:
+    return [program for program in program_names(config) if runtime_program(config, program)]
+
+
+def legacy_program_names(config: Config) -> list[str]:
+    """Programs with the GPGPU_ARGS interface, loaded and run by the UART tools."""
+    return [program for program in program_names(config) if not runtime_program(config, program)]
+
+
 def program_output(config: Config, program: str, suffix: str) -> Path:
     return config.build_root / "software/programs" / program / f"{program}{suffix}"

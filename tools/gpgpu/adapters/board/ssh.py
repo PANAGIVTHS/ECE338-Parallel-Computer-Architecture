@@ -18,7 +18,7 @@ from pydantic import AfterValidator, PositiveInt, StringConstraints
 from gpgpu.api import Step
 
 from ..config import Config, Section
-from ..design import bitstream_path, program_names, program_output, vitis_workspace
+from ..design import bitstream_path, legacy_program_names, program_output, vitis_workspace
 from ..tools import run
 
 _NAME = r"[A-Za-z0-9_][A-Za-z0-9_.-]*"
@@ -76,7 +76,8 @@ class SshBoard:
         self._names = (f"{self._platform}.bit", "ps7_init.tcl", f"{self._host}.elf")
 
     def programs(self) -> list[str]:
-        return program_names(self._config)
+        # Runtime programs (host.c) are not loaded word by word over UART: phase 2 of docs/runtime-spec.md.
+        return legacy_program_names(self._config)
 
     def upload(self) -> Step:
         workspace = vitis_workspace(self._config)
