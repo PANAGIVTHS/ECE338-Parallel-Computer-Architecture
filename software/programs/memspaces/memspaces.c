@@ -1,110 +1,83 @@
 /*
- * memspaces: one kernel that touches every memory space of linker.ld.
+ * memspaces: kernels that touch every memory space of the runtime
+ * (docs/runtime-spec.md, section 3). host.c launches them and checks the
+ * results.
  *
- *   GPGPU_ARGS  DMEM   op                 host-written argument, DMEM byte 0
- *   .shared     DMEM   out[]              GPGPU_SHARED: the results, zero at load
- *   stack       DMEM   tmp[]              per-lane private array
- *   .rodata     GMEM   gain[]             const table, read with a per-lane index
- *   .rodata     GMEM   (jump table)       switch (op), 6 dense cases; op is uniform
- *   .data       GMEM   call_count, bias[] initialized globals
- *   .bss        GMEM   last_op, slots[]   zero-initialized globals
+ *   parameters  launch block, GMEM   op, results          every launch
+ *   .rodata     GMEM                 gain[], jump table   private constants
+ *   GPGPU_CONSTANT                   offsets[]            constants the host may rewrite
+ *   .data       GMEM                 bias[]               private, initialized
+ *   GPGPU_DEVICE                     call_count           exported, initialized
+ *   .bss        GMEM                 last_op              private, zero
+ *   GPGPU_DEVICE                     slots[], out[]       exported, zero
+ *   GPGPU_SHARED  shared memory      neighbours[]         one block, undefined at its start
+ *   stack       shared memory        tmp[]                one lane
  *
- * It shows the code each space produces and tests that the host loads
- * .rodata/.data into GMEM and zeroes .bss and .shared, once per program load:
- * the globals keep their values from one launch to the next.
+ * memspaces runs on a grid of MEMSPACES_BLOCKS blocks. Block b, lane t writes
  *
- * Jump tables are off for every kernel (-fno-jump-tables): this one asks for
- * them with optimize("jump-tables"), so the switch loads its target from
- * GMEM. op is the same in every lane, so every lane jumps to the same case.
+ *   out[b * LANES + t] = memspaces_op(op, t) + gain[t & 7] + bias[t & 3]
+ *                        + call_count + slots[t] + (4 t + 6)
+ *                        + (3 ((t + 1) & (LANES - 1)) + b) + offsets[b]
  *
- * Args:
- *   GPGPU_ARGS[0] = op, 0..5 selects a case of the switch, any other value: default
+ * to `results`, and the last block then sets slots[t] = t + 1 and adds 1 to
+ * call_count: the globals keep their values from one launch to the next.
  *
- * Output, launch k (k = 0 for the first launch after the program loads):
- *   out[tid] = op_result(op, tid) + gain[tid & 7] + bias[tid & 3]
- *              + (100 + k) + (k ? tid + 1 : 0) + (4 * tid + 6)
- * then slots[tid] = tid + 1, last_op = op and call_count = 101 + k.
+ * memspaces_fault loads from a framebuffer, which kernels may only store to:
+ * the launch faults with ST_PERMISSION in every lane.
  */
-#include "../gpgpu_runtime.h"
+#include "gpgpu_device.h"
+#include "memspaces.h"
 
-#define CORES GPGPU_NUM_CORES
+static const int gain[8] = MEMSPACES_GAIN;
+GPGPU_CONSTANT const int offsets[MEMSPACES_BLOCKS] = MEMSPACES_OFFSETS;
 
-/* .rodata: read-only, shared by all lanes. */
-static const int gain[8] = {3, 1, 4, 1, 5, 9, 2, 6};
+int bias[4] = MEMSPACES_BIAS;
+GPGPU_DEVICE int call_count = MEMSPACES_CALL_COUNT;
 
-/* .data: initialized, writable, shared by all lanes. */
-int call_count = 100;
-int bias[4] = {1000, 2000, 3000, 4000};
-
-/* .bss: zero at program load, writable, shared by all lanes. */
 int last_op;
-int slots[CORES];
+GPGPU_DEVICE int slots[MEMSPACES_LANES];
+GPGPU_DEVICE int out[MEMSPACES_THREADS];
 
-/* A dense switch: with jump tables on, GCC emits a table of 6 code addresses. */
-static inline __attribute__((always_inline)) int op_result(int op, int tid)
+GPGPU_SHARED int neighbours[MEMSPACES_LANES];
+
+/* Jump tables are off for every kernel (-fno-jump-tables); this function asks
+ * for them. It is not inlined: a kernel cannot have other optimize options. */
+__attribute__((noinline, optimize("jump-tables"))) static int op_result(int op, int tid)
 {
-    switch (op) {
-    case 0:  return tid;
-    case 1:  return tid * 3;
-    case 2:  return tid + 77;
-    case 3:  return -tid;
-    case 4:  return tid << 4;
-    case 5:  return tid ^ 0x55;
-    default: return 0;
-    }
+    return memspaces_op(op, tid);
 }
 
-#ifdef __riscv
-
-/* .shared: DMEM, shared by all lanes, zero at program load. */
-GPGPU_SHARED int out[CORES];
-
-__attribute__((noinline, optimize("jump-tables"))) void kernel_main(void)
+GPGPU_GLOBAL void memspaces(int op, int *results)
 {
-    unsigned int tid = gpgpu_thread_id();
-    int op = GPGPU_ARGS[0];
+    unsigned int tid = gpgpu_thread_idx();
+    unsigned int block = gpgpu_block_idx_x();
 
-    /* Stack: volatile keeps the array in this lane's stack slice. */
+    /* Stack: volatile keeps the array in this lane's stack. */
     volatile int tmp[4];
     for (int i = 0; i < 4; i++)
         tmp[i] = (int)tid + i;
     int tmp_sum = tmp[0] + tmp[1] + tmp[2] + tmp[3];
 
-    out[tid] = op_result(op, (int)tid) + gain[tid & 7] + bias[tid & 3] + call_count + slots[tid] + tmp_sum;
+    /* Shared memory: written by every lane before any lane reads it. */
+    neighbours[tid] = 3 * (int)tid + (int)block;
+    gpgpu_syncthreads();
+    int neighbour = neighbours[(tid + 1u) & (MEMSPACES_LANES - 1u)];
 
-    /* Per-lane slot: every lane writes a different word, no race. */
-    slots[tid] = (int)tid + 1;
+    results[block * MEMSPACES_LANES + tid] = op_result(op, (int)tid) + gain[tid & 7u] + bias[tid & 3u] + call_count +
+                                             slots[tid] + tmp_sum + neighbour + offsets[block];
 
-    /* Shared scalars, meant for lane 0 only. This is a per-lane branch (bne on
-     * tid): until divergence is implemented every lane follows lane 0 and all
-     * of them store the same values, which happens to give the same result. */
-    if (tid == 0) {
+    /* Uniform: every lane is in the same block. All lanes store the same
+     * call_count, so the lockstep lanes do not race. */
+    if (block == gpgpu_grid_dim_x() - 1u) {
+        slots[tid] = (int)tid + 1;
         last_op = op;
         call_count = call_count + 1;
     }
 }
 
-GPGPU_START(kernel_main)
-
-#else
-#include <stdio.h>
-#include <stdlib.h>
-
-/* The expected out[] of launch `launch` (0 = first after the program loads). */
-int main(int argc, char **argv)
+GPGPU_GLOBAL void memspaces_fault(const unsigned int *framebuffer, int *results)
 {
-    int launches = argc > 1 ? atoi(argv[1]) : 2;
+    unsigned int tid = gpgpu_thread_idx();
 
-    for (int launch = 0; launch < launches; launch++) {
-        for (int op = 0; op <= 6; op++) {
-            printf("launch %d op %d:", launch, op);
-            for (int tid = 0; tid < CORES; tid++) {
-                int slot = launch ? tid + 1 : 0;
-                printf(" %d", op_result(op, tid) + gain[tid & 7] + bias[tid & 3] + 100 + launch + slot + 4 * tid + 6);
-            }
-            printf("\n");
-        }
-    }
-    return 0;
+    results[tid] = (int)framebuffer[tid];
 }
-#endif

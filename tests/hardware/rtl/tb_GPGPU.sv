@@ -2,7 +2,7 @@
 `include "constants.svh"
 
 `define CLOCK_PERIOD 10
-`define TEST_TIMEOUT_CYCLES 1500
+`define TEST_TIMEOUT_CYCLES 10000  // as the E2E and DDR benches (tests.rtl.*.plusargs)
 
 module tb_GPGPU_smx_only 
     import ControlPkg::*;

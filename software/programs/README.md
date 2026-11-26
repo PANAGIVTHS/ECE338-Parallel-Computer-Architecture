@@ -1,6 +1,78 @@
 # GPGPU programs
 
-## Structure
+There are two kinds of programs:
+
+- **Runtime programs** have a `host.c`: kernels in `<program>.c`, written with
+  the runtime of [docs/runtime-spec.md](../../docs/runtime-spec.md), and a host
+  program that launches them like a CUDA program. `memspaces` is the first.
+  They run in the functional simulator on a PC; the board follows in phase 2.
+- **Kernel programs** have no `host.c`: one kernel with `GPGPU_ARGS`, run by
+  the UART tools (`fpga_run.py`). The sections after this one are about them.
+
+## Runtime programs
+
+```text
+software/programs/<program>/
+├── <program>.c   kernels: GPGPU_GLOBAL functions, GPGPU_DEVICE and GPGPU_SHARED variables
+├── <program>.h   optional: types and constants both sides use
+└── host.c        int gpgpu_main(int argc, char **argv)
+```
+
+```c
+/* <program>.c */
+#include "gpgpu_device.h"
+
+GPGPU_DEVICE int output[4096];
+
+GPGPU_GLOBAL void my_kernel(int factor)
+{
+    unsigned int i = gpgpu_block_idx_x() * gpgpu_block_dim() + gpgpu_thread_idx();
+    output[i] = (int)i * factor;
+}
+
+/* host.c */
+#include "gpgpu.h"
+#include "<program>_kernels.h"
+
+int gpgpu_main(int argc, char **argv)
+{
+    static int result[4096];
+    GPGPU_CHECK(gpgpu_launch(my_kernel, gpgpu_dim3(4096 / GPGPU_BLOCK_SIZE), 3));
+    GPGPU_CHECK(gpgpu_memcpy_from_symbol(result, <program>_sym_output, sizeof result, 0));
+    return result[5] == 15 ? 0 : 1;
+}
+```
+
+```bash
+./gpgpu software programs:<program>:sim        # build, then run gpgpu_main in the simulator
+./gpgpu --set 'software.runtime.arguments=["8"]' software programs:<program>:sim
+./gpgpu software programs:<program>:all        # kernels, their listing and the simulator program
+./gpgpu software runtime:check                 # the simulator against the Python model, every RTL case
+```
+
+The build scans the kernels (`<program>:kernels`), generates their entry code
+and launch functions, links the kernels and turns them into the module
+(`<program>:module`), which the host program carries. It stops on what the
+hardware cannot run: a parameter that is not a pointer or an integer of at
+most 32 bits, a division or high multiply, a call chain deeper than the lane's
+128-byte stack, an initializer on a shared variable. Generated files, in
+`<build-root>/software/programs/<program>/`:
+
+```text
+<program>_entry.c     the entry function and block loop of every kernel (RISC-V)
+<program>_kernels.h   gpgpu_launch(<kernel>, ...) and <program>_sym_<variable>, for host.c
+<program>_module.c    IMEM and GMEM images, kernel entries, variable addresses
+<program>.elf         the kernels, linked with linker.ld
+<program>_sim         host.c with the runtime and the simulator, for this PC
+```
+
+The simulator follows the hardware: lanes in lockstep, branches decided by
+lane 0, memory faults. It also reports what the board would hide: a branch the
+lanes disagree on, lanes storing different values to one DDR byte. Shared
+memory holds `0xDEADBEEF` when a launch starts. With `GPGPU_SIM_FRAMES=<dir>`,
+every `gpgpu_display()` writes the framebuffer there as a PPM picture.
+
+## Kernel programs
 
 Each program lives in `software/programs/<program>/` and keeps only source inputs there. A program normally provides `<program>.c` with separate native and RISC-V paths selected by `__riscv`.
 
@@ -66,8 +138,8 @@ configuration sets their sizes (see `docs/memory-layout.html` to try values).
   other shared variables, for kernels that need constant addresses (terrain).
 - Host adapters find a variable through `<program>_layout.json`:
   `self.symbol("name")` and `self.symbol_window("name")` in `fpga.py`.
-- `memspaces` touches every space and checks them; its `fpga.py` verifies them
-  on the board.
+- `memspaces`, a runtime program, touches every space of the runtime and its
+  `host.c` checks them.
 
 ## Build
 
