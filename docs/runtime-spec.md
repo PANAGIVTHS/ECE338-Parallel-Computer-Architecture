@@ -4,8 +4,9 @@ Version 0.4, 2026-11-26.
 
 **Status:** phase 1 (section 12) is implemented: the device ABI, the kernel generator, the module builder, the host
 runtime and the simulator, with `memspaces` as the first program. Phase 2, the board, is implemented: on 2026-11-26
-`memspaces` passed on the board three times in a row without a reset, returning to the monitor each time. Phases 3
-to 5 are design. *(exists)* marks what is in
+`memspaces` passed on the board three times in a row without a reset, returning to the monitor each time. Phase 3
+is implemented: every program has a `host.c` and passed in the simulator and on the board on 2026-11-26, loaded one
+after another without a reset. Phases 4 and 5 are design. *(exists)* marks what is in
 the repository; *(prototyped)* means that the construct was compiled with the project's compilers but is not in it.
 
 ## 1. Purpose
@@ -667,11 +668,11 @@ It is validated against the Python model: both must produce the same registers, 
 | `GPGPU_ARGS`, `GPGPU_START`, `args_words` | removed; C parameters and `GPGPU_GLOBAL` |
 | native x86 `main()` in the kernels | removed once the program runs in the simulator; a reference computation moves to `host.c` |
 | cube, metaballs, julia, mandelbrot, terrain, ripple | the frame number is a parameter; the host counts frames |
-| nbody, nbody-3d | state moves from shared memory to `GPGPU_DEVICE` arrays |
+| nbody, nbody-3d | state moves from shared memory to `GPGPU_DEVICE` arrays ; nbody-3d's masses, which the old program never wrote, are set by the host |
 | differences | input in a `GPGPU_DEVICE` array instead of shared memory |
 | memspaces | results in a `GPGPU_DEVICE` array; `call_count` becomes `GPGPU_DEVICE` |
 | simple, stress, memfault, stacktest, subword | buffer addresses become pointer parameters |
-| RTL cases compiled from C (test46) | regenerated, launch block in `ddr_seed.mem` |
+| RTL cases compiled from C (test46) | regenerated in phase 4, launch block in `ddr_seed.mem`; until then test46 is the old `memspaces` |
 | DOOM | after it merges; its `gp_gmem_*` and `gp_gpu_*` calls map to this API |
 
 ## 12. Implementation order
