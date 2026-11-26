@@ -66,6 +66,9 @@ def _runtime_program(cc: Toolchain, program: str, prefix: str) -> list[Task]:
              cc.build_simulator_program(program), needs=(f"{prefix}:module", "software:runtime:hw")),
         Task(f"{prefix}:sim", "Build and run the program in the simulator (software.runtime.arguments).",
              cc.run_simulator_program(program), needs=(f"{prefix}:sim:build",)),
+        Task(f"{prefix}:host", "Build the host program for the board's A9, against the platform's BSP.",
+             cc.build_board_program(program), needs=(f"{prefix}:module", "software:host:platform"),
+             requires=("vitis:build:platform",)),
         Task(f"{prefix}:all", "Build the kernels, their listing and the simulator program.",
              needs=(f"{prefix}:assembly", f"{prefix}:sim:build")),
     ]

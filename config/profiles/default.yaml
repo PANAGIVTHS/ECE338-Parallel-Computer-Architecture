@@ -147,8 +147,13 @@ software:
     # How long a launch may run before the runtime stops it and the next
     # call that waits returns GPGPU_ERROR_TIMEOUT; 0 for no limit.
     launch_timeout_ms: 10000
-    # Arguments of gpgpu_main(argc, argv) for `software programs:<p>:sim`.
+    # Arguments of gpgpu_main(argc, argv) for `software programs:<p>:sim` and
+    # `fpga programs:<p>:run`.
     arguments: []
+    # The A9 program's stack and heap (its linker script's _STACK_SIZE and
+    # _HEAP_SIZE); a program's large data belongs in its GPGPU_DEVICE arrays.
+    board_stack_bytes: 65536
+    board_heap_bytes: 1048576
   # Every build of a program, RISC-V kernel and native x86 alike, so both
   # builds of a program are compiled the same way: -O0, -O1, -O2, -O3, -Os
   # or -Og.
@@ -269,6 +274,11 @@ tools:
     required: false
   vitis:
     command: vitis
+    required: false
+  # The A9 compiler of runtime programs; Vitis brings one
+  # (Vitis/gnu/aarch32/lin/gcc-arm-none-eabi/bin).
+  arm_gcc:
+    command: arm-none-eabi-gcc
     required: false
   ssh:
     command: ssh

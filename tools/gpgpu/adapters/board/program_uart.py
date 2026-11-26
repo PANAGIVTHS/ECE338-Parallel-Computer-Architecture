@@ -63,6 +63,26 @@ def remote_main(operation, imem, port, baud, layout_path):
             uart.close()
 
 
+def remote_exec(elf_path, port, baud, arguments, timeout):
+    """Load an A9 program through the monitor's loader, run it and exit with its status."""
+    entry, segments = elf_load_segments(Path(elf_path).read_bytes())
+    size = sum(len(data) for _, data in segments)
+    with uart_ownership(port):
+        uart = exclusive_monitor(port, baud, verbose=False)
+        try:
+            uart.write_line('')
+            uart.wait_prompt(timeout=10.0)
+            print(f'Loading {Path(elf_path).name}: {len(segments)} segments, {size} bytes '
+                  f'(about {size * 10 // baud + 1} s at {baud} baud)', flush=True)
+            uart.load_program(entry, segments)
+            status = uart.exec_program(arguments, timeout)
+        finally:
+            uart.close()
+    print(f'{arguments[0]} returned {status}', flush=True)
+    if status != 0:
+        raise SystemExit(status if 0 < status < 256 else 1)
+
+
 def validated_words(path):
     """Reject malformed/overflowing images before serial is opened."""
     words = [line.strip().lower() for line in Path(path).read_text().splitlines() if line.strip()]

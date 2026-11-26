@@ -18,10 +18,12 @@ from pydantic import AfterValidator, PositiveInt, StringConstraints
 from gpgpu.api import Step
 
 from ..config import Config, Section
-from ..design import bitstream_path, legacy_program_names, program_output, vitis_workspace
+from ..design import bitstream_path, legacy_program_names, program_output, runtime_program_names, vitis_workspace
 from ..tools import run
 
 _NAME = r"[A-Za-z0-9_][A-Za-z0-9_.-]*"
+# How long a program may run on the board before the UART client gives up.
+_EXEC_TIMEOUT_S = 600.0
 
 
 def _no_traversal(path: str) -> str:
@@ -76,8 +78,11 @@ class SshBoard:
         self._names = (f"{self._platform}.bit", "ps7_init.tcl", f"{self._host}.elf")
 
     def programs(self) -> list[str]:
-        # Runtime programs (host.c) are not loaded word by word over UART: phase 2 of docs/runtime-spec.md.
+        # Runtime programs (host.c) are loaded by the monitor's loader instead: run_runtime_program().
         return legacy_program_names(self._config)
+
+    def runtime_programs(self) -> list[str]:
+        return runtime_program_names(self._config)
 
     def upload(self) -> Step:
         workspace = vitis_workspace(self._config)
@@ -180,3 +185,22 @@ class SshBoard:
 
     def run_program(self, program: str) -> Step:
         return Step(partial(self._uart, program, "run"), always_run=True)
+
+    def _exec(self, program: str) -> None:
+        """Upload the A9 program, then load and run it through the monitor (docs/runtime-spec.md 9.2)."""
+        elf = program_output(self._config, program, "_a9.elf")
+        self._copy(((elf, elf.name),))
+        arguments = [program, *(str(argument) for argument in self._config.get("software.runtime.arguments"))]
+        uart = self._s.uart
+        client = (self._config.repo_root / "tools/board/xc7z020/uart.py").read_text()
+        driver = Path(__file__).with_name("program_uart.py").read_text()
+        remote_elf = str(PurePosixPath(self._s.upload.directory) / elf.name)
+        payload = (f"exec({client!r}, globals())\nexec({driver!r}, globals())\n"
+                   f"remote_exec({remote_elf!r}, {uart.port!r}, {uart.baud!r}, {arguments!r}, {_EXEC_TIMEOUT_S!r})\n")
+        remote = (["sudo", "-n"] if uart.sudo else []) + [uart.python, "-"]
+        status = subprocess.run(self._argv(shlex.join(remote)), cwd=self._config.repo_root, input=payload, text=True).returncode
+        if status != 0:
+            raise RuntimeError(f"{program} on the board failed (status {status})")
+
+    def run_runtime_program(self, program: str) -> Step:
+        return Step(partial(self._exec, program), always_run=True)

@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import re
 import struct
+import sys
 import time
+import zlib
 from pathlib import Path
 from typing import Iterable, cast
 
@@ -138,6 +140,23 @@ def load_program_data(monitor: "GpgpuUartMonitor", layout: dict, image: dict[int
     bss, shared = layout["bss"], layout["shared"]
     monitor.fill_gmem((bss["end"] - bss["start"]) // 4, offset=(bss["start"] - gmem_base) // 4)
     monitor.fill_dmem((shared["end"] - shared["start"]) // 4, offset=shared["start"] // 4)
+
+
+def elf_load_segments(data: bytes) -> tuple[int, list[tuple[int, bytes]]]:
+    """(entry, [(address, bytes)]) of the PT_LOAD segments of a 32-bit little-endian ELF,
+    the file bytes only: the program's startup code clears the rest (.bss)."""
+    if data[:4] != b"\x7fELF" or data[4] != 1 or data[5] != 1:
+        raise ValueError("not a 32-bit little-endian ELF file")
+    entry, phoff = struct.unpack_from("<II", data, 0x18)
+    phentsize, phnum = struct.unpack_from("<HH", data, 0x2A)
+    segments = []
+    for index in range(phnum):
+        kind, offset, address, _, filesz, _, _, _ = struct.unpack_from("<8I", data, phoff + index * phentsize)
+        if kind == 1 and filesz:  # PT_LOAD
+            segments.append((address, data[offset:offset + filesz]))
+    if not segments:
+        raise ValueError("the ELF file has nothing to load")
+    return entry, segments
 
 
 def trim_program_at_ret(words: Iterable[str]) -> list[str]:
@@ -369,6 +388,71 @@ class GpgpuUartMonitor:
         if marker == "ERROR":
             raise RuntimeError(f"Binary load failed:\n{first + second + self.wait_prompt()}")
         return first + second + self.wait_prompt(timeout=10.0)
+
+    # ---- Runtime programs (docs/runtime-spec.md, section 9.2) ----
+
+    def load_program(self, entry: int, segments: list[tuple[int, bytes]]) -> str:
+        """Send a program to the monitor's loader: each segment with its CRC-32."""
+        self.write_line(f"load {entry:x} {len(segments):x}")
+        output, marker = self.read_until(["READY_LOAD", "ERROR", "Unknown command"], timeout=10.0)
+        if marker == "Unknown command":
+            raise RuntimeError("The monitor has no program loader: deploy a monitor built from this branch "
+                               "(gpgpu fpga deploy)")
+        if marker == "ERROR":
+            raise RuntimeError(f"The monitor refused the program:\n{output + self.wait_prompt()}")
+        seconds_per_byte = 12.0 / self.ser.baudrate  # 10 bits per byte, and some slack
+        for address, data in segments:
+            self.ser.write(struct.pack("<III", address, len(data), zlib.crc32(data)))
+            self.ser.flush()
+            text, marker = self.read_until(["SEGMENT_READY", "ERROR"], timeout=10.0)
+            if marker == "ERROR":
+                raise RuntimeError(f"The monitor refused a segment:\n{output + text + self.wait_prompt()}")
+            self.ser.write(data)
+            self.ser.flush()
+            text, marker = self.read_until(["SEGMENT_OK", "ERROR"], timeout=10.0 + len(data) * seconds_per_byte)
+            if marker == "ERROR":
+                raise RuntimeError(f"A segment did not load:\n{output + text + self.wait_prompt()}")
+            output += text
+        text, marker = self.read_until(["LOAD_COMPLETE", "ERROR"], timeout=10.0)
+        if marker == "ERROR":
+            raise RuntimeError(f"The program did not load:\n{output + text + self.wait_prompt()}")
+        return output + text + self.wait_prompt(timeout=10.0)
+
+    def exec_program(self, arguments: list[str], timeout: float, echo=None) -> int:
+        """Run the loaded program, pass its console output to `echo` as it arrives, and
+        return its status when it is back in the monitor."""
+        if not arguments or any(not argument or re.search(r"\s", argument) for argument in arguments):
+            raise ValueError("program arguments must be non-empty and contain no whitespace")
+        line = "exec " + " ".join(arguments)
+        if len(line) > 120:
+            raise ValueError("the program's name and arguments must fit 120 characters (the monitor's line)")
+        echo = echo or (lambda text: print(text, end="", flush=True))
+        self.write_line(line)
+        output, marker = self.read_until(["EXEC_START", "ERROR"], timeout=10.0)
+        if marker == "ERROR":
+            raise RuntimeError(f"The program did not start:\n{output + self.wait_prompt()}")
+        pattern = re.compile(rb"EXEC_RETURN (-?\d+)")
+        deadline = time.monotonic() + timeout
+        shown = 0
+        while True:
+            match = pattern.search(self.rx_buffer)
+            end = match.end() if match else len(self.rx_buffer)
+            if end > shown:
+                echo(bytes(self.rx_buffer[shown:end]).decode("ascii", errors="replace"))
+                shown = end
+            if match:
+                status = int(match.group(1))  # before the buffer under the match changes
+                del self.rx_buffer[:match.end()]
+                break
+            if time.monotonic() >= deadline:
+                raise TimeoutError(f"The program did not return within {timeout:g} s")
+            try:
+                self._read_from_serial(timeout=min(1.0, max(0.0, deadline - time.monotonic())))
+            except TimeoutError:
+                pass
+        echo("\n")
+        self.wait_prompt(timeout=10.0)
+        return status
 
     def dump_dmem_bin(self, count: int, offset: int = 0) -> dict[int, str]:
         _check_span(offset, count)

@@ -8,14 +8,14 @@ from functools import partial
 from pathlib import Path
 from typing import Literal
 
-from pydantic import NonNegativeInt
+from pydantic import NonNegativeInt, PositiveInt
 
 from gpgpu.api import GpgpuError, Step
 
 from . import host_headers
 from .config import Config, Section
-from .design import (architecture, memory_layout, program_names, program_output, rtl_constants_path, runtime_program,
-                     runtime_program_names)
+from .design import (architecture, axi_address, memory_layout, program_names, program_output, rtl_constants_path,
+                     runtime_program, runtime_program_names, vitis_workspace)
 from .program_image import write_linker_layout, write_program_files
 from .runtime_build import check_cases, generate_kernels, write_hw_header, write_module
 from .tools import run
@@ -42,6 +42,14 @@ class _Riscv(Section):
 class _Runtime(Section):
     launch_timeout_ms: NonNegativeInt
     arguments: list[str]
+    board_stack_bytes: PositiveInt
+    board_heap_bytes: PositiveInt
+
+
+
+# The DDR of programs on the board, from software/host/xc7z020/gpgpu_boot.h:
+# above the UART monitor's MiB, up to the first framebuffer.
+_PROGRAM_BASE = 0x0020_0000
 
 
 def _run_program(command: list[str], cwd: Path) -> None:
@@ -183,6 +191,45 @@ class GccToolchain:
         executable = self._out(program, "_sim")
         command = [str(executable), *self._runtime_settings.arguments]
         return Step(partial(_run_program, command, executable.parent / "sim"), always_run=True)
+
+    def build_board_program(self, program: str) -> Step:
+        """The host program for the A9, linked against the platform's standalone BSP."""
+        platform, domain = (str(self._config.get(f"hardware.vitis.{key}")) for key in ("platform_name", "domain"))
+        bsp = vitis_workspace(self._config) / platform / "export" / platform / "sw" / domain
+        host = self._config.repo_root / "software/host/xc7z020"
+        executable, script = self._out(program, "_a9.elf"), self._out(program, "_a9.ld")
+        sources = [self._root / program / "host.c", self._runtime / "host/gpgpu_runtime.c",
+                   self._runtime / "host/xc7z020/gpgpu_backend_xc7z020.c", host / "gpgpu_driver.c", host / "gpgpu_display.c",
+                   self._out(program, "_module.c")]
+        includes = [self._runtime / "include", self._runtime / "host", host, self._root, self._root / program,
+                    executable.parent, bsp / "include"]
+        base, _ = axi_address(self._config)
+        flags = ["-DSDT", f"-DGPGPU_BASEADDR={base}", "-mcpu=cortex-a9", "-mfpu=vfpv3", "-mfloat-abi=hard",
+                 f"-specs={bsp / 'Xilinx.spec'}"]
+        command = [self._config.tool("arm_gcc"), "-std=gnu11", "-O2", "-g", "-Wall", "-Wextra", *flags, *self._defines,
+                   f"-DGPGPU_LAUNCH_TIMEOUT_MS={self._runtime_settings.launch_timeout_ms}u",
+                   *(f"-I{path}" for path in includes), "-o", str(executable), *map(str, sources),
+                   f"-Wl,-T,{script}", f"-L{bsp / 'lib'}", "-Wl,--start-group,-lxilstandalone,-lxiltimer,-lxil,-lgcc,-lc,--end-group"]
+        template = self._runtime / "host/xc7z020/lscript.ld.in"
+        constants = rtl_constants_path(self._config)
+        sizes = {"stack": self._runtime_settings.board_stack_bytes, "heap": self._runtime_settings.board_heap_bytes}
+
+        def build() -> None:
+            fb0 = next(int(line.partition("=")[2]) for line in constants.read_text(encoding="utf-8").splitlines()
+                       if line.startswith("gpu_pkg::FB0_BASE="))
+            text = template.read_text(encoding="utf-8")
+            for key, value in {"ORIGIN": _PROGRAM_BASE, "LENGTH": fb0 - _PROGRAM_BASE,
+                               "STACK_SIZE": sizes["stack"], "HEAP_SIZE": sizes["heap"]}.items():
+                text = text.replace(f"@{key}@", f"0x{value:X}")
+            script.parent.mkdir(parents=True, exist_ok=True)
+            script.write_text(text, encoding="utf-8")
+            run(command)
+
+        board_headers = [host / name for name in ("gpgpu_driver.h", "gpgpu_display.h", "gpgpu_boot.h", "gpgpu_platform.h")]
+        headers = [*self._runtime_sources("include", "host"), *board_headers, *(self._root / program).glob("*.h"),
+                   self._out(program, "_kernels.h"), self._root / "gpgpu_config.h"]
+        return Step(build, inputs=(*sources, *headers, template, constants, bsp / "lib/libxil.a"),
+                    outputs=(executable,), fingerprint={"command": command, "sizes": sizes})
 
     def runtime_check(self) -> Step:
         runner = self._runtime_build / "gpgpu_sim_case"

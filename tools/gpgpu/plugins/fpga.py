@@ -30,4 +30,9 @@ def tasks(backend: Backends) -> list[Task]:
                  board.run_program(program), needs=(f"{prefix}:load-imem",)),
             Task(f"{prefix}:all", "Build, upload, load and run the program.", needs=(f"{prefix}:run",)),
         ]
+    for program in board.runtime_programs():
+        result.append(Task(f"fpga:programs:{program}:run",
+                           "Build the program for the A9, send it to the monitor over UART and run it "
+                           "(software.runtime.arguments); its status is the task's.",
+                           board.run_runtime_program(program), needs=(f"software:programs:{program}:host",)))
     return result
