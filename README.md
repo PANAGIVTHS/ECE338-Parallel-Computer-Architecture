@@ -29,7 +29,7 @@ bench parameter.
 ### Test cases and the GPGPU model
 
 A case is `tests/hardware/rtl/cases/test<N>/program.asm`, with optional
-`dmem_seed.mem` (initial DMEM: hex words, `@<word index>` moves on) and
+`smem_seed.mem` (initial SMEM: hex words, `@<word index>` moves on) and
 `ddr_seed.mem` (initial DDR: `<byte address> <word>` hex pairs).
 `rtl:generate` assembles each case to `program.mem` and runs that machine
 code on the GPGPU model (`tools/tests/gpgpu_model.py`) to produce the expected
@@ -37,7 +37,7 @@ code on the GPGPU model (`tools/tests/gpgpu_model.py`) to produce the expected
 (`bursts <n>` and the expected DDR words). The model follows the hardware's
 rules: lockstep lanes that branch with lane 0, the kernel ending at lane 0's
 RET, the memory map and permissions of `MemorySubsystemPkg::decode_access`,
-ascending-lane order for same-word DMEM stores, and one AXI burst per group per
+ascending-lane order for same-word SMEM stores, and one AXI burst per group per
 store instruction. A case must end with a halt ecall without a fault; a branch the lanes
 disagree on or lanes storing different values to one DDR word in one
 instruction is reported. Every constant comes from the RTL packages:
@@ -83,10 +83,10 @@ and preserves the first failing `cases/test999` input.
 The bench file and top module come from `tests.rtl.e2e.testbench` and
 `tests.rtl.e2e.top`. The bench instantiates the AXI4-Lite wrapper (the IP top
 used on the FPGA) and touches the GPGPU only through AXI4-Lite and the IRQ pin. It first checks the
-CSR map and error responses, plus a host-only DMEM write/readback. Then, for
-each case, it clears DMEM, loads and verifies IMEM, enables the IRQ, writes
+CSR map and error responses, plus a host-only SMEM write/readback. Then, for
+each case, it clears SMEM, loads and verifies IMEM, enables the IRQ, writes
 `CONTROL.START`, waits for the completion IRQ, checks `STATUS`/`IRQ_STATUS` and
-the W1C acknowledge, and compares all of DMEM with the expected data file and, for a
+the W1C acknowledge, and compares all of SMEM with the expected data file and, for a
 DDR case, the DDR model's contents and burst count with `ddr.mem`. Register files are
 not host-visible, so they are checked only by the SMX suite. Its
 `tests.rtl.e2e.exclude_sources` keeps `interfaces/` (the AXI wrapper) that the SMX suite
@@ -126,7 +126,8 @@ Shared input generation still prepares all cases; random testing is unaffected.
 
 ### Kernel termination (ECALL)
 
-`GPGPU_START(kernel_main)` initializes each lane's stack, calls the C kernel,
+The runtime's `_start` initializes each lane's stack and calls the kernel's
+entry (docs/runtime-spec.md), which runs the kernel over the grid's blocks,
 then executes `li a7, 0; ecall` after its normal return. `a7` (`x17`) is not
 reserved; it is read through the usual forwarding and hazard paths at ECALL.
 Only service 0 requests termination. Unsupported or mixed lane service values
@@ -149,282 +150,23 @@ Build products, copied cases, disassembly, logs, and `results.json` stay under
 `build/tests/ecall-current/`. See `tests/hardware/rtl/ecall/README.md` for coverage
 and verification limits.
 
-## Running programs on FPGA
+## Running programs
 
-The repository has a generic flow for compiling a program, loading it on the FPGA through UART, running it in chunks, dumping a program-defined output window, and optionally visualizing the results.  The root entry point is `./run.sh`; the program-specific behavior lives under `programs/<program>/`.
-
-### Quick example
-
-```bash
-./run.sh -p nbody --fpga --port /dev/ttyACM0 --steps 50 --runs 10 --visualize
-```
-
-This command means:
-
-- build the `nbody` program,
-- load its RISC-V instruction memory image into the FPGA,
-- run 10 kernel launches,
-- ask each launch to advance 50 logical nbody steps,
-- after each launch, dump the nbody output window from DMEM,
-- let `programs/nbody/fpga.py` append the output to `programs/nbody/data.csv` and update the live visualization,
-- after the loop, run the normal visualization script if requested.
-
-Use the serial port that corresponds to your board, for example `/dev/ttyUSB1` or `/dev/ttyACM0`.
-
-### Top-level wrapper: `run.sh`
-
-The root `run.sh` is only a thin wrapper:
+A program is a CUDA-like pair in `software/programs/<program>/`: kernels in
+`<program>.c` and a host program in `host.c` that launches them
+([docs/runtime-spec.md](docs/runtime-spec.md),
+[software/programs/README.md](software/programs/README.md)). The same host
+program runs on a PC, with the functional simulator in place of the GPU, and
+on the board's A9, loaded over UART by the monitor:
 
 ```bash
-./run.sh ...
+./gpgpu software programs:nbody:sim                                   # on this PC
+./gpgpu --set 'software.runtime.arguments=["1000","10"]' fpga programs:nbody:run   # on the board
+./gpgpu --set 'software.runtime.arguments=["300","1","csv"]' software programs:nbody:sim > nbody.txt
+python3 software/programs/nbody/visualize.py --input nbody.txt
 ```
 
-internally executes:
-
-```bash
-programs/run.sh ...
-```
-
-This exists so users can start from the repository root while keeping all program build/run logic inside `programs/`.
-
-### Program runner: `programs/run.sh`
-
-`programs/run.sh` performs these steps:
-
-1. Discovers available program directories under `programs/`.
-2. Parses command-line options such as:
-   - `-p, --program PROGRAM`
-   - `--fpga`
-   - `--port PORT`
-   - `--baud BAUD`
-   - `--steps N`
-   - `--runs N`
-   - `--total-steps N`
-   - `--skip-load-imem`
-   - `--visualize` / `--no-visualize`
-3. Builds the selected program with:
-
-   ```bash
-   make -C programs PROG=<program> clean
-   make -C programs PROG=<program> <target>
-   ```
-
-   For an FPGA run it also ensures the raw instruction memory file exists:
-
-   ```bash
-   programs/<program>/<program>_instructions.mem
-   ```
-
-4. If `--fpga` was requested, it calls the generic Python FPGA runner:
-
-   ```bash
-   python3 programs/fpga_run.py \
-       --program <program> \
-       --port <port> \
-       --baud <baud> \
-       --steps-per-run <steps> \
-       --runs <runs>
-   ```
-
-The shell script does not know the nbody memory layout.  It only builds the program and forwards FPGA-run options to `programs/fpga_run.py`.
-
-### Generic FPGA loop: `programs/fpga_run.py`
-
-`programs/fpga_run.py` owns the common UART lifecycle.  It imports one program-specific adapter from:
-
-```text
-programs/<program>/fpga.py
-```
-
-The adapter must define:
-
-```python
-class ProgramAdapter:
-    ...
-```
-
-The generic flow is:
-
-1. Import `programs/<program>/fpga.py` and construct `ProgramAdapter(program_dir=...)`.
-2. Determine the IMEM file.  By default this is:
-
-   ```text
-   programs/<program>/<program>_instructions.mem
-   ```
-
-3. Ask the adapter where the output lives in DMEM:
-
-   ```python
-   output_offset_words()
-   output_word_count()
-   ```
-
-4. Call the adapter's optional configuration hook:
-
-   ```python
-   configure(steps_per_run=..., runs=..., total_steps=..., visualize=...)
-   ```
-
-5. Open the UART monitor using `host/baremetal/gpgpu_uart.py`.
-6. Unless `--skip-load-imem` is used, load the program into IMEM.
-7. Optionally call:
-
-   ```python
-   initial_dmem()
-   ```
-
-   if the adapter provides it.
-8. For each run/chunk:
-   1. Compute:
-
-      ```text
-      start_step = run_index * steps_per_run
-      steps_this_run = steps_per_run
-      ```
-
-      If `--total-steps` was used, the last chunk may be shorter.
-
-   2. Call the adapter before launching the kernel:
-
-      ```python
-      before_run(run_index=..., start_step=..., steps=...)
-      ```
-
-      The adapter returns DMEM writes as either:
-
-      ```python
-      (offset_word, [word0, word1, ...])
-      ```
-
-      or a list of such tuples.  The generic runner writes those words to DMEM through UART.
-
-   3. Start the FPGA core:
-
-      ```python
-      uart.run()
-      ```
-
-   4. Dump the adapter-defined output window:
-
-      ```python
-      output = uart.dump_dmem_bin(count=output_words, offset=output_offset)
-      ```
-
-   5. Hand the dumped words back to the adapter:
-
-      ```python
-      process_output(run_index=..., start_step=..., steps=..., words=output)
-      ```
-
-
-   6. Optionally call:
-
-      ```python
-      after_run(run_index=..., start_step=..., steps=..., words=output)
-      ```
-
-7. After all chunks finish, call:
-
-   ```python
-   finalize(visualize=...)
-   ```
-
-8. Print success.
-
-The key idea is that `fpga_run.py` is program-agnostic.  It knows how to talk to the board, but not what a program's arguments or output mean.
-
-### Program-specific adapter: `programs/nbody/fpga.py`
-
-`programs/nbody/fpga.py` defines the nbody host-side ABI.  It must match the DMEM constants used by `programs/nbody/nbody.c`.
-
-Current nbody host-visible words:
-
-```text
-DMEM[16] = magic word 0x4e424459 ("NBDY")
-DMEM[17] = steps to run in this kernel launch
-DMEM[18] = reset flag; 1 for first launch, 0 for later launches
-DMEM[19] = logical start step
-```
-
-Current nbody output window:
-
-```text
-DMEM[1024 .. 1024 + 64)
-```
-
-There are 32 bodies.  Each body writes two output words:
-
-```text
-DMEM[1024 + body*2 + 0] = x pixel
-DMEM[1024 + body*2 + 1] = y pixel
-```
-
-The nbody adapter implements the generic hooks as follows:
-
-- `configure(...)`
-  - creates or truncates `programs/nbody/data.csv`,
-  - writes the CSV header,
-  - clears in-memory visualization history.
-
-- `output_offset_words()`
-  - returns `1024`.
-
-- `output_word_count()`
-  - returns `NUM_BODIES * 2`, currently `64`.
-
-- `before_run(run_index, start_step, steps)`
-  - returns a write to `DMEM[16..19]`,
-  - sets the reset flag to `1` only for `run_index == 0`,
-  - sets reset to `0` for later chunks so the kernel continues from DMEM-resident state.
-
-- `process_output(...)`
-  - reads the dumped output words,
-  - converts them from 32-bit hex to signed integers,
-  - appends one row to `programs/nbody/data.csv`,
-  - updates `programs/nbody/fpga_latest.svg` for live preview.
-
-- `finalize(visualize=True)`
-  - runs `programs/nbody/visualize.py` after the FPGA loop if visualization was requested.
-
-### Chunked execution model
-
-The intended nbody FPGA usage is chunked execution:
-
-```text
-host writes args for steps 0..49
-kernel runs 50 steps
-host dumps output and visualizes
-host writes args for steps 50..99
-kernel runs next 50 steps from persistent DMEM state
-host dumps output and visualizes
-...
-```
-
-The kernel must therefore keep persistent simulation state in fixed DMEM windows, not only in registers.  The host only reads the output window and writes the small args block before each launch.
-
-### Restarting nbody from zero
-
-To rebuild the nbody program from scratch while preserving the FPGA flow, keep these contracts stable first:
-
-1. Keep `programs/nbody/fpga.py` and `programs/nbody/nbody.c` in agreement on all DMEM word offsets.
-2. Start with the smallest kernel that:
-   - reads `DMEM[16..19]`,
-   - initializes deterministic per-body state when reset is nonzero,
-   - runs `steps` iterations,
-   - writes `DMEM[1024..1087]`,
-   - returns with the hardware completion convention.
-3. Verify one kernel launch first:
-
-   ```bash
-   ./run.sh -p nbody --fpga --port /dev/ttyUSB1 --steps 1 --runs 1 --no-visualize
-   ```
-
-4. Then verify chunking/resume behavior:
-
-   ```bash
-   ./run.sh -p nbody --fpga --port /dev/ttyUSB1 --steps 50 --runs 2 --visualize
-   ```
-
-5. Only after the minimal resumable kernel works should the full pairwise-gravity nbody logic be added back.
-
-This staged approach makes it easier to identify whether a failure comes from the host flow, DMEM ABI, kernel completion, stack/register spilling, branch divergence, or the actual nbody physics.
+The board needs the bitstream and the monitor first (`./gpgpu fpga deploy`);
+programs then load one after another without a reset. See
+[docs/fpga-cli.md](docs/fpga-cli.md) for the board's tasks, and for a program
+that runs in place of the monitor (`software.host.boot_program`).

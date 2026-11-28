@@ -72,7 +72,7 @@ module BRAMBackend
     //& =============================================
     //& WRITE COLLISION DETECTION
     //& =============================================
-    wire same_word = (req[win_idx[0]].addr[DMEM_AW+1:2] == req[win_idx[1]].addr[DMEM_AW+1:2]);
+    wire same_word = (req[win_idx[0]].addr[SMEM_AW+1:2] == req[win_idx[1]].addr[SMEM_AW+1:2]);
     wire conflict  = win_vld[0] & win_vld[1] & same_word & (req[win_idx[0]].write | req[win_idx[1]].write);
 
     //& =============================================
@@ -90,15 +90,15 @@ module BRAMBackend
     end
 
     MemoryInterface #(
-        .ADDR_WIDTH(DMEM_AW)
+        .ADDR_WIDTH(SMEM_AW)
     ) port_a();
 
     MemoryInterface #(
-        .ADDR_WIDTH(DMEM_AW)
+        .ADDR_WIDTH(SMEM_AW)
     ) port_b();
 
     MemoryDualPort #(
-        .DEPTH(DMEM_ENTRIES),
+        .DEPTH(SMEM_ENTRIES),
         .INIT_FILE(BRAM_INIT)
     ) dataMemory (
         .clk(clk),
@@ -138,13 +138,13 @@ module BRAMBackend
 
     assign port_a.ren = portA_valid;
     assign port_a.wen = req[portA_idx].write;
-    assign port_a.addr = req[portA_idx].addr[DMEM_AW+1:2];
+    assign port_a.addr = req[portA_idx].addr[SMEM_AW+1:2];
     assign port_a.wstrb = req[portA_idx].wstrb;
     assign port_a.wdata = req[portA_idx].wdata;
 
     assign port_b.ren = portB_valid;
     assign port_b.wen = req[portB_idx].write;
-    assign port_b.addr = req[portB_idx].addr[DMEM_AW+1:2];
+    assign port_b.addr = req[portB_idx].addr[SMEM_AW+1:2];
     assign port_b.wstrb = req[portB_idx].wstrb;
     assign port_b.wdata = req[portB_idx].wdata;
 

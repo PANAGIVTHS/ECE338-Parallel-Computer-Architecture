@@ -4,7 +4,6 @@ No repository imports: the SSH wrapper supplies the UART client's namespace.
 """
 
 from pathlib import Path
-import re
 import fcntl
 import hashlib
 import os
@@ -48,67 +47,21 @@ def exclusive_monitor(port, baud, verbose):
     return ExclusiveMonitor()
 
 
-def remote_main(operation, imem, port, baud):
-    if operation not in ('load-imem', 'run'):
-        raise ValueError('Unknown UART operation')
-    words = validated_words(imem)
+def remote_run(elf_path, port, baud, arguments, timeout):
+    """Load an A9 program through the monitor's loader, run it and exit with its status."""
+    entry, segments = elf_load_segments(Path(elf_path).read_bytes())
+    size = sum(len(data) for _, data in segments)
     with uart_ownership(port):
-        uart = exclusive_monitor(port, baud, verbose=True)
+        uart = exclusive_monitor(port, baud, verbose=False)
         try:
-            execute_uart(uart, operation, words)
+            uart.write_line('')
+            uart.wait_prompt(timeout=10.0)
+            print(f'Loading {Path(elf_path).name}: {len(segments)} segments, {size} bytes '
+                  f'(about {size * 10 // baud + 1} s at {baud} baud)', flush=True)
+            uart.load_program(entry, segments)
+            status = uart.run_program(arguments, timeout)
         finally:
             uart.close()
-
-
-def validated_words(path):
-    """Reject malformed/overflowing images before serial is opened."""
-    words = [line.strip().lower() for line in Path(path).read_text().splitlines() if line.strip()]
-    if not words or len(words) > DEPTH or any(not re.fullmatch(r'[0-9a-f]{8}', word) for word in words):
-        raise ValueError(f'IMEM must contain 1..{DEPTH} words of exactly 8 hex digits')
-    return words
-
-
-def checked_state(uart):
-    """Fail closed on incomplete, contradictory or running/busy status."""
-    status = uart.status()
-    if any(re.search(rf'\b{name}\s*=', str(status.get('text', '')))
-           for name in ('loading', 'dumping')) or any(name in status for name in ('loading', 'dumping')):
-        raise RuntimeError(
-            'Incompatible legacy UART status (loading/dumping). Build and deploy '
-            'matching idle/running PL and host ELF before loading programs. '
-            f'Status: {status}'
-        )
-    keys = ('idle', 'running', 'stopped', 'faulted')
-    if (any(type(status.get(key)) is not int or status[key] not in (0, 1) for key in keys)
-            or 'ERROR' in str(status.get('text', ''))
-            or status['running'] or status['idle'] != 1):
-        raise RuntimeError(f'Unsafe or malformed UART status: {status}')
-    if status['faulted']:
-        # The host monitor leaves FAULTED set until `clear`, so a faulting run
-        # is reported here even though the run command itself returned.
-        raise RuntimeError(
-            'GPU FAULTED: '
-            + ', '.join(f'{name}=0x{status[name]:08x}' for name in ('fault_info', 'fault_lanes', 'fault_pc')
-                        if name in status)
-            + ". Acknowledge it with the monitor's `clear` command."
-        )
-    return 'idle'
-
-
-def execute_uart(uart, operation, words):
-    """One guarded IMEM load/readback or single launch; never initialize DMEM."""
-    if operation not in ('load-imem', 'run'):
-        raise ValueError('Unknown UART operation')
-    checked_state(uart)
-    if operation == 'load-imem':
-        print(uart.load_imem_bin(words, offset=0), flush=True)
-        if uart.dump_imem_ascii(len(words), offset=0) != dict(enumerate(words)):
-            raise RuntimeError('IMEM readback mismatch')
-        print(f'Verified {len(words)} IMEM words', flush=True)
-    else:
-        # Another CLI workflow can load a different program between dependency
-        # stages. Recheck under this session's UART lock before launching.
-        if uart.dump_imem_ascii(len(words), offset=0) != dict(enumerate(words)):
-            raise RuntimeError('IMEM readback mismatch before run')
-        print(uart.run(), flush=True)
-        checked_state(uart)
+    print(f'{arguments[0]} returned {status}', flush=True)
+    if status != 0:
+        raise SystemExit(status if 0 < status < 256 else 1)

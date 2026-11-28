@@ -1,51 +1,26 @@
-#include "../gpgpu_runtime.h"
+/*
+ * simple: every lane writes its index into one array and MY_VALUE (simple.h)
+ * into another.
+ *
+ * The kernel takes a pointer to each array. Both arrays are GPGPU_DEVICE
+ * variables in GMEM: the linker places them, and the host finds them through
+ * their symbols.
+ */
+#include "gpgpu_device.h"
+#include "gpgpu_types.h"
+#include "simple.h"
 
-#define CORES GPGPU_NUM_CORES
+GPGPU_DEVICE int indexes[GPGPU_BLOCK_SIZE];
+GPGPU_DEVICE int tens[GPGPU_BLOCK_SIZE];
 
-#ifdef __riscv
-
-
-void main(void)
+GPGPU_GLOBAL void simple(int *indexes_array, int *ten_array)
 {
-    unsigned int tid = gpgpu_thread_id();
+    unsigned int tid = gpgpu_thread_idx();
 
-    volatile int *base = (volatile int *)(uintptr_t)GPGPU_ARGS[0];
+    /* Every lane writes its index */
+    indexes_array[tid] = (int)tid;
 
-    volatile int *indexes_array = base;
-    volatile int *ten_array = base + (CORES + 1);
-
-    // All SPs must write their thread id
-    indexes_array[tid] = tid;
-
-    // Αll SPs must access x and write it to their index
-    int x = 10;
+    /* Every lane writes MY_VALUE at its index */
+    int x = MY_VALUE;
     ten_array[tid] = x;
-
-    return;
 }
-
-GPGPU_START(main)
-
-#else
-#include <stdio.h>
-int indexes_array[CORES] = {0};
-int ten_array[CORES] = {0};
-
-int main() {
-    for (int i = 0; i < CORES; i++) {
-        indexes_array[i] = i;
-        ten_array[i] = 10;
-    }
-
-    printf("Indexes array: ");
-    for (int i = 0; i < CORES; i++) {
-        printf("%d ", indexes_array[i]);
-    }
-
-    printf("\nTen array: ");
-    for (int i = 0; i < CORES; i++) {
-        printf("%d ", ten_array[i]);
-    }
-    printf("\n");
-}
-#endif

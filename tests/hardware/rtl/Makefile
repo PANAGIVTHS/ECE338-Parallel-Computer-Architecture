@@ -50,10 +50,7 @@ VERILOG_SOURCES := $(_ORDERED) $(_REST)
 VERILATOR_FLAGS := --binary --timing --assert --trace -Wno-fatal -Werror-USERFATAL \
     --timescale 1ns/1ps -I$(SRC_DIR) -I$(CURDIR)
 
-UART_PORT ?= /dev/ttyACM0
-UART_BAUD ?= 115200
-
-.PHONY: all testsuite gen assemble expected compile simulate host visualize clean
+.PHONY: all testsuite gen assemble expected compile simulate visualize clean
 
 # ==============================================================================
 # MODULAR TEST SUITE PIPELINE
@@ -82,9 +79,6 @@ compile:
 simulate: compile
 	$(SIM_EXE) $(PLUSARGS) | tee simulation.log
 	@if grep -qiE '\[FAIL\]|\[ERROR\]|%Error|Fatal:' simulation.log; then exit 1; fi
-
-host: gen
-	python3 $(REPO_ROOT)/tests/software/host/host_uart_tester.py --port $(UART_PORT) --baud $(UART_BAUD)
 
 # ==============================================================================
 # UTILITY TARGETS

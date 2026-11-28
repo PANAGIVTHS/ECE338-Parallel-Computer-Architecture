@@ -2,7 +2,7 @@
 `include "constants.svh"
 
 `define CLOCK_PERIOD 10
-`define TEST_TIMEOUT_CYCLES 1500
+`define TEST_TIMEOUT_CYCLES 10000  // as the E2E and DDR benches (tests.rtl.*.plusargs)
 
 module tb_GPGPU_smx_only 
     import ControlPkg::*;
@@ -26,7 +26,7 @@ module tb_GPGPU_smx_only
     wire o_idle;
     wire o_running;
 
-    reg [31:0] expected_data [0:DMEM_ENTRIES-1];
+    reg [31:0] expected_data [0:SMEM_ENTRIES-1];
     reg [31:0] expected_regfile [0:NUM_CORES-1][0:31];
     reg [31:0] temp_regfile [0:31];
 
@@ -62,7 +62,7 @@ module tb_GPGPU_smx_only
         `AXI4_SLAVE_CONNECT(m_axi, ddr_axi)
     );
 
-    // DDR model on the AXI4 master; these programs use DMEM only.
+    // DDR model on the AXI4 master; these programs use SMEM only.
     AXI4SlaveMemory #(
         .LATENCY_MIN(AXI_SLAVE_LATENCY_MIN), .LATENCY_MAX(AXI_SLAVE_LATENCY_MAX),
         .READY_PCT(AXI_SLAVE_READY_PCT), .VALID_PCT(AXI_SLAVE_VALID_PCT), .SEED(AXI_SLAVE_SEED)
@@ -147,7 +147,7 @@ module tb_GPGPU_smx_only
             end
 
             // Clear expected arrays
-            for (i = 0; i < DMEM_ENTRIES; i = i + 1)
+            for (i = 0; i < SMEM_ENTRIES; i = i + 1)
                 expected_data[i] = 32'b0;
 
             for (c = 0; c < NUM_CORES; c = c + 1)
@@ -158,13 +158,13 @@ module tb_GPGPU_smx_only
             for (i = 0; i < IMEM_ENTRIES; i = i + 1)
                 UUT.instructionMemory.data[i] = 32'b0;
 
-            for (i = 0; i < DMEM_ENTRIES; i = i + 1)
+            for (i = 0; i < SMEM_ENTRIES; i = i + 1)
                 UUT.memory_subsystem.bramBackend.dataMemory.data[i] = 32'b0;
 
             // Load IMEM directly, like old SMX test
             $readmemh(prog_file, UUT.instructionMemory.data);
 
-            // Load expected final DMEM
+            // Load expected final SMEM
             $readmemh(data_file, expected_data);
 
             // Load expected regfiles
@@ -282,10 +282,10 @@ module tb_GPGPU_smx_only
                 end
             end
 
-            // Compare DMEM directly
+            // Compare SMEM directly
             data_errors = 0;
 
-            for (i = 0; i < DMEM_ENTRIES; i = i + 1) begin
+            for (i = 0; i < SMEM_ENTRIES; i = i + 1) begin
                 if (UUT.memory_subsystem.bramBackend.dataMemory.data[i] !== expected_data[i]) begin
                     $display("  [ERROR] Data memory Address %0d: Expected %h, Found %h",
                              i, expected_data[i], UUT.memory_subsystem.bramBackend.dataMemory.data[i]);

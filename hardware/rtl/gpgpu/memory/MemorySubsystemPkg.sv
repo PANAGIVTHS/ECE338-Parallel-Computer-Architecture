@@ -62,8 +62,10 @@ package MemorySubsystemPkg;
         mem_status_t status;
     } decode_t;
 
-    function automatic logic in_range(word_t a, base, size);
-        return (a >= base) && (a - base < size);
+    // Compares with constant bounds, not a - base: with bases and sizes that
+    // are multiples of a large power of two only the upper bits are compared.
+    function automatic logic in_range(word_t a, int unsigned base, int unsigned size);
+        return (a >= base) && ({1'b0, a} < {1'b0, base} + {1'b0, size});
     endfunction
 
     // Every access must be aligned to its own size.
@@ -86,7 +88,7 @@ package MemorySubsystemPkg;
 
         if (is_misaligned(addr, size))
             d.status = ST_MISALIGNED;
-        else if (in_range(addr, DMEM_BASE, DMEM_SIZE))
+        else if (in_range(addr, SMEM_BASE, SMEM_SIZE))
             d.target = TGT_BRAM;
         else if (in_range(addr, FB0_BASE, FB_SIZE) || in_range(addr, FB1_BASE, FB_SIZE)) begin
             if (write)
@@ -136,9 +138,9 @@ package MemorySubsystemPkg;
     endfunction
 
     function automatic bit map_disjoint();
-        return disjoint(DMEM_BASE, DMEM_SIZE, FB0_BASE, FB_SIZE)
-            && disjoint(DMEM_BASE, DMEM_SIZE, FB1_BASE, FB_SIZE)
-            && disjoint(DMEM_BASE, DMEM_SIZE, GMEM_BASE, GMEM_SIZE)
+        return disjoint(SMEM_BASE, SMEM_SIZE, FB0_BASE, FB_SIZE)
+            && disjoint(SMEM_BASE, SMEM_SIZE, FB1_BASE, FB_SIZE)
+            && disjoint(SMEM_BASE, SMEM_SIZE, GMEM_BASE, GMEM_SIZE)
             && disjoint(FB0_BASE, FB_SIZE, FB1_BASE, FB_SIZE)
             && disjoint(FB0_BASE, FB_SIZE, GMEM_BASE, GMEM_SIZE)
             && disjoint(FB1_BASE, FB_SIZE, GMEM_BASE, GMEM_SIZE);

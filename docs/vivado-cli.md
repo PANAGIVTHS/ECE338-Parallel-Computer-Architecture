@@ -102,7 +102,7 @@ arguments do not survive Vivado's `-tclargs` handling. `production_sources.tcl`
 reads and validates it (all files exist, unique file names, headers among the
 sources). The default `hardware.vivado.memory_init`,
 `tools/gpgpu/adapters/vivado/tcl/ip/empty.mem`, provides explicit 2048-word zero
-initialization for IMEM/DMEM; its file name must match the RTL's default
+initialization for IMEM/SMEM; its file name must match the RTL's default
 `$readmemh` name. Project and package copy it beside the flattened
 production files; their stage cwd is owned, never a random repository cwd.
 Board XDC is excluded from the reusable IP.

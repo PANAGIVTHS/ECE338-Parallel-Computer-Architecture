@@ -172,9 +172,9 @@ static void print_identity(void)
 
     const u32 info_mem = gpu_read(GPGPU_REG_INFO_MEM);
     print_register("INFO_MEM", info_mem);
-    xil_printf("IMEM %u words, DMEM %u words\r\n",
+    xil_printf("IMEM %u words, SMEM %u words\r\n",
                (unsigned int)((info_mem & GPGPU_INFO_MEM_IMEM_MASK) >> GPGPU_INFO_MEM_IMEM_LSB),
-               (unsigned int)(info_mem & GPGPU_INFO_MEM_DMEM_MASK));
+               (unsigned int)(info_mem & GPGPU_INFO_MEM_SMEM_MASK));
 
     const u32 features = gpu_read(GPGPU_REG_INFO_FEATURES);
     print_register("INFO_FEATURES", features);
@@ -353,12 +353,12 @@ int gpgpu_write_imem(u32 index, u32 word)
     return 0;
 }
 
-int gpgpu_write_dmem(u32 index, u32 word)
+int gpgpu_write_smem(u32 index, u32 word)
 {
-    if (check_index("DMEM", index, GPGPU_DMEM_ENTRIES) != 0 ||
-        require_idle("DMEM write") != 0)
+    if (check_index("SMEM", index, GPGPU_SMEM_ENTRIES) != 0 ||
+        require_idle("SMEM write") != 0)
         return GPGPU_ERR_STATE;
-    gpu_write(GPGPU_DMEM_BASE + 4U * index, word);
+    gpu_write(GPGPU_SMEM_BASE + 4U * index, word);
     return 0;
 }
 
@@ -371,12 +371,12 @@ int gpgpu_read_imem(u32 index, u32 *data)
     return 0;
 }
 
-int gpgpu_read_dmem(u32 index, u32 *data)
+int gpgpu_read_smem(u32 index, u32 *data)
 {
-    if (data == NULL || check_index("DMEM", index, GPGPU_DMEM_ENTRIES) != 0 ||
-        require_idle("DMEM read") != 0)
+    if (data == NULL || check_index("SMEM", index, GPGPU_SMEM_ENTRIES) != 0 ||
+        require_idle("SMEM read") != 0)
         return GPGPU_ERR_STATE;
-    *data = gpu_read(GPGPU_DMEM_BASE + 4U * index);
+    *data = gpu_read(GPGPU_SMEM_BASE + 4U * index);
     return 0;
 }
 
@@ -442,22 +442,22 @@ int gpgpu_init(void)
      * sizes compiled in from gpgpu_platform.h must match the hardware's. */
     const u32 info_mem = gpu_read(GPGPU_REG_INFO_MEM);
     const u32 imem = (info_mem & GPGPU_INFO_MEM_IMEM_MASK) >> GPGPU_INFO_MEM_IMEM_LSB;
-    const u32 dmem = info_mem & GPGPU_INFO_MEM_DMEM_MASK;
-    if (imem != GPGPU_IMEM_ENTRIES || dmem != GPGPU_DMEM_ENTRIES) {
-        xil_printf("ERROR: the GPU has IMEM %u / DMEM %u words (INFO_MEM=0x%08x), but this "
-                   "driver was built for IMEM %u / DMEM %u: rebuild the host against the "
-                   "bitstream's RTL\r\n", (unsigned int)imem, (unsigned int)dmem,
+    const u32 smem = info_mem & GPGPU_INFO_MEM_SMEM_MASK;
+    if (imem != GPGPU_IMEM_ENTRIES || smem != GPGPU_SMEM_ENTRIES) {
+        xil_printf("ERROR: the GPU has IMEM %u / SMEM %u words (INFO_MEM=0x%08x), but this "
+                   "driver was built for IMEM %u / SMEM %u: rebuild the host against the "
+                   "bitstream's RTL\r\n", (unsigned int)imem, (unsigned int)smem,
                    (unsigned int)info_mem, (unsigned int)GPGPU_IMEM_ENTRIES,
-                   (unsigned int)GPGPU_DMEM_ENTRIES);
+                   (unsigned int)GPGPU_SMEM_ENTRIES);
         return GPGPU_ERR_STATE;
     }
 
     const u32 build = gpu_read(GPGPU_REG_BUILD_ID);
-    xil_printf("GPU: RTL %07x%s, %u SPs, %u kHz, IMEM %u / DMEM %u words, DDR %s\r\n",
+    xil_printf("GPU: RTL %07x%s, %u SPs, %u kHz, IMEM %u / SMEM %u words, DDR %s\r\n",
                (unsigned int)(build & GPGPU_BUILD_HASH_MASK),
                (build & GPGPU_BUILD_DIRTY_MASK) != 0U ? "-dirty" : "",
                (unsigned int)(info & GPGPU_INFO_SP_COUNT_MASK),
-               (unsigned int)gpu_read(GPGPU_REG_INFO_CLOCK), (unsigned int)imem, (unsigned int)dmem,
+               (unsigned int)gpu_read(GPGPU_REG_INFO_CLOCK), (unsigned int)imem, (unsigned int)smem,
                (gpu_read(GPGPU_REG_INFO_FEATURES) & GPGPU_FEATURE_DDR_MASK) != 0U ? "on" : "off");
 
     gpu_write(GPGPU_REG_IRQ_ENABLE, 0U);
@@ -472,7 +472,7 @@ int gpgpu_init(void)
     return GPGPU_OK;
 }
 
-int gpgpu_reset(void)
+int gpgpu_pl_reset(void)
 {
     const UINTPTR slcr = (UINTPTR)XPS_SYS_CTRL_BASEADDR;
 
@@ -486,9 +486,9 @@ int gpgpu_reset(void)
     return gpgpu_init();
 }
 
-/* `verbose` prints the start and idle messages, which the UART tools expect;
- * errors are always printed. */
-static int start_and_wait(int verbose)
+/* Arm the completion interrupt and start the kernel; does not wait. Errors are
+ * printed. */
+int gpgpu_start(void)
 {
     u32 status;
 
@@ -514,23 +514,28 @@ static int start_and_wait(int verbose)
     gpu_finished = 0U;
     gpu_write(GPGPU_REG_IRQ_ENABLE, GPGPU_IRQ_COMPLETE_MASK);
 #endif
-
-    if (verbose)
-        xil_printf("Starting core...\r\n");
     gpu_write(GPGPU_REG_CONTROL, GPGPU_CONTROL_START_MASK);
+    return GPGPU_OK;
+}
 
-    /* No timeout: a kernel that never completes blocks here forever. */
+int gpgpu_done(void)
+{
 #if GPGPU_USE_IRQ
-    while (gpu_finished == 0U) {
-        /* The ISR clears the GPU IRQ and sets gpu_finished. */
-    }
+    return gpu_finished != 0U; /* the ISR clears the GPU IRQ and sets it */
+#else
+    return (gpu_read(GPGPU_REG_IRQ_STATUS) & GPGPU_IRQ_COMPLETE_MASK) != 0U;
+#endif
+}
+
+int gpgpu_finish(int verbose)
+{
+    u32 status;
+
+#if GPGPU_USE_IRQ
     gpu_write(GPGPU_REG_IRQ_ENABLE, 0U);
 #else
-    while ((gpu_read(GPGPU_REG_IRQ_STATUS) & GPGPU_IRQ_COMPLETE_MASK) == 0U) {
-    }
     gpu_write(GPGPU_REG_IRQ_STATUS, GPGPU_IRQ_COMPLETE_MASK);
 #endif
-
     status = gpgpu_read_status();
     if ((status & GPGPU_STATUS_IDLE_MASK) == 0U) {
         xil_printf("ERROR: completion observed, but GPU is not IDLE\r\n");
@@ -539,22 +544,46 @@ static int start_and_wait(int verbose)
     }
     /* FAULTED stays set until `clear`, so callers that only check STATUS
      * (e.g. the UART tools) see the fault too. */
-    if ((status & GPGPU_STATUS_FAULTED_MASK) != 0U)
-        return report_fault();
-
-    if (verbose)
-        xil_printf("Core entered idle state.\r\n");
+    if ((status & GPGPU_STATUS_FAULTED_MASK) != 0U) {
+        if (verbose)
+            return report_fault();
+        return (gpu_read(GPGPU_REG_FAULT_INFO) & GPGPU_FAULT_CAUSE_MASK) == GPGPU_FAULT_FATAL ? GPGPU_ERR_FATAL
+                                                                                             : GPGPU_ERR_FAULT;
+    }
     return GPGPU_OK;
 }
 
-int gpgpu_start_and_wait(void)
+void gpgpu_read_fault(u32 *info, u32 *lanes, u32 *pc)
 {
-    return start_and_wait(1);
+    *info = gpu_read(GPGPU_REG_FAULT_INFO);
+    *lanes = gpu_read(GPGPU_REG_FAULT_LANES);
+    *pc = gpu_read(GPGPU_REG_FAULT_PC);
 }
 
-int gpgpu_run_quiet(void)
+int gpgpu_stop(void)
 {
-    return start_and_wait(0);
+    gpu_write(GPGPU_REG_CONTROL, GPGPU_CONTROL_STOP_MASK);
+    for (u32 i = 0; (gpgpu_read_status() & GPGPU_STATUS_IDLE_MASK) == 0U; i++) {
+        if (i >= 100000U) /* 1 s */
+            return GPGPU_ERR_FATAL;
+        usleep(10);
+    }
+    gpu_write(GPGPU_REG_IRQ_ENABLE, 0U);
+    gpu_write(GPGPU_REG_IRQ_STATUS, GPGPU_IRQ_COMPLETE_MASK);
+#if GPGPU_USE_IRQ
+    gpu_finished = 0U;
+#endif
+    gpgpu_clear();
+    return GPGPU_OK;
+}
+
+void gpgpu_shutdown(void)
+{
+    Xil_ExceptionDisable();
+    gpu_write(GPGPU_REG_IRQ_ENABLE, 0U);
+#if GPGPU_USE_IRQ
+    XScuGic_Disable(&gic, GPGPU_IRQ_ID);
+#endif
 }
 
 int gpgpu_dump_imem_ascii(u32 offset, u32 count)
@@ -574,20 +603,20 @@ int gpgpu_dump_imem_ascii(u32 offset, u32 count)
     return 0;
 }
 
-int gpgpu_dump_dmem_ascii(u32 offset, u32 count)
+int gpgpu_dump_smem_ascii(u32 offset, u32 count)
 {
     u32 word;
-    if (check_span("DMEM", offset, count, GPGPU_DMEM_ENTRIES) != 0 ||
-        require_idle("DMEM dump") != 0)
+    if (check_span("SMEM", offset, count, GPGPU_SMEM_ENTRIES) != 0 ||
+        require_idle("SMEM dump") != 0)
         return GPGPU_ERR_STATE;
-    xil_printf("BEGIN_DMEM_DUMP\r\n");
+    xil_printf("BEGIN_SMEM_DUMP\r\n");
     for (u32 i = 0U; i < count; ++i) {
-        if (gpgpu_read_dmem(offset + i, &word) != 0)
+        if (gpgpu_read_smem(offset + i, &word) != 0)
             return GPGPU_ERR_STATE;
         xil_printf("0x%08x: 0x%08x\r\n", (unsigned int)(4U * (offset + i)),
                    (unsigned int)word);
     }
-    xil_printf("END_DMEM_DUMP\r\n");
+    xil_printf("END_SMEM_DUMP\r\n");
     return 0;
 }
 

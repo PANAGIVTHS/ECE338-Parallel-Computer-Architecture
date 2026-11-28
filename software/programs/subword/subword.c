@@ -1,28 +1,25 @@
-#include "../gpgpu_runtime.h"
-
-#define CORES GPGPU_NUM_CORES
-
 /*
- * Test of the byte and halfword instructions: LB, LBU, LH, LHU, SB, SH.
+ * subword: a test of the byte and halfword instructions: LB, LBU, LH, LHU,
+ * SB, SH.
  *
- * Each lane runs five small tests in DMEM and a sixth in DDR, and checks
- * what it reads back. Every failed check sets one bit in errors[tid], so a
- * correct GPU leaves errors[] all zero.
+ * Each lane runs five small tests in shared memory and a sixth in DDR, and
+ * checks what it reads back. Every failed check sets one bit in errors[tid],
+ * so a correct GPU leaves errors[] all zero. host.c launches it and prints
+ * the failed checks.
  *
- * GPGPU_ARGS[0] = DMEM byte address of the test area, e.g. 0x100.
- * GPGPU_ARGS[1] = byte address of CORES + 31 words in GMEM (the GPU's
- *                 read-write DDR region) for test 6, aligned to a DDR
- *                 group (128 bytes), or 0 to skip the test.
- *                 Test 6 checks the sub-word loads against a word load of the
- *                 same word, so any contents work; bytes and halfwords with
- *                 their sign bit both set and clear exercise the extension.
+ * Parameters:
+ *   errors  CORES words in GMEM (lane_errors): lane tid writes its error bits there
+ *   gmem    CORES + 31 words in GMEM (ddr_words) for test 6, aligned to a DDR group (128
+ *           bytes), or NULL to skip the test. Test 6 checks the sub-word
+ *           loads against a word load of the same word, so any contents work;
+ *           bytes and halfwords with their sign bit both set and clear
+ *           exercise the extension.
  * CORES must be even (test 5 pairs each lane with lane tid ^ 1).
  *
- * Test area, in words from GPGPU_ARGS[0]:
- *   errors[CORES]           0 = lane passed
- *   lane[CORES][4]          one word per test 1-4, per lane
+ * Shared memory (GPGPU_SHARED):
+ *   lane_words[CORES][4]       one word per test 1-4, per lane
  *   shared_bytes[(CORES+3)/4]  test 5: 4 lanes write one byte each into a word
- *   shared_halves[CORES/2]  test 5: 2 lanes write one halfword each into a word
+ *   shared_halves[CORES/2]     test 5: 2 lanes write one halfword each into a word
  *
  * Error bits:
  *    0  test 1: SB changed more than its byte
@@ -46,6 +43,10 @@
  *   18  test 6: DDR LHU differs from the half of the word
  *   19  test 6: DDR LHU wrong where lanes span two bursts
  */
+#include "gpgpu_device.h"
+#include "subword.h"
+
+#define CORES GPGPU_NUM_CORES
 
 #define BACKGROUND 0xA5A5A5A5u
 
@@ -60,8 +61,8 @@
     __asm__ volatile(insn " %0, 0(%1)" : : "r"(value), "r"(addr) : "memory")
 
 /* Ends one test. Without it GCC computes every test's addresses and expected
- * values up front, runs out of registers and spills more than the 64 bytes of
- * stack each lane has. */
+ * values up front, runs out of registers and spills more than the stack each
+ * lane has (GPGPU_STACK_STRIDE bytes). */
 #define END_OF_TEST() __asm__ volatile("" : "+r"(errors), "+r"(mine), "+r"(tid), "+r"(gmem) : : "memory")
 
 /* Ends one group of test 6's checks, for the same reason as END_OF_TEST. */
@@ -74,14 +75,18 @@
 #define HALF_S(word, at) ((uint32_t)(int32_t)(int16_t)((word) >> (8 * (at))))
 #define HALF_U(word, at) (((word) >> (8 * (at))) & 0xFFFFu)
 
-#ifdef __riscv
+GPGPU_SHARED uint32_t lane_words[CORES][4];
+GPGPU_SHARED uint32_t shared_bytes[(CORES + 3) / 4];
+GPGPU_SHARED uint32_t shared_halves[CORES / 2];
 
-void main(void)
+/* Test 6's words and the result, for the host. */
+GPGPU_DEVICE __attribute__((aligned(128))) uint32_t ddr_words[SUBWORD_DDR_WORDS];
+GPGPU_DEVICE uint32_t lane_errors[CORES];
+
+GPGPU_GLOBAL void subword(uint32_t *errors_out, const volatile uint32_t *gmem)
 {
-    uint32_t tid = gpgpu_thread_id();
-    volatile uint32_t *area = (volatile uint32_t *)(uintptr_t)GPGPU_ARGS[0];
-    volatile uint32_t *mine = area + CORES + 4 * tid;  /* this lane's 4 words */
-    const volatile uint32_t *gmem = (const volatile uint32_t *)(uintptr_t)GPGPU_ARGS[1];
+    uint32_t tid = gpgpu_thread_idx();
+    volatile uint32_t *mine = lane_words[tid];  /* this lane's 4 words */
     uint32_t errors = 0;
 
     /* ---- Test 1: SB writes one byte and leaves the other three alone ----
@@ -163,14 +168,14 @@ void main(void)
      * Lane tid writes byte tid of shared_bytes and halfword tid of
      * shared_halves, so 4 lanes share each byte word and 2 lanes each half
      * word. All lanes store in the same instruction; none may erase another. */
-    volatile uint32_t *shared_bytes = area + 5 * CORES;
-    volatile uint32_t *shared_halves = shared_bytes + (CORES + 3) / 4;
-    volatile uint8_t *bytes5 = (volatile uint8_t *)shared_bytes;
-    volatile uint16_t *halves5 = (volatile uint16_t *)shared_halves;
+    volatile uint32_t *bytes_word = shared_bytes;
+    volatile uint32_t *halves_word = shared_halves;
+    volatile uint8_t *bytes5 = (volatile uint8_t *)bytes_word;
+    volatile uint16_t *halves5 = (volatile uint16_t *)halves_word;
     uint32_t neighbour = tid ^ 1;  /* the other lane of the same pair */
 
-    shared_bytes[tid / 4] = 0;      /* several lanes store the same zero */
-    shared_halves[tid / 2] = 0;
+    bytes_word[tid / 4] = 0;        /* several lanes store the same zero */
+    halves_word[tid / 2] = 0;
     bytes5[tid] = 0x80 + tid;
     halves5[tid] = 0x8000 + tid;
 
@@ -178,7 +183,7 @@ void main(void)
     CHECK(12, LOAD("lbu", bytes5 + neighbour), 0x80 + neighbour);
 
     uint32_t even = tid & ~1u;     /* the pair is lanes even and even + 1 */
-    CHECK(13, shared_halves[tid / 2], (0x8000 + even) | (0x8000 + even + 1) << 16);
+    CHECK(13, halves_word[tid / 2], (0x8000 + even) | (0x8000 + even + 1) << 16);
     CHECK(14, LOAD("lhu", halves5 + neighbour), 0x8000 + neighbour);
 
     END_OF_TEST();
@@ -189,7 +194,7 @@ void main(void)
      * last load reads the high half of word tid + 31, 126 bytes on: lane 0
      * stays in the first 128-byte group and the others move to the next, so
      * the lanes of one instruction span two bursts. */
-    if (gmem != 0) {
+    if (gmem != NULL) {
         const volatile uint8_t *bytes6 = (const volatile uint8_t *)(gmem + tid);
         uint32_t word6 = gmem[tid];
 
@@ -221,40 +226,5 @@ void main(void)
 
     END_OF_TEST();
 
-    area[tid] = errors;
-    return;
+    errors_out[tid] = errors;
 }
-
-GPGPU_START(main)
-
-#else
-
-#include <stdio.h>
-
-/* Prints the words a correct GPU leaves in the test area (offsets in words).
- * Test 6 only reads GMEM and leaves no words of its own. */
-int main(void)
-{
-    printf("errors[0..%d] = 0\n\n", CORES - 1);
-    printf("lane  test1     test2     test3     test4\n");
-    for (unsigned tid = 0; tid < CORES; tid++) {
-        unsigned offset = tid & 3, half_offset = 2 * (tid & 1);
-        unsigned w1 = (BACKGROUND & ~(0xFFu << (8 * offset))) | ((0x80 + tid) << (8 * offset));
-        unsigned w3 = (BACKGROUND & ~(0xFFFFu << (8 * half_offset))) | ((0x8000 + tid) << (8 * half_offset));
-        printf("%4u  %08x  %08x  %08x  %08x\n", tid, w1, 0x44332211u, w3, 0x80FF7F01u);
-    }
-    printf("\nshared_bytes:\n");
-    for (unsigned w = 0; w < (CORES + 3) / 4; w++) {
-        unsigned word = 0;
-        for (unsigned k = 0; k < 4; k++)
-            if (4 * w + k < CORES)  /* the last word may have fewer lanes */
-                word |= (0x80 + 4 * w + k) << (8 * k);
-        printf("  %08x\n", word);
-    }
-    printf("shared_halves:\n");
-    for (unsigned w = 0; w < CORES / 2; w++)
-        printf("  %08x\n", (0x8000 + 2 * w) | (0x8001u + 2 * w) << 16);
-    return 0;
-}
-
-#endif

@@ -6,19 +6,19 @@
 #define GPGPU_PLATFORM_H
 
 /* Interface version reported in INFO[31:16] (architecture.interface_version). */
-#define GPGPU_INTERFACE_VERSION            3U
+#define GPGPU_INTERFACE_VERSION            4U
 
 /* gpu_pkg */
 #define GPGPU_BYTES_PER_WORD               4U
-#define GPGPU_IMEM_ENTRIES                 2048U
-#define GPGPU_DMEM_ENTRIES                 2048U
-#define GPGPU_FB0_BASE                     402653184U
-#define GPGPU_FB1_BASE                     406847488U
-#define GPGPU_GMEM_BASE                    411041792U
+#define GPGPU_IMEM_ENTRIES                 4096U
+#define GPGPU_SMEM_ENTRIES                 4096U
+#define GPGPU_FB0_BASE                     67108864U
+#define GPGPU_FB1_BASE                     71303168U
+#define GPGPU_GMEM_BASE                    75497472U
 #define GPGPU_FB_WIDTH                     1280U
 #define GPGPU_FB_HEIGHT                    720U
 #define GPGPU_FB_SIZE                      3686400U
-#define GPGPU_GMEM_SIZE                    8388608U
+#define GPGPU_GMEM_SIZE                    461373440U
 
 /* warp_pkg */
 #define GPGPU_WARPS_PER_SM                 1U
@@ -66,7 +66,7 @@
 #define GPGPU_PERF_WARP_SLOTS              32U
 #define GPGPU_PERF_MAX_WARPS               8U
 #define GPGPU_IMEM_BASE                    0x00002000U
-#define GPGPU_DMEM_BASE                    0x00004000U
+#define GPGPU_SMEM_BASE                    0x00006000U
 #define GPGPU_CONTROL_START_MASK           0x00000001U
 #define GPGPU_CONTROL_STOP_MASK            0x00000002U
 #define GPGPU_STATUS_IDLE_MASK             0x00000001U
@@ -82,7 +82,7 @@
 #define GPGPU_INFO_SP_COUNT_MASK           0x0000FFFFU
 #define GPGPU_INFO_MEM_IMEM_LSB            16U
 #define GPGPU_INFO_MEM_IMEM_MASK           0xFFFF0000U
-#define GPGPU_INFO_MEM_DMEM_MASK           0x0000FFFFU
+#define GPGPU_INFO_MEM_SMEM_MASK           0x0000FFFFU
 #define GPGPU_FAULT_NONE                   0U
 #define GPGPU_FAULT_MEMORY                 1U
 #define GPGPU_FAULT_POSTED_WRITE           2U
@@ -159,6 +159,11 @@
 #define GPGPU_PERF_GLOBAL_GROUP_NAMES      { "PERF_GLOBAL_GROUP_RUN", "PERF_GLOBAL_GROUP_AW", "PERF_GLOBAL_GROUP_W", "PERF_GLOBAL_GROUP_WRITE_RING", "PERF_GLOBAL_GROUP_AR", "PERF_GLOBAL_GROUP_R", "PERF_GLOBAL_GROUP_READ_RING", "PERF_GLOBAL_GROUP_COALESCING", "PERF_GLOBAL_GROUP_BRAM" }
 #define GPGPU_PERF_GLOBAL_GROUP_OF         { 0U, 0U, 0U, 1U, 1U, 1U, 2U, 2U, 2U, 2U, 3U, 3U, 3U, 4U, 4U, 4U, 5U, 5U, 5U, 5U, 6U, 7U, 7U, 8U, 8U, 8U }
 #define GPGPU_PERF_GLOBAL_KIND             { 0U, 1U, 1U, 1U, 1U, 1U, 1U, 1U, 1U, 1U, 3U, 3U, 1U, 1U, 1U, 1U, 1U, 1U, 1U, 1U, 3U, 2U, 2U, 2U, 1U, 2U }
+
+/* The host's share of DDR (software.host): the monitor, its boot record, the programs. */
+#define GPGPU_MONITOR_BASE                 0x00100000U
+#define GPGPU_MONITOR_BYTES                0x00100000U
+#define GPGPU_BOOT_RECORD_BYTES            0x00001000U
 
 /* Completion wait: PS interrupt or IRQ_STATUS polling (software.host). */
 #define GPGPU_USE_IRQ                      1

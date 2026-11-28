@@ -121,9 +121,9 @@ module GPGPU
     MemoryInterface #(.ADDR_WIDTH(IMEM_AW)) host_imem_if ();
     MemoryInterface #(.ADDR_WIDTH(IMEM_AW)) smx_imem_if ();
     MemoryInterface #(.ADDR_WIDTH(IMEM_AW)) imem_if ();
-    MemoryInterface #(.ADDR_WIDTH(DMEM_AW)) host_dmem_if ();
-    MemorySubsystemInterface smx_dmem_if [SP_PER_SM] () ;
-    MemorySubsystemInterface dmem_if [SP_PER_SM] ();
+    MemoryInterface #(.ADDR_WIDTH(SMEM_AW)) host_smem_if ();
+    MemorySubsystemInterface smx_smem_if [SP_PER_SM] () ;
+    MemorySubsystemInterface smem_if [SP_PER_SM] ();
 
     // Instruction memory multiplexing
     assign host_imem_if.rdata = imem_if.rdata;
@@ -140,7 +140,7 @@ module GPGPU
         .i_req_wdata(i_req_wdata), .i_req_wstrb(i_req_wstrb),
         .o_rsp_valid(o_rsp_valid), .i_rsp_ready(i_rsp_ready),
         .o_rsp_rdata(o_rsp_rdata), .o_rsp_status(o_rsp_status),
-        .i_idle(o_core_idle), .imem(host_imem_if), .dmem(host_dmem_if),
+        .i_idle(o_core_idle), .imem(host_imem_if), .smem(host_smem_if),
         .o_csr_write_fire(csr_write_fire),
         .i_csr_rdata(csr_rdata), .i_csr_status(csr_status)
     );
@@ -182,7 +182,7 @@ module GPGPU
         .o_imem_addr(smx_imem_if.addr),
         .o_imem_ren(smx_imem_if.ren),
 
-        .memory_bus(smx_dmem_if),
+        .memory_bus(smx_smem_if),
 
         .o_kernel_complete(core_complete),
 
@@ -213,16 +213,16 @@ module GPGPU
 
     //! Data memory (BRAM + DRAM)
 
-    // Host request built from the word-addressed MMIO DMEM port.
+    // Host request built from the word-addressed MMIO SMEM port.
     mem_req_t host_req;
     logic host_req_valid;
-    assign host_req_valid = host_dmem_if.ren;
-    assign host_req.write = host_dmem_if.wen;
-    assign host_req.addr = word_t'(host_dmem_if.addr) << 2; // DMEM base = 0: word index -> byte address
+    assign host_req_valid = host_smem_if.ren;
+    assign host_req.write = host_smem_if.wen;
+    assign host_req.addr = word_t'(host_smem_if.addr) << 2; // SMEM base = 0: word index -> byte address
     assign host_req.size = MEM_SIZE_WORD;
-    assign host_req.wdata = host_dmem_if.wdata;
-    assign host_req.wstrb = host_dmem_if.wen ? '1 : '0; // host does full-word writes
-    assign host_dmem_if.rdata = dmem_if[0].rsp.rdata;
+    assign host_req.wdata = host_smem_if.wdata;
+    assign host_req.wstrb = host_smem_if.wen ? '1 : '0; // host does full-word writes
+    assign host_smem_if.rdata = smem_if[0].rsp.rdata;
  
     // Slot 0: SMX while not idle, host while idle. Slots 1..N-1: SMX only.
     // While idle the subsystem belongs to the host: SMX requests left over
@@ -230,20 +230,20 @@ module GPGPU
     for (genvar i = 0; i < SP_PER_SM; i++) begin : g_req_mux
         if (i == 0) begin : g_host_shared
             // request side
-            assign dmem_if[0].req_valid = ~o_core_idle ? smx_dmem_if[0].req_valid : host_req_valid;
-            assign dmem_if[0].req = ~o_core_idle ? smx_dmem_if[0].req : host_req;
-            assign dmem_if[0].rsp_ready = ~o_core_idle ? smx_dmem_if[0].rsp_ready : 1'b1;
+            assign smem_if[0].req_valid = ~o_core_idle ? smx_smem_if[0].req_valid : host_req_valid;
+            assign smem_if[0].req = ~o_core_idle ? smx_smem_if[0].req : host_req;
+            assign smem_if[0].rsp_ready = ~o_core_idle ? smx_smem_if[0].rsp_ready : 1'b1;
             // response side back to the SMX (gated off while the host owns the slot)
-            assign smx_dmem_if[0].req_ready = o_core_running & dmem_if[0].req_ready;
-            assign smx_dmem_if[0].rsp_valid = o_core_running & dmem_if[0].rsp_valid;
-            assign smx_dmem_if[0].rsp = dmem_if[0].rsp;
+            assign smx_smem_if[0].req_ready = o_core_running & smem_if[0].req_ready;
+            assign smx_smem_if[0].rsp_valid = o_core_running & smem_if[0].rsp_valid;
+            assign smx_smem_if[0].rsp = smem_if[0].rsp;
         end else begin : g_core_only
-            assign dmem_if[i].req_valid = ~o_core_idle & smx_dmem_if[i].req_valid;
-            assign dmem_if[i].req = smx_dmem_if[i].req;
-            assign dmem_if[i].rsp_ready = smx_dmem_if[i].rsp_ready;
-            assign smx_dmem_if[i].req_ready = dmem_if[i].req_ready;
-            assign smx_dmem_if[i].rsp_valid = dmem_if[i].rsp_valid;
-            assign smx_dmem_if[i].rsp = dmem_if[i].rsp;
+            assign smem_if[i].req_valid = ~o_core_idle & smx_smem_if[i].req_valid;
+            assign smem_if[i].req = smx_smem_if[i].req;
+            assign smem_if[i].rsp_ready = smx_smem_if[i].rsp_ready;
+            assign smx_smem_if[i].req_ready = smem_if[i].req_ready;
+            assign smx_smem_if[i].rsp_valid = smem_if[i].rsp_valid;
+            assign smx_smem_if[i].rsp = smem_if[i].rsp;
         end
     end
 
@@ -305,7 +305,7 @@ module GPGPU
         .clk(clk),
         .rst_n(rst_n),
         .i_req_enable(o_core_running | o_core_idle),
-        .memory_if(dmem_if),
+        .memory_if(smem_if),
         .axi_if(axi_if),
         .o_idle(memory_quiet),
         .o_fatal(memory_fatal),

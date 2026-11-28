@@ -11,13 +11,13 @@ for the whole warp, with the hardware's rules:
   TXD_REGISTER (x31) holds the lane id and ignores writes, the rest are 0;
   x0 is always 0. The PC wraps at IMEM_ENTRIES.
 * Every access decodes as MemorySubsystemPkg::decode_access: misaligned for
-  its size, then DMEM (BRAM), the framebuffers (DDR, write-only), GMEM
+  its size, then SMEM (BRAM), the framebuffers (DDR, write-only), GMEM
   (DDR, read-write), else unmapped; without the DDR backend a DDR access is
   unmapped. A DDR store completes on its B response, before any later load
   is claimed, so a load from GMEM always sees the stores before it.
 * A memory instruction with a non-OK lane faults: the kernel stops there and
   the model records the fault report (PC, lanes, status kinds).
-* Stores of one instruction to the same DMEM byte take effect in ascending
+* Stores of one instruction to the same SMEM byte take effect in ascending
   lane order (the BRAM backend's fixed priority). For the same DDR byte the
   winner is unspecified (spec section 5.6), so different values are rejected.
 * Each DDR store instruction issues one AXI write burst per distinct group
@@ -40,7 +40,7 @@ WORD_MASK = 0xFFFFFFFF
 
 # Constants the model reads from the RTL packages
 CONSTANTS = (
-    "gpu_pkg::IMEM_ENTRIES", "gpu_pkg::DMEM_ENTRIES", "gpu_pkg::DMEM_BASE", "gpu_pkg::DMEM_SIZE",
+    "gpu_pkg::IMEM_ENTRIES", "gpu_pkg::SMEM_ENTRIES", "gpu_pkg::SMEM_BASE", "gpu_pkg::SMEM_SIZE",
     "gpu_pkg::FB0_BASE", "gpu_pkg::FB1_BASE", "gpu_pkg::FB_SIZE",
     "gpu_pkg::GMEM_BASE", "gpu_pkg::GMEM_SIZE",
     "gpu_pkg::STACK_P_INIT", "gpu_pkg::TXD_REGISTER", "gpu_pkg::REG_COUNT",
@@ -188,12 +188,12 @@ def _load_value(op: str, word: int, addr: int) -> int:
 # =======================================================================
 
 class Memory:
-    """DMEM words plus a sparse DDR, decoded as the memory subsystem decodes."""
+    """SMEM words plus a sparse DDR, decoded as the memory subsystem decodes."""
 
     def __init__(self, constants: dict[str, int], ddr_enable: bool):
         self.c = constants
         self.ddr_enable = ddr_enable
-        self.dmem = [0] * constants["gpu_pkg::DMEM_ENTRIES"]
+        self.smem = [0] * constants["gpu_pkg::SMEM_ENTRIES"]
         self.ddr: dict[int, int] = {}
 
     def _in(self, addr: int, base: str, size: str) -> bool:
@@ -202,13 +202,13 @@ class Memory:
 
     def decode(self, addr: int, size: int, write: bool) -> tuple[str | None, int]:
         """(target, status) as MemorySubsystemPkg::decode_access for an access
-        of size bytes; target is "dmem", "ddr" or None (completed with the
+        of size bytes; target is "smem", "ddr" or None (completed with the
         status, no side effect)."""
         st = lambda name: self.c[f"MemorySubsystemPkg::{name}"]  # noqa: E731
         if addr & (size - 1):
             return None, st("ST_MISALIGNED")
-        if self._in(addr, "DMEM_BASE", "DMEM_SIZE"):
-            return "dmem", st("ST_OK")
+        if self._in(addr, "SMEM_BASE", "SMEM_SIZE"):
+            return "smem", st("ST_OK")
         if self._in(addr, "FB0_BASE", "FB_SIZE") or self._in(addr, "FB1_BASE", "FB_SIZE"):
             target, status = ("ddr", st("ST_OK")) if write else (None, st("ST_PERMISSION"))
         elif self._in(addr, "GMEM_BASE", "GMEM_SIZE"):
@@ -219,20 +219,20 @@ class Memory:
             return None, st("ST_UNMAPPED")
         return target, status
 
-    def _dmem_index(self, addr: int) -> int:
-        return (addr - self.c["gpu_pkg::DMEM_BASE"]) >> 2
+    def _smem_index(self, addr: int) -> int:
+        return (addr - self.c["gpu_pkg::SMEM_BASE"]) >> 2
 
     def read(self, target: str, addr: int) -> int:
         """The word holding byte address addr."""
-        return self.dmem[self._dmem_index(addr)] if target == "dmem" else self.ddr.get(addr & ~3, 0)
+        return self.smem[self._smem_index(addr)] if target == "smem" else self.ddr.get(addr & ~3, 0)
 
     def write(self, target: str, addr: int, value: int, size: int) -> None:
         """Store value's low size bytes at addr; the word's other bytes stay."""
         shift = (addr & 3) * 8
         mask = ((1 << (size * 8)) - 1) << shift
         word = (self.read(target, addr) & ~mask) | ((value << shift) & mask)
-        if target == "dmem":
-            self.dmem[self._dmem_index(addr)] = word
+        if target == "smem":
+            self.smem[self._smem_index(addr)] = word
         else:
             self.ddr[addr & ~3] = word
 
@@ -251,7 +251,7 @@ class Fault:
 @dataclass
 class Result:
     regfiles: list[list[int]]
-    dmem: list[int]
+    smem: list[int]
     ddr: dict[int, int]
     fault: Fault | None
     instructions: int  # warp instructions executed, RET included
@@ -260,7 +260,7 @@ class Result:
     ddr_lane_loads: int  # lane loads from DDR
     ddr_read_bursts: int  # AXI read bursts
     ddr_read_beats: int  # AXI read beats, first to last requested beat of each burst
-    dmem_lane_accesses: int  # lane loads and stores to DMEM
+    smem_lane_accesses: int  # lane loads and stores to SMEM
     divergent_pcs: list[int] = field(default_factory=list)
 
 
@@ -268,14 +268,14 @@ class Warp:
     """One SM: NUM_CORES lanes in lockstep over a shared memory."""
 
     def __init__(self, program: list[int], num_lanes: int, constants: dict[str, int],
-                 dmem_seed: list[int] | None = None, ddr_seed: dict[int, int] | None = None,
+                 smem_seed: list[int] | None = None, ddr_seed: dict[int, int] | None = None,
                  ddr_enable: bool = True):
         self.c = constants
         self.program = program
         self.num_lanes = num_lanes
         self.memory = Memory(constants, ddr_enable)
-        if dmem_seed is not None:
-            self.memory.dmem[:len(dmem_seed)] = dmem_seed
+        if smem_seed is not None:
+            self.memory.smem[:len(smem_seed)] = smem_seed
         self.memory.ddr.update(ddr_seed or {})
         self.txd = constants["gpu_pkg::TXD_REGISTER"]
         self.regs = []
@@ -295,7 +295,7 @@ class Warp:
         group_bytes = self.c["DDRBackendPkg::GROUP_BYTES"]
         beat_lsb = self.c["DDRBackendPkg::BEAT_LSB"]
         lanes = range(self.num_lanes)
-        executed = bursts = ddr_lane_stores = dmem_lane_accesses = 0
+        executed = bursts = ddr_lane_stores = smem_lane_accesses = 0
         ddr_lane_loads = read_bursts = read_beats = 0
         divergent: list[int] = []
         fault = None
@@ -347,7 +347,7 @@ class Warp:
                 write = op in _STORES.values()
                 addrs = [(self.regs[lane][inst.rs1] + inst.imm) & WORD_MASK for lane in lanes]
                 decoded = [self.memory.decode(addr, size, write) for addr in addrs]
-                dmem_lane_accesses += sum(1 for lane in lanes if decoded[lane][0] == "dmem")
+                smem_lane_accesses += sum(1 for lane in lanes if decoded[lane][0] == "smem")
                 ok = self.c["MemorySubsystemPkg::ST_OK"]
                 bad = [lane for lane in lanes if decoded[lane][1] != ok]
                 if bad:
@@ -356,7 +356,7 @@ class Warp:
                     break
                 if write:
                     ddr_bytes: dict[int, set[int]] = {}
-                    for lane in lanes:  # ascending lane order: the highest DMEM store survives
+                    for lane in lanes:  # ascending lane order: the highest SMEM store survives
                         target = decoded[lane][0]
                         value = self.regs[lane][inst.rs2]
                         if target == "ddr":
@@ -392,7 +392,7 @@ class Warp:
 
         return Result(
             regfiles=[list(regs) for regs in self.regs],
-            dmem=list(self.memory.dmem),
+            smem=list(self.memory.smem),
             ddr=dict(sorted(self.memory.ddr.items())),
             fault=fault,
             instructions=executed,
@@ -401,6 +401,6 @@ class Warp:
             ddr_lane_loads=ddr_lane_loads,
             ddr_read_bursts=read_bursts,
             ddr_read_beats=read_beats,
-            dmem_lane_accesses=dmem_lane_accesses,
+            smem_lane_accesses=smem_lane_accesses,
             divergent_pcs=divergent,
         )

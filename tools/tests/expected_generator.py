@@ -2,12 +2,12 @@
 
 Inputs per case directory (cases/test<N>/):
   program.mem    the assembled program (assembler.py), one hex word per line
-  dmem_seed.mem  optional initial DMEM: hex words, '@<word index>' moves on
+  smem_seed.mem  optional initial SMEM: hex words, '@<word index>' moves on
   ddr_seed.mem   optional initial DDR: '<byte address> <word>' hex pairs
 
 Outputs:
   regfile_c<lane>.mem  every lane's registers after the kernel
-  data.mem             all of DMEM after the kernel
+  data.mem             all of SMEM after the kernel
   ddr.mem              only for cases that use DDR: 'bursts <n>' (AXI write
                        bursts the kernel issues), then every DDR word, seeded
                        or written, as '<byte address> <word>' hex pairs
@@ -15,7 +15,7 @@ Outputs:
                        '<name> <decimal count>' lines: 'instructions' (warp
                        instructions executed, RET included),
                        'ddr_lane_stores' (lane stores to DDR),
-                       'dmem_lane_accesses' (lane loads and stores to DMEM),
+                       'smem_lane_accesses' (lane loads and stores to SMEM),
                        'ddr_lane_loads' (lane loads from DDR),
                        'ddr_read_bursts' (AXI read bursts) and
                        'ddr_read_beats' (AXI read beats)
@@ -46,7 +46,7 @@ def load_program(path):
             for token in _code(line).split()]
 
 
-def load_dmem_seed(path, depth):
+def load_smem_seed(path, depth):
     """$readmemh subset: one word per token, '@<hex word index>' sets the index."""
     memory = [0] * depth
     addr = 0
@@ -55,10 +55,10 @@ def load_dmem_seed(path, depth):
             if token.startswith('@'):
                 addr = int(token[1:], 16)
                 if addr >= depth:
-                    raise ValueError(f"{path}:{line_no}: seed address @{addr:x} outside DMEM depth {depth}")
+                    raise ValueError(f"{path}:{line_no}: seed address @{addr:x} outside SMEM depth {depth}")
                 continue
             if addr >= depth:
-                raise ValueError(f"{path}:{line_no}: too many seed words for DMEM depth {depth}")
+                raise ValueError(f"{path}:{line_no}: too many seed words for SMEM depth {depth}")
             memory[addr] = int(token, 16) & 0xFFFFFFFF
             addr += 1
     return memory
@@ -84,13 +84,13 @@ def load_ddr_seed(path):
 def generate_case(test_dir, num_cores, constants, max_instructions):
     """Run one case on the model and write its expected files."""
     program = load_program(test_dir / 'program.mem')
-    dmem_seed_path = test_dir / 'dmem_seed.mem'
+    smem_seed_path = test_dir / 'smem_seed.mem'
     ddr_seed_path = test_dir / 'ddr_seed.mem'
-    dmem_seed = (load_dmem_seed(dmem_seed_path, constants['gpu_pkg::DMEM_ENTRIES'])
-                 if dmem_seed_path.is_file() else None)
+    smem_seed = (load_smem_seed(smem_seed_path, constants['gpu_pkg::SMEM_ENTRIES'])
+                 if smem_seed_path.is_file() else None)
     ddr_seed = load_ddr_seed(ddr_seed_path) if ddr_seed_path.is_file() else {}
 
-    result = Warp(program, num_cores, constants, dmem_seed, ddr_seed).run(max_instructions)
+    result = Warp(program, num_cores, constants, smem_seed, ddr_seed).run(max_instructions)
     if result.fault is not None:
         raise ModelError(
             f"the kernel faults at PC {result.fault.pc:#x} (lanes {result.fault.lanes:#x}, "
@@ -103,11 +103,11 @@ def generate_case(test_dir, num_cores, constants, max_instructions):
         stale.unlink()
     for lane, regs in enumerate(result.regfiles):
         (test_dir / f'regfile_c{lane}.mem').write_text(''.join(format_hex(v) + '\n' for v in regs))
-    (test_dir / 'data.mem').write_text(''.join(format_hex(v) + '\n' for v in result.dmem))
+    (test_dir / 'data.mem').write_text(''.join(format_hex(v) + '\n' for v in result.smem))
 
     (test_dir / 'perf.mem').write_text(f'instructions {result.instructions}\n'
                                        f'ddr_lane_stores {result.ddr_lane_stores}\n'
-                                       f'dmem_lane_accesses {result.dmem_lane_accesses}\n'
+                                       f'smem_lane_accesses {result.smem_lane_accesses}\n'
                                        f'ddr_lane_loads {result.ddr_lane_loads}\n'
                                        f'ddr_read_bursts {result.ddr_read_bursts}\n'
                                        f'ddr_read_beats {result.ddr_read_beats}\n')

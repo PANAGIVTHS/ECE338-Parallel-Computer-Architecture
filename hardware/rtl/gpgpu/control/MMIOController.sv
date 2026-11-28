@@ -22,13 +22,18 @@ module MMIOController
     // GPU state and local memories
     input logic i_idle,
     MemoryInterface.master imem,
-    MemoryInterface.master dmem,
+    MemoryInterface.master smem,
 
     // CSR bank
     output logic o_csr_write_fire,
     input word_t i_csr_rdata,
     input rsp_status_t i_csr_status
 );
+
+    // The host reaches IMEM and SMEM through a 64-KiB AXI4-Lite aperture.
+    if (MMIO_END > 64'h1_0000) begin : g_aperture_check
+        $fatal(1, "IMEM and SMEM windows end at 0x%0h, past the 64-KiB host aperture", MMIO_END);
+    end
 
     // ========================================================================
     // Transaction State Machine
@@ -97,9 +102,9 @@ module MMIOController
         i_req_addr >= IMEM_BASE &&
         i_req_addr < IMEM_BASE + BYTES_PER_WORD * word_t'(IMEM_ENTRIES);
 
-    wire dmem_selected =
-        i_req_addr >= ControlPkg::DMEM_BASE &&
-        i_req_addr < ControlPkg::DMEM_BASE + BYTES_PER_WORD * word_t'(DMEM_ENTRIES);
+    wire smem_selected =
+        i_req_addr >= ControlPkg::SMEM_BASE &&
+        i_req_addr < ControlPkg::SMEM_BASE + BYTES_PER_WORD * word_t'(SMEM_ENTRIES);
 
     word_t decoded_rdata;
     rsp_status_t decoded_status;
@@ -111,7 +116,7 @@ module MMIOController
 
         if (i_req_addr % word_t'(BYTES_PER_WORD) != '0) begin
             decoded_status = RSP_INVALID_ADDRESS;
-        end else if (imem_selected || dmem_selected) begin
+        end else if (imem_selected || smem_selected) begin
             if (!i_idle) begin
                 decoded_status = RSP_INVALID_STATE;
             end else if (
@@ -150,7 +155,7 @@ module MMIOController
     // ========================================================================
 
     localparam int unsigned HOST_ADDR_WIDTH =
-        (IMEM_AW > DMEM_AW) ? IMEM_AW : DMEM_AW;
+        (IMEM_AW > SMEM_AW) ? IMEM_AW : SMEM_AW;
 
     // Retain the request payload while the BRAM operation completes.
     logic memory_imem;
@@ -170,7 +175,7 @@ module MMIOController
             memory_wdata <= i_req_wdata;
 
             memory_address <= HOST_ADDR_WIDTH'(
-                (i_req_addr - (imem_selected ? IMEM_BASE : ControlPkg::DMEM_BASE)) >> 2
+                (i_req_addr - (imem_selected ? IMEM_BASE : ControlPkg::SMEM_BASE)) >> 2
             );
         end
     end
@@ -183,10 +188,10 @@ module MMIOController
     assign imem.ren = memory_access && memory_imem;
     assign imem.wen = imem.ren && memory_write;
 
-    assign dmem.addr = memory_address[DMEM_AW-1:0];
-    assign dmem.wdata = memory_wdata;
-    assign dmem.ren = memory_access && !memory_imem;
-    assign dmem.wen = dmem.ren && memory_write;
+    assign smem.addr = memory_address[SMEM_AW-1:0];
+    assign smem.wdata = memory_wdata;
+    assign smem.ren = memory_access && !memory_imem;
+    assign smem.wen = smem.ren && memory_write;
 
 
     // ========================================================================
@@ -206,7 +211,7 @@ module MMIOController
             o_rsp_status <= decoded_status;
 
         end else if (current_state == ACCESS_CAPTURE) begin
-            o_rsp_rdata <= memory_imem ? imem.rdata : dmem.rdata;
+            o_rsp_rdata <= memory_imem ? imem.rdata : smem.rdata;
         end
     end
 

@@ -1,10 +1,26 @@
 architecture:
   num_cores: 32
-  interface_version: 3
+  interface_version: 4
   # DDR backend of the memory subsystem (reported in INFO_FEATURES). Without
-  # it, framebuffer and texture accesses complete as ST_UNMAPPED. The DDR read
-  # path is not implemented yet: a texture load never completes.
+  # it, framebuffer and GMEM accesses complete as ST_UNMAPPED, and a kernel
+  # cannot read its .rodata/.data/.bss, which live in GMEM.
   ddr_enable: true
+  # Memory sizes, the DDR map and the kernel memory layout
+  # (software/programs/linker.ld). `rtl:config` writes the BRAM sizes and the
+  # DDR map into packages/gpu_config_pkg.sv, which is committed; a change
+  # needs a new bitstream and host application.
+  #   SMEM (BRAM, shared memory): .shared (GPGPU_SHARED variables) from
+  #   byte 0, then num_cores stacks at the top.
+  #   DDR (512 MiB): the host (monitor and programs) below host_bytes, then
+  #   FB0 and FB1 (4 MiB each), then GMEM to the end of DDR: the launch block,
+  #   .rodata, .data and .bss (docs/runtime-spec.md 3.5).
+  memory:
+    imem_bytes: 16384           # instruction BRAM, a power of two
+    shared_bytes: 16384           # data BRAM, a power of two
+    stack_bytes_per_lane: 128   # a power of two; num_cores of them end SMEM
+    ddr_bytes: 0x20000000       # the board's DDR from address 0: 512 MiB
+    host_bytes: 0x04000000      # DDR below FB0, a multiple of 8 MiB: 64 MiB, so GMEM is 440 MiB
+    fb_slot_bytes: 0x00400000   # DDR for each framebuffer, at least FB_WIDTH x FB_HEIGHT x 4 bytes
 
 hardware:
   fpga:
@@ -32,6 +48,7 @@ hardware:
     extensions: [.sv, .v]
     header_extensions: [.svh]
     ordered:
+      - packages/gpu_config_pkg.sv
       - packages/gpu_pkg.sv
       - packages/riscv_pkg.sv
       - packages/alu_pkg.sv
@@ -93,6 +110,8 @@ hardware:
     default_archive: tools/gpgpu/adapters/vitis/default-project.zip
     host_sources:
       - software/host/xc7z020/gpgpu_driver.c
+      - software/host/xc7z020/gpgpu_display.c
+      - software/host/xc7z020/gpgpu_loader.c
       - software/host/xc7z020/main.c
 
 software:
@@ -111,21 +130,30 @@ software:
     use_irq: true
     # GIC interrupt ID of the GPU interrupt: IRQ_F2P[0] is ID 61 on Zynq-7000.
     irq_id: 61
-    # Boot-time autorun: when enabled, the host loads `program` (a directory
-    # under software/programs) into IMEM, writes `args` to GPGPU_ARGS, shows
-    # framebuffer `display` and runs the kernel back to back until a key
-    # arrives on the UART; then the monitor starts. software:host:autorun
-    # generates `header` from these and the program's RISC-V build; it is
-    # committed, like platform_header, so the Vitis host build needs no
-    # RISC-V toolchain.
-    autorun:
-      header: software/host/xc7z020/gpgpu_autorun.h
-      enabled: false
-      program: ripple
-      # GPGPU_ARGS words in order: 32-bit integers, or names from
-      # platform_header such as GPGPU_FB0_BASE. Unlisted words are 0.
-      args: [GPGPU_FB0_BASE, GPGPU_FB_WIDTH, GPGPU_FB_HEIGHT, 0]
-      display: 0
+    # The host's share of DDR, below architecture.memory.host_bytes
+    # (docs/runtime-spec.md 9.2): the monitor from monitor_base, its last
+    # boot_record_bytes the boot record, then the programs it loads, up to FB0.
+    # monitor_base is where the standalone BSP's linker script starts DDR.
+    monitor_base: 0x00100000
+    monitor_bytes: 0x00100000
+    boot_record_bytes: 0x1000
+    # A program (a directory under software/programs) that `fpga deploy` starts
+    # in place of the UART monitor, with software.runtime.arguments built in
+    # (software programs:<p>:boot). It stops when gpgpu_main returns. null: the
+    # monitor.
+    boot_program: null
+  # The runtime of programs with a host program (host.c; docs/runtime-spec.md).
+  runtime:
+    # How long a launch may run before the runtime stops it and the next
+    # call that waits returns GPGPU_ERROR_TIMEOUT; 0 for no limit.
+    launch_timeout_ms: 10000
+    # Arguments of gpgpu_main(argc, argv) for `software programs:<p>:sim` and
+    # `fpga programs:<p>:run`.
+    arguments: []
+    # The A9 program's stack and heap (its linker script's _STACK_SIZE and
+    # _HEAP_SIZE); a program's large data belongs in its GPGPU_DEVICE arrays.
+    board_stack_bytes: 65536
+    board_heap_bytes: 1048576
   # Every build of a program, RISC-V kernel and native x86 alike, so both
   # builds of a program are compiled the same way: -O0, -O1, -O2, -O3, -Os
   # or -Og.
@@ -183,7 +211,6 @@ tests:
       # All required by the bench (no defaults in SystemVerilog). +TEST_END
       # is optional and may be added here to stop after a given case.
       plusargs:
-        UNMAPPED_ADDR: "00008000"   # hex; must decode to no CSR/IMEM/DMEM
         # Shared AXI4-Lite host and directed-case settings (tb_e2e_host.svh)
         <<: &e2e_host_plusargs
           CLOCK_PERIOD_NS: 10
@@ -247,6 +274,11 @@ tools:
     required: false
   vitis:
     command: vitis
+    required: false
+  # The A9 compiler of runtime programs; Vitis brings one
+  # (Vitis/gnu/aarch32/lin/gcc-arm-none-eabi/bin).
+  arm_gcc:
+    command: arm-none-eabi-gcc
     required: false
   ssh:
     command: ssh

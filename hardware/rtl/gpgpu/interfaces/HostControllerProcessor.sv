@@ -13,7 +13,7 @@ module HostCommandProcessor
 
     // Read data signals
     input [31:0] i_imem_rdata,
-    input [31:0] i_dmem_rdata,
+    input [31:0] i_smem_rdata,
     input [31:0] i_reg_rdata,
 
     // Host command signals
@@ -30,12 +30,12 @@ module HostCommandProcessor
 
     // GPU control signals interface
     output reg o_host_imem_wen,
-    output reg o_host_dmem_wen,
+    output reg o_host_smem_wen,
     output reg o_host_run
 );
     localparam CMD_IMEM_WRITE = 3'd0;
-    localparam CMD_DMEM_WRITE = 3'd1;
-    localparam CMD_DMEM_READ = 3'd2;
+    localparam CMD_SMEM_WRITE = 3'd1;
+    localparam CMD_SMEM_READ = 3'd2;
     localparam CMD_IMEM_READ = 3'd3;
     localparam CMD_REG_READ = 3'd4;
     localparam CMD_RUN = 3'd5;
@@ -63,14 +63,14 @@ module HostCommandProcessor
             S_ACCEPT: begin
                 case (host_command)
 
-                    CMD_DMEM_WRITE,
+                    CMD_SMEM_WRITE,
                     CMD_IMEM_WRITE,
                     CMD_RUN: begin
                         next_state = S_WRITE;
                     end
 
                     CMD_IMEM_READ,
-                    CMD_DMEM_READ,
+                    CMD_SMEM_READ,
                     CMD_REG_READ: begin
                         next_state = S_READ;
                     end
@@ -92,7 +92,7 @@ module HostCommandProcessor
         o_host_busy = 1'b0;
         o_host_done = 1'b0;
         o_host_imem_wen = 1'b0;
-        o_host_dmem_wen = 1'b0;
+        o_host_smem_wen = 1'b0;
         o_host_run = 1'b0;
 
         case (current_state)
@@ -102,9 +102,9 @@ module HostCommandProcessor
             S_WRITE: begin
                 o_host_busy = 1'b1;
                 case (host_command)
-                    CMD_DMEM_WRITE: begin
+                    CMD_SMEM_WRITE: begin
                         if (i_core_state == CORE_IDLE)
-                            o_host_dmem_wen = 1'b1;
+                            o_host_smem_wen = 1'b1;
                     end
                     CMD_IMEM_WRITE: begin
                         if (i_core_state == CORE_IDLE)
@@ -144,7 +144,7 @@ module HostCommandProcessor
         end else if (current_state == S_READ) begin
             case (host_command)
                 CMD_IMEM_READ: o_host_rdata <= i_imem_rdata; 
-                CMD_DMEM_READ: o_host_rdata <= i_dmem_rdata; 
+                CMD_SMEM_READ: o_host_rdata <= i_smem_rdata; 
                 CMD_REG_READ: o_host_rdata <= i_reg_rdata;
             endcase
         end

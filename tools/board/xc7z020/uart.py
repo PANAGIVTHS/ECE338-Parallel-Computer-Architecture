@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """UART client for the GPGPU AXI4-Lite bare-metal monitor.
 
-The PC still talks to the Zynq over UART. The Zynq application translates
-commands to Xil_In32/Xil_Out32 accesses in one GPU AXI aperture; the host-PC
-serial protocol is intentionally compatible with the older GPIO-based monitor.
+The PC talks to the Zynq's monitor (software/host/xc7z020/main.c) over UART:
+it sends a program's A9 executable to the loader (`load`), runs it (`run`)
+and reads the GPU's status and memories for debugging.
 """
 
 from __future__ import annotations
@@ -11,16 +11,19 @@ from __future__ import annotations
 import re
 import struct
 import time
-from pathlib import Path
-from typing import Iterable, cast
+import zlib
+from typing import Iterable
 
 try:
     import serial
 except ImportError:
     serial = None  # Parsing helpers work without pyserial installed.
 
-RET_INSTR = "00008067"
-DEPTH = 2048
+# Upper bound for IMEM/SMEM word indices: INFO_MEM's 16-bit fields. The real
+# sizes come from architecture.memory; the monitor checks them on every command.
+DEPTH = 0xFFFF
+# GMEM word offsets (from GMEM_BASE): the monitor checks them against GMEM_SIZE.
+GMEM_DEPTH = 1 << 24
 PROMPT = "gpgpu>"
 WORD_BYTES = struct.calcsize("<I")
 
@@ -29,10 +32,6 @@ def normalize_word(word: int | str) -> str:
     """Convert an integer or a hexadecimal string to eight hex digits."""
     value = word if isinstance(word, int) else int(str(word).strip(), 16)
     return f"{value & 0xFFFFFFFF:08x}"
-
-
-def words_to_le_bytes(words: Iterable[int | str]) -> bytes:
-    return b"".join(struct.pack("<I", int(normalize_word(w), 16)) for w in words)
 
 
 def parse_memory_dump(text: str) -> dict[int, str]:
@@ -77,34 +76,21 @@ def parse_status(text: str) -> dict[str, int | str]:
     return status
 
 
-def read_mem_file(path: str | Path) -> list[str]:
-    words: list[str] = []
-    with Path(path).open("r") as handle:
-        for line in handle:
-            line = line.split("#", 1)[0].strip()
-            if line:
-                words.append(normalize_word(line))
-    return words
-
-
-def write_mem_file(path: str | Path, words: dict[int, int | str] | Iterable[int | str]) -> None:
-    with Path(path).open("w") as handle:
-        if isinstance(words, dict):
-            word_map = cast(dict[int, int | str], words)
-            for index in sorted(word_map):
-                handle.write(f"{normalize_word(word_map[index])}\n")
-        else:
-            for word in words:
-                handle.write(f"{normalize_word(word)}\n")
-
-
-def trim_program_at_ret(words: Iterable[str]) -> list[str]:
-    """Legacy helper name: normalize the FULL image without trimming.
-
-    Functions may be linked after either RET or the runtime's ECALL. Neither
-    instruction marks the end of an image, so truncation is never safe.
-    """
-    return [normalize_word(word) for word in words]
+def elf_load_segments(data: bytes) -> tuple[int, list[tuple[int, bytes]]]:
+    """(entry, [(address, bytes)]) of the PT_LOAD segments of a 32-bit little-endian ELF,
+    the file bytes only: the program's startup code clears the rest (.bss)."""
+    if data[:4] != b"\x7fELF" or data[4] != 1 or data[5] != 1:
+        raise ValueError("not a 32-bit little-endian ELF file")
+    entry, phoff = struct.unpack_from("<II", data, 0x18)
+    phentsize, phnum = struct.unpack_from("<HH", data, 0x2A)
+    segments = []
+    for index in range(phnum):
+        kind, offset, address, _, filesz, _, _, _ = struct.unpack_from("<8I", data, phoff + index * phentsize)
+        if kind == 1 and filesz:  # PT_LOAD
+            segments.append((address, data[offset:offset + filesz]))
+    if not segments:
+        raise ValueError("the ELF file has nothing to load")
+    return entry, segments
 
 
 def _check_index(index: int) -> None:
@@ -112,9 +98,9 @@ def _check_index(index: int) -> None:
         raise ValueError(f"GPU memory word index must be 0..{DEPTH - 1}, got {index}")
 
 
-def _check_span(offset: int, count: int) -> None:
-    if offset < 0 or count < 0 or offset > DEPTH or count > DEPTH - offset:
-        raise ValueError(f"GPU memory range offset={offset}, count={count} exceeds {DEPTH} words")
+def _check_span(offset: int, count: int, depth: int = DEPTH) -> None:
+    if offset < 0 or count < 0 or offset > depth or count > depth - offset:
+        raise ValueError(f"GPU memory range offset={offset}, count={count} exceeds {depth} words")
 
 
 class GpgpuUartMonitor:
@@ -228,89 +214,109 @@ class GpgpuUartMonitor:
     def status(self) -> dict[str, int | str]:
         return parse_status(self._command_expect_prompt_or_error("status"))
 
-    def run(self, timeout: float = 30.0) -> str:
-        self.write_line("run")
-        output, marker = self.read_until(["Core entered idle state.", "ERROR"], timeout=timeout)
-        if marker == "ERROR":
-            output += self.wait_prompt(timeout=5.0)
-            raise RuntimeError(f"GPU run failed:\n{output}")
-        return output + self.wait_prompt(timeout=5.0)
-
     # Single word indices in Python are DECIMAL integers. The existing UART
     # parser interprets single-word indices as HEX, so format with :x.
     def write_imem(self, addr: int, word: int | str) -> str:
         _check_index(addr)
         return self._command_expect_prompt_or_error(f"wimem {addr:x} {normalize_word(word)}")
 
-    def write_dmem(self, addr: int, word: int | str) -> str:
+    def write_smem(self, addr: int, word: int | str) -> str:
         _check_index(addr)
-        return self._command_expect_prompt_or_error(f"wdmem {addr:x} {normalize_word(word)}")
+        return self._command_expect_prompt_or_error(f"wsmem {addr:x} {normalize_word(word)}")
 
     def read_imem(self, addr: int) -> str:
         _check_index(addr)
         return parse_single_word(self._command_expect_prompt_or_error(f"rimem {addr:x}"), "IMEM", addr)
 
-    def read_dmem(self, addr: int) -> str:
+    def read_smem(self, addr: int) -> str:
         _check_index(addr)
-        return parse_single_word(self._command_expect_prompt_or_error(f"rdmem {addr:x}"), "DMEM", addr)
-
-    def load_imem_ascii(self, words: Iterable[int | str], offset: int = 0) -> str:
-        return self._load_ascii("loadimem", "READY_FOR_BULK_IMEM", "IMEM_LOAD_COMPLETE", words, offset)
-
-    def load_dmem_ascii(self, words: Iterable[int | str], offset: int = 0) -> str:
-        return self._load_ascii("loaddmem", "READY_FOR_BULK_DMEM", "DMEM_LOAD_COMPLETE", words, offset)
-
-    def _load_ascii(self, cmd: str, ready: str, complete: str,
-                    words: Iterable[int | str], offset: int) -> str:
-        normalized = [normalize_word(w) for w in words]
-        _check_span(offset, len(normalized))
-        self.write_line(f"{cmd} {offset} {len(normalized)}")
-        first, marker = self.read_until([ready, "ERROR"], timeout=5.0)
-        if marker == "ERROR":
-            raise RuntimeError(f"ASCII load rejected:\n{first + self.wait_prompt()}")
-        for w in normalized:
-            self.write_line(w)
-        second, marker = self.read_until([complete, "ERROR"], timeout=60.0)
-        if marker == "ERROR":
-            raise RuntimeError(f"ASCII load failed:\n{first + second + self.wait_prompt()}")
-        return first + second + self.wait_prompt(timeout=10.0)
+        return parse_single_word(self._command_expect_prompt_or_error(f"rsmem {addr:x}"), "SMEM", addr)
 
     def dump_imem_ascii(self, count: int, offset: int = 0) -> dict[int, str]:
         _check_span(offset, count)
         return parse_memory_dump(self._command_expect_prompt_or_error(f"dumpimem {offset} {count}", timeout=60.0))
 
-    def dump_dmem_ascii(self, count: int, offset: int = 0) -> dict[int, str]:
+    def dump_smem_ascii(self, count: int, offset: int = 0) -> dict[int, str]:
         _check_span(offset, count)
-        return parse_memory_dump(self._command_expect_prompt_or_error(f"dumpdmem {offset} {count}", timeout=60.0))
+        return parse_memory_dump(self._command_expect_prompt_or_error(f"dumpsmem {offset} {count}", timeout=60.0))
 
-    def load_imem_bin(self, words: Iterable[int | str], offset: int = 0) -> str:
-        return self._load_binary("loadimem_bin", "READY_IMEM_BIN", "IMEM_LOAD_COMPLETE", words, offset)
+    # ---- Runtime programs (docs/runtime-spec.md, section 9.2) ----
 
-    def load_dmem_bin(self, words: Iterable[int | str], offset: int = 0) -> str:
-        return self._load_binary("loaddmem_bin", "READY_DMEM_BIN", "DMEM_LOAD_COMPLETE", words, offset)
-
-    def _load_binary(self, cmd: str, ready: str, complete: str,
-                     words: Iterable[int | str], offset: int) -> str:
-        normalized = [normalize_word(w) for w in words]
-        _check_span(offset, len(normalized))
-        self.write_line(f"{cmd} {offset} {len(normalized)}")
-        first, marker = self.read_until([ready, "ERROR"], timeout=5.0)
+    def load_program(self, entry: int, segments: list[tuple[int, bytes]]) -> str:
+        """Send a program to the monitor's loader: each segment with its CRC-32."""
+        self.write_line(f"load {entry:x} {len(segments):x}")
+        output, marker = self.read_until(["READY_LOAD", "ERROR", "Unknown command"], timeout=10.0)
+        if marker == "Unknown command":
+            raise RuntimeError("The monitor has no program loader: deploy a monitor built from this branch "
+                               "(gpgpu fpga deploy)")
         if marker == "ERROR":
-            raise RuntimeError(f"Binary load rejected:\n{first + self.wait_prompt()}")
-        payload = words_to_le_bytes(normalized)
-        if self.verbose:
-            print(f"[INFO] Sending {len(payload)} raw bytes")
-        self.ser.write(payload)
-        self.ser.flush()
-        second, marker = self.read_until([complete, "ERROR"], timeout=60.0)
+            raise RuntimeError(f"The monitor refused the program:\n{output + self.wait_prompt()}")
+        seconds_per_byte = 12.0 / self.ser.baudrate  # 10 bits per byte, and some slack
+        for address, data in segments:
+            self.ser.write(struct.pack("<III", address, len(data), zlib.crc32(data)))
+            self.ser.flush()
+            text, marker = self.read_until(["SEGMENT_READY", "ERROR"], timeout=10.0)
+            if marker == "ERROR":
+                raise RuntimeError(f"The monitor refused a segment:\n{output + text + self.wait_prompt()}")
+            self.ser.write(data)
+            self.ser.flush()
+            text, marker = self.read_until(["SEGMENT_OK", "ERROR"], timeout=10.0 + len(data) * seconds_per_byte)
+            if marker == "ERROR":
+                raise RuntimeError(f"A segment did not load:\n{output + text + self.wait_prompt()}")
+            output += text
+        text, marker = self.read_until(["LOAD_COMPLETE", "ERROR"], timeout=10.0)
         if marker == "ERROR":
-            raise RuntimeError(f"Binary load failed:\n{first + second + self.wait_prompt()}")
-        return first + second + self.wait_prompt(timeout=10.0)
+            raise RuntimeError(f"The program did not load:\n{output + text + self.wait_prompt()}")
+        return output + text + self.wait_prompt(timeout=10.0)
 
-    def dump_dmem_bin(self, count: int, offset: int = 0) -> dict[int, str]:
+    def run_program(self, arguments: list[str], timeout: float, echo=None) -> int:
+        """Run the loaded program, pass its console output to `echo` as it arrives, and
+        return its status when it is back in the monitor."""
+        if not arguments or any(not argument or re.search(r"\s", argument) for argument in arguments):
+            raise ValueError("program arguments must be non-empty and contain no whitespace")
+        line = "run " + " ".join(arguments)
+        if len(line) > 120:
+            raise ValueError("the program's name and arguments must fit 120 characters (the monitor's line)")
+        echo = echo or (lambda text: print(text, end="", flush=True))
+        self.write_line(line)
+        output, marker = self.read_until(["RUN_START", "ERROR"], timeout=10.0)
+        if marker == "ERROR":
+            raise RuntimeError(f"The program did not start:\n{output + self.wait_prompt()}")
+        pattern = re.compile(rb"RUN_RETURN (-?\d+)")
+        deadline = time.monotonic() + timeout
+        shown = 0
+        while True:
+            match = pattern.search(self.rx_buffer)
+            end = match.end() if match else len(self.rx_buffer)
+            if end > shown:
+                echo(bytes(self.rx_buffer[shown:end]).decode("ascii", errors="replace"))
+                shown = end
+            if match:
+                status = int(match.group(1))  # before the buffer under the match changes
+                del self.rx_buffer[:match.end()]
+                break
+            if time.monotonic() >= deadline:
+                raise TimeoutError(f"The program did not return within {timeout:g} s")
+            try:
+                self._read_from_serial(timeout=min(1.0, max(0.0, deadline - time.monotonic())))
+            except TimeoutError:
+                pass
+        echo("\n")
+        self.wait_prompt(timeout=10.0)
+        return status
+
+    def dump_smem_bin(self, count: int, offset: int = 0) -> dict[int, str]:
         _check_span(offset, count)
-        self.write_line(f"dumpdmem_bin {offset} {count}")
-        output, marker = self.read_until_bytes([b"BEGIN_DMEM_BIN\n", b"ERROR"], timeout=5.0)
+        return self._dump_binary("dumpsmem_bin", b"BEGIN_SMEM_BIN\n", count, offset)
+
+    def dump_gmem_bin(self, count: int, offset: int = 0) -> dict[int, str]:
+        """{word offset from GMEM_BASE: word} (the monitor invalidates its cache first)."""
+        _check_span(offset, count, GMEM_DEPTH)
+        return self._dump_binary("dumpgmem_bin", b"BEGIN_GMEM_BIN\n", count, offset)
+
+    def _dump_binary(self, cmd: str, begin: bytes, count: int, offset: int) -> dict[int, str]:
+        self.write_line(f"{cmd} {offset} {count}")
+        output, marker = self.read_until_bytes([begin, b"ERROR"], timeout=5.0)
         if marker == b"ERROR":
             raise RuntimeError(f"Binary dump rejected:\n{output.decode('ascii', errors='replace') + self.wait_prompt()}")
         payload = self.read_exact(count * 4, timeout=60.0)

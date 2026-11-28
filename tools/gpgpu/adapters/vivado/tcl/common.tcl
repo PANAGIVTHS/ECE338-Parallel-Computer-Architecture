@@ -4,7 +4,7 @@ array set options {
     -project-dir "" -project-name "" -part "" -bd-name "" -top ""
     -sources-manifest "" -xdc-file "" -bitstream-dir "" -platform-dir ""
     -xsa-name "" -bd-script "" -num-cores "" -hdl-parameters "" -build-identity "" -jobs ""
-    -repo-root "" -ip-repo-dir "" -axi-base "" -axi-range "" -fclk0-mhz "" -post-route-phys-opt ""
+    -repo-root "" -ip-repo-dir "" -axi-base "" -axi-range "" -ddr-bytes "" -fclk0-mhz "" -post-route-phys-opt ""
     -post-route-phys-opt-directive "" -flow-version "" -ip-revision 1
 }
 foreach {key value} $argv {
@@ -19,7 +19,7 @@ foreach {key name} {
     -bd-name BD_NAME -top TOP_NAME -sources-manifest SOURCES_MANIFEST -xdc-file XDC_FILE
     -bitstream-dir BITSTREAM_DIR -platform-dir PLATFORM_DIR -xsa-name XSA_NAME
     -bd-script BD_SCRIPT -num-cores NUM_CORES -hdl-parameters HDL_PARAMETER_LIST -build-identity BUILD_IDENTITY_FILE -jobs JOBS -repo-root REPO_ROOT
-    -ip-repo-dir IP_REPO_DIR -axi-base AXI_BASE -axi-range AXI_RANGE -fclk0-mhz FCLK0_MHZ
+    -ip-repo-dir IP_REPO_DIR -axi-base AXI_BASE -axi-range AXI_RANGE -ddr-bytes DDR_BYTES -fclk0-mhz FCLK0_MHZ
     -post-route-phys-opt POST_ROUTE_PHYS_OPT -post-route-phys-opt-directive POST_ROUTE_PHYS_OPT_DIRECTIVE
     -flow-version FLOW_VERSION -ip-revision IP_REVISION
 } {set $name $options($key)}

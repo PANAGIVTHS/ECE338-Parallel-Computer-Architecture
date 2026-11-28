@@ -1,69 +1,19 @@
-#include "../gpgpu_runtime.h"
-#define CORES GPGPU_NUM_CORES
+/*
+ * differences: adjacent differences, diff[i] = data[i + 1] - data[i].
+ *
+ * Thread i of the grid computes diff[i]: launch it over n / 32 blocks for
+ * n differences (data has n + 1 values). Each load and store is 32
+ * neighbouring words, one DDR burst.
+ */
+#include "gpgpu_device.h"
+#include "differences.h"
 
-#ifdef __riscv
+GPGPU_DEVICE int input[DIFFERENCES_MAX + 1];
+GPGPU_DEVICE int output[DIFFERENCES_MAX];
 
-void main(void)
+GPGPU_GLOBAL void differences(const int *data, int *diff)
 {
-    unsigned int tid = gpgpu_thread_id();
+    unsigned int i = gpgpu_block_idx_x() * gpgpu_block_dim() + gpgpu_thread_idx();
 
-    volatile int *base = (volatile int *)(uintptr_t)GPGPU_ARGS[0];
-
-    volatile int *data = base;
-    volatile int *diff = base + (CORES + 1);
-
-    // Calculate differences
-    diff[tid] = data[tid + 1] - data[tid];
-
-    return;
+    diff[i] = data[i + 1] - data[i];
 }
-
-GPGPU_START(main)
-
-#else
-
-#include <stdio.h>
-
-int main(void)
-{
-    int data[CORES + 1] = {0};
-    int diff[CORES] = {0};
-
-    /*
-     * Same layout as the FPGA adapter:
-     *
-     * data[0] is padding.
-     * data[1..32] are logical input values.
-     */
-    data[0] = 0;
-
-    for (int i = 0; i < CORES; i++) {
-        data[i + 1] = i;
-    }
-
-    for (int tid = 0; tid < CORES; tid++) {
-        diff[tid] = data[tid + 1] - data[tid];
-    }
-
-    printf("call,index,data_left,data_right,diff,expected,ok\n");
-
-    for (int i = 0; i < CORES; i++) {
-        int data_left = data[i];
-        int data_right = data[i + 1];
-        int expected = data_right - data_left;
-        int ok = diff[i] == expected;
-
-        printf("%d,%d,%d,%d,%d,%d,%d\n",
-               0,
-               i,
-               data_left,
-               data_right,
-               diff[i],
-               expected,
-               ok);
-    }
-
-    return 0;
-}
-
-#endif

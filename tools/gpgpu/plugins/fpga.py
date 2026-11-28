@@ -1,12 +1,14 @@
-"""Operate the board: upload, reset, program, and load and run programs."""
+"""Operate the board: upload, reset, program, and run programs through the monitor."""
 from gpgpu.api import Backends, Board, Task
 
 
 def tasks(backend: Backends) -> list[Task]:
     board = backend(Board)
+    boot = board.boot_program()
+    host = f"software:programs:{boot}:boot" if boot else "vitis:build:host"
     result = [
-        Task("fpga:upload", "Upload the existing bitstream, PS init script and host application. Builds nothing.",
-             board.upload(), requires=("vivado:system:build", "vitis:build:host")),
+        Task("fpga:upload", "Upload the existing bitstream, PS init script and host application (the monitor, or "
+             "software.host.boot_program). Builds nothing.", board.upload(), requires=("vivado:system:build", host)),
         Task("fpga:reset", "Reset the board, keeping its current mode.", board.reset()),
         Task("fpga:mode:project", "Set PROJECT mode, without resetting or programming.", board.set_mode("project")),
         Task("fpga:mode:demo", "Set DEMO mode, without resetting or programming.", board.set_mode("demo")),
@@ -20,14 +22,8 @@ def tasks(backend: Backends) -> list[Task]:
              needs=("fpga:upload",), setup=("fpga:program",)),
     ]
     for program in board.programs():
-        prefix = f"fpga:programs:{program}"
-        result += [
-            Task(f"{prefix}:upload", "Build the memory image of the program and upload it.", board.upload_program(program),
-                 needs=(f"software:programs:{program}:riscv:build", f"software:programs:{program}:mem")),
-            Task(f"{prefix}:load-imem", "After upload, load and verify IMEM over UART. No reset or programming.",
-                 board.load_program(program), needs=(f"{prefix}:upload",)),
-            Task(f"{prefix}:run", "After load-imem, run the kernel once and verify it returns to idle.",
-                 board.run_program(program), needs=(f"{prefix}:load-imem",)),
-            Task(f"{prefix}:all", "Build, upload, load and run the program.", needs=(f"{prefix}:run",)),
-        ]
+        result.append(Task(f"fpga:programs:{program}:run",
+                           "Build the program for the A9, send it to the monitor over UART and run it "
+                           "(software.runtime.arguments); its status is the task's.",
+                           board.run_program(program), needs=(f"software:programs:{program}:host",)))
     return result

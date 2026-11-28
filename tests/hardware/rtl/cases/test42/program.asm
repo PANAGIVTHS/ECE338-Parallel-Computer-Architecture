@@ -13,7 +13,7 @@ sw   x20, 0(x0)     # Expected 31 = 1 + 2 + 4 + 8 + 16.
 sw   x18, 4(x0)     # Expected 42.
 addi x17, x0, 0
 ecall
-sw   x18, 8(x0)     # Younger store poison: must not reach DMEM.
+sw   x18, 8(x0)     # Younger store poison: must not reach SMEM.
 addi x29, x0, 999   # Younger register poison: must not retire.
 outer:
 addi x5, x1, 0      # Save outer return address across the nested call.

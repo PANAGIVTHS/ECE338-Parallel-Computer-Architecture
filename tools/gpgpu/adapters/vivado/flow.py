@@ -19,7 +19,7 @@ from gpgpu.api import Action, DesignProject, FreshnessCheck, GpgpuError, Step
 
 from ..config import Config, Section
 from ..design import (architecture, axi_address, bitstream_path, fabric_clock_mhz, format_parameters, hdl_parameters,
-                      identity_path, identity_step, rtl_sources, xsa_path)
+                      identity_path, identity_step, memory_layout, rtl_sources, xsa_path)
 from ..tools import check_version, version_current
 from .ip_project import IpProject, tree_hash
 from .package_check import validate_package
@@ -356,6 +356,7 @@ class VivadoFlow:
         self._inputs = _production_inputs(config, s)
         self._vendor_dirs = _vendor_ip_dirs(config, s)
         self._base, self._range = axi_address(config)
+        self._ddr_bytes = memory_layout(config).ddr_bytes
         self._cores = architecture(config).num_cores
         self._fclk = fabric_clock_mhz(config)
         self._parameters = format_parameters(hdl_parameters(config))
@@ -381,7 +382,8 @@ class VivadoFlow:
             "sources-manifest": self._ip_dir / ".gpgpu/sources.tsv", "xdc-file": self._xdc, "bitstream-dir": self._bit.parent,
             "platform-dir": self._xsa.parent, "xsa-name": self._xsa.stem, "bd-script": self._script, "num-cores": self._cores,
             "hdl-parameters": self._parameters, "build-identity": self._identity, "jobs": s.jobs, "repo-root": self._repo,
-            "ip-repo-dir": self._ip_repo, "axi-base": self._base, "axi-range": self._range, "fclk0-mhz": self._fclk,
+            "ip-repo-dir": self._ip_repo, "axi-base": self._base, "axi-range": self._range,
+            "ddr-bytes": f"0x{self._ddr_bytes:08X}", "fclk0-mhz": self._fclk,
             "post-route-phys-opt": int(s.post_route_phys_opt.enabled),
             "post-route-phys-opt-directive": s.post_route_phys_opt.directive, "flow-version": s.version}
         return [self._vivado, "-mode", "batch", "-source", str(TCL / script), "-tclargs",

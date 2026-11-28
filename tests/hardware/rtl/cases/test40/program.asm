@@ -7,7 +7,7 @@ lui   x3, 0x1
 slli  x4, x31, 2
 add   x3, x3, x4        # x3: 0x1000 + lane * 4, one array every 128 bytes
 
-lui   x5, 0x18800       # GMEM_BASE
+lui   x5, 0x04800       # GMEM_BASE
 add   x6, x5, x4        # GMEM word `lane`: c0+i 7f-i 01+i 80|i (high to low)
 
 lb    x8, 0(x6)         # 0xFFFFFF80 | i

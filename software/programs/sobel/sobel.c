@@ -1,200 +1,49 @@
-#include "../gpgpu_runtime.h"
+/*
+ * sobel: the Sobel edge magnitude |gx| + |gy| of a grey image, clamped to 255,
+ * and 0 on the border.
+ *
+ * One thread per pixel: thread i of the grid, i = block * 32 + lane, computes
+ * pixel i. Launch it over gpgpu_dim3(SOBEL_PIXELS / 32).
+ *
+ * Every lane runs the same instructions: until divergence is implemented, a
+ * branch follows lane 0. So the border, |g| and the clamp are arithmetic, not
+ * ifs, and the neighbours of a border pixel are clamped into the image (its
+ * value is then masked to 0).
+ */
+#include "gpgpu_device.h"
+#include "sobel.h"
 
-#define CORES GPGPU_NUM_CORES
+GPGPU_DEVICE int image[SOBEL_PIXELS];
+GPGPU_DEVICE int edges[SOBEL_PIXELS];
 
-#define WIDTH  16
-#define HEIGHT 16
-
-// ======================================================
-// Input Image
-// ======================================================
-// Simple synthetic image:
-// left half black, right half white
-// produces a strong vertical edge
-// ======================================================
-
-int image[WIDTH * HEIGHT] = {
-    0,0,0,0,0,0,0,0,255,255,255,255,255,255,255,255,
-    0,0,0,0,0,0,0,0,255,255,255,255,255,255,255,255,
-    0,0,0,0,0,0,0,0,255,255,255,255,255,255,255,255,
-    0,0,0,0,0,0,0,0,255,255,255,255,255,255,255,255,
-
-    0,0,0,0,0,0,0,0,255,255,255,255,255,255,255,255,
-    0,0,0,0,0,0,0,0,255,255,255,255,255,255,255,255,
-    0,0,0,0,0,0,0,0,255,255,255,255,255,255,255,255,
-    0,0,0,0,0,0,0,0,255,255,255,255,255,255,255,255,
-
-    0,0,0,0,0,0,0,0,255,255,255,255,255,255,255,255,
-    0,0,0,0,0,0,0,0,255,255,255,255,255,255,255,255,
-    0,0,0,0,0,0,0,0,255,255,255,255,255,255,255,255,
-    0,0,0,0,0,0,0,0,255,255,255,255,255,255,255,255,
-
-    0,0,0,0,0,0,0,0,255,255,255,255,255,255,255,255,
-    0,0,0,0,0,0,0,0,255,255,255,255,255,255,255,255,
-    0,0,0,0,0,0,0,0,255,255,255,255,255,255,255,255,
-    0,0,0,0,0,0,0,0,255,255,255,255,255,255,255,255
-};
-
-#ifdef __riscv
-
-void main(void)
+static inline int absolute(int v)
 {
-    unsigned int tid = gpgpu_thread_id();
-
-    volatile int *base = (volatile int *)(uintptr_t)GPGPU_ARGS[0];
-
-    volatile int *output = base;
-
-    // ==================================================
-    // Flattened pixel index
-    // Each SP processes multiple pixels
-    // ==================================================
-
-    for (int idx = tid; idx < WIDTH * HEIGHT; idx += CORES)
-    {
-        int x = idx % WIDTH;
-        int y = idx / WIDTH;
-
-        // ==============================================
-        // Skip borders
-        // ==============================================
-
-        if (x == 0 || x == WIDTH - 1 ||
-            y == 0 || y == HEIGHT - 1)
-        {
-            output[idx] = 0;
-            continue;
-        }
-
-        // ==============================================
-        // Neighbor pixels
-        // ==============================================
-
-        int p00 = image[(y - 1) * WIDTH + (x - 1)];
-        int p01 = image[(y - 1) * WIDTH + (x    )];
-        int p02 = image[(y - 1) * WIDTH + (x + 1)];
-
-        int p10 = image[(y    ) * WIDTH + (x - 1)];
-        int p12 = image[(y    ) * WIDTH + (x + 1)];
-
-        int p20 = image[(y + 1) * WIDTH + (x - 1)];
-        int p21 = image[(y + 1) * WIDTH + (x    )];
-        int p22 = image[(y + 1) * WIDTH + (x + 1)];
-
-        // ==============================================
-        // Sobel X
-        // ==============================================
-
-        int gx =
-            (p02 + (p12 << 1) + p22)
-          - (p00 + (p10 << 1) + p20);
-
-        // ==============================================
-        // Sobel Y
-        // ==============================================
-
-        int gy =
-            (p20 + (p21 << 1) + p22)
-          - (p00 + (p01 << 1) + p02);
-
-        // ==============================================
-        // Approximate magnitude
-        // abs(gx) + abs(gy)
-        // ==============================================
-
-        if (gx < 0)
-            gx = -gx;
-
-        if (gy < 0)
-            gy = -gy;
-
-        int mag = gx + gy;
-
-        // ==============================================
-        // Clamp to 255
-        // ==============================================
-
-        if (mag > 255)
-            mag = 255;
-
-        output[idx] = mag;
-    }
-
-    return;
+    int sign = v >> 31;
+    return (v ^ sign) - sign;
 }
 
-GPGPU_START(main)
-
-#else
-
-#include <stdio.h>
-
-int main()
+GPGPU_GLOBAL void sobel(const int *in, int *out)
 {
-    int output[WIDTH * HEIGHT];
+    int idx = (int)(gpgpu_block_idx_x() * gpgpu_block_dim() + gpgpu_thread_idx());
+    int x = idx & (SOBEL_WIDTH - 1);
+    int y = idx / SOBEL_WIDTH; /* a shift: SOBEL_WIDTH is a power of two */
 
-    for (int idx = 0;
-         idx < WIDTH * HEIGHT;
-         idx++)
-    {
-        int x = idx % WIDTH;
-        int y = idx / WIDTH;
+    /* The neighbours' coordinates, clamped into the image. */
+    int xm = x - (x > 0), xp = x + (x < SOBEL_WIDTH - 1);
+    int ym = y - (y > 0), yp = y + (y < SOBEL_HEIGHT - 1);
 
-        if (x == 0 || x == WIDTH - 1 ||
-            y == 0 || y == HEIGHT - 1)
-        {
-            output[idx] = 0;
-            continue;
-        }
+    int p00 = in[ym * SOBEL_WIDTH + xm], p01 = in[ym * SOBEL_WIDTH + x], p02 = in[ym * SOBEL_WIDTH + xp];
+    int p10 = in[y * SOBEL_WIDTH + xm], p12 = in[y * SOBEL_WIDTH + xp];
+    int p20 = in[yp * SOBEL_WIDTH + xm], p21 = in[yp * SOBEL_WIDTH + x], p22 = in[yp * SOBEL_WIDTH + xp];
 
-        int p00 = image[(y - 1) * WIDTH + (x - 1)];
-        int p01 = image[(y - 1) * WIDTH + (x    )];
-        int p02 = image[(y - 1) * WIDTH + (x + 1)];
+    int gx = (p02 + (p12 << 1) + p22) - (p00 + (p10 << 1) + p20);
+    int gy = (p20 + (p21 << 1) + p22) - (p00 + (p01 << 1) + p02);
+    int mag = absolute(gx) + absolute(gy);
 
-        int p10 = image[(y    ) * WIDTH + (x - 1)];
-        int p12 = image[(y    ) * WIDTH + (x + 1)];
+    /* min(mag, 255): (255 - mag) >> 31 is -1 above 255, 0 otherwise. */
+    mag -= (mag - 255) & ((255 - mag) >> 31);
 
-        int p20 = image[(y + 1) * WIDTH + (x - 1)];
-        int p21 = image[(y + 1) * WIDTH + (x    )];
-        int p22 = image[(y + 1) * WIDTH + (x + 1)];
-
-        int gx =
-            (p02 + (p12 << 1) + p22)
-          - (p00 + (p10 << 1) + p20);
-
-        int gy =
-            (p20 + (p21 << 1) + p22)
-          - (p00 + (p01 << 1) + p02);
-
-        if (gx < 0)
-            gx = -gx;
-
-        if (gy < 0)
-            gy = -gy;
-
-        int mag = gx + gy;
-
-        if (mag > 255)
-            mag = 255;
-
-        output[idx] = mag;
-    }
-
-    // ==============================================
-    // Print output image
-    // ==============================================
-
-    for (int y = 0; y < HEIGHT; y++)
-    {
-        for (int x = 0; x < WIDTH; x++)
-        {
-            printf("%3d ", output[y * WIDTH + x]);
-        }
-
-        printf("\n");
-    }
-
-    return 0;
+    /* 0 on the border: xm == x or xp == x there. */
+    int inside = (xm != x) & (xp != x) & (ym != y) & (yp != y);
+    out[idx] = mag & -inside;
 }
-
-#endif

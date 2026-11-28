@@ -1,5 +1,6 @@
-# Only architecture, the mapped aperture and the fabric clock (and the GPGPU's
-# CLOCK_KHZ derived from it) are configuration-owned.
+# Only architecture, the mapped aperture, the DDR windows of the AXI masters and
+# the fabric clock (and the GPGPU's CLOCK_KHZ derived from it) are
+# configuration-owned.
 # All other saved GUI properties and wiring remain authoritative.
 proc bd_range_bytes {value} {
     if {[string is entier -strict $value]} { return [expr {wide($value)}] }
@@ -10,7 +11,7 @@ proc bd_range_bytes {value} {
 }
 
 proc configure_block_design {} {
-    global NUM_CORES AXI_BASE AXI_RANGE FCLK0_MHZ
+    global NUM_CORES AXI_BASE AXI_RANGE DDR_BYTES FCLK0_MHZ
     set gpgpu [get_bd_cells -quiet gpgpu_axi_0]
     if {[llength $gpgpu] != 1 || [get_property VLNV $gpgpu] ne "user.org:user:gpgpu_axi:1.0"} {
         error "Expected gpgpu_axi_0 with VLNV user.org:user:gpgpu_axi:1.0"
@@ -46,6 +47,28 @@ proc configure_block_design {} {
     if {[get_property CONFIG.CLOCK_KHZ $gpgpu] ne $clock_khz} {
         set_property CONFIG.CLOCK_KHZ $clock_khz $gpgpu
         set changed 1
+    }
+    # architecture.memory.ddr_bytes must be the PS's DDR, which comes from the
+    # board's DDR part, not from the configuration.
+    set ddr_high [get_property CONFIG.PCW_DDR_RAM_HIGHADDR $ps]
+    if {[expr {wide($ddr_high) + 1}] != [bd_range_bytes $DDR_BYTES]} {
+        error "architecture.memory.ddr_bytes ($DDR_BYTES) is not the PS's DDR (PCW_DDR_RAM_HIGHADDR $ddr_high)"
+    }
+    # The GPGPU (HP0) and the display's VDMA (HP2) reach all of DDR from 0:
+    # the framebuffers and GMEM of the DDR map lie anywhere in it.
+    foreach {master slave} {
+        gpgpu_axi_0/m00_axi processing_system7_0/S_AXI_HP0/HP0_DDR_LOWOCM
+        axi_vdma_0/Data_MM2S processing_system7_0/S_AXI_HP2/HP2_DDR_LOWOCM
+    } {
+        set master_space [get_bd_addr_spaces -quiet $master]
+        set slave_segment [get_bd_addr_segs -quiet $slave]
+        if {[llength $master_space] != 1 || [llength $slave_segment] != 1} {error "Missing $master or $slave"}
+        set window [get_bd_addr_segs -quiet ${master_space}/SEG_processing_system7_0_[lindex [split $slave /] end]]
+        if {[llength $window] != 1 || [bd_range_bytes [get_property OFFSET $window]] != 0 ||
+            [bd_range_bytes [get_property RANGE $window]] != [bd_range_bytes $DDR_BYTES]} {
+            assign_bd_address -offset 0x00000000 -range $DDR_BYTES -target_address_space $master_space $slave_segment -force
+            set changed 1
+        }
     }
     if {[llength $mapped] != 1 ||
         [bd_range_bytes [get_property OFFSET $mapped]] != [bd_range_bytes $AXI_BASE] ||

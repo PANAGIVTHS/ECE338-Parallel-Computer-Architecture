@@ -35,9 +35,12 @@ package ControlPkg;
     (* host *) localparam int unsigned PERF_WARP_SLOTS = PERF_WARP_STRIDE / PERF_COUNTER_BYTES;
     (* host *) localparam int unsigned PERF_MAX_WARPS = (PERF_BASE + PERF_SIZE - PERF_WARP_BASE) / PERF_WARP_STRIDE;
 
-    // Memory windows
+    // Memory windows: IMEM after the perf block, SMEM right after IMEM. Both
+    // follow the sizes in gpu_pkg; MMIOController checks that they fit the
+    // 64-KiB AXI4-Lite aperture.
     (* host *) localparam gpu_pkg::word_t IMEM_BASE = 'h2000;
-    (* host *) localparam gpu_pkg::word_t DMEM_BASE = 'h4000;
+    (* host *) localparam gpu_pkg::word_t SMEM_BASE = IMEM_BASE + gpu_pkg::IMEM_ENTRIES * gpu_pkg::BYTES_PER_WORD;
+    localparam longint unsigned MMIO_END = longint'(SMEM_BASE) + gpu_pkg::SMEM_ENTRIES * gpu_pkg::BYTES_PER_WORD;
 
     //! Control bits (start/stop GPU)
     localparam int unsigned CONTROL_START_BIT = 0;
@@ -61,7 +64,7 @@ package ControlPkg;
     localparam int unsigned BUILD_DIRTY_BIT = BUILD_HASH_BITS;
 
     //! INFO = {interface version, SPs per SM} and INFO_MEM = {IMEM words,
-    //! DMEM words}: two half-word fields each
+    //! SMEM words}: two half-word fields each
     localparam int unsigned INFO_FIELD_WIDTH = gpu_pkg::XLEN / 2;
     localparam gpu_pkg::word_t INFO_FIELD_MASK = (gpu_pkg::word_t'(1) << INFO_FIELD_WIDTH) - 1;
 
@@ -81,7 +84,7 @@ package ControlPkg;
     (* host *) localparam gpu_pkg::word_t INFO_SP_COUNT_MASK = INFO_FIELD_MASK;
     (* host *) localparam int unsigned INFO_MEM_IMEM_LSB = INFO_FIELD_WIDTH;
     (* host *) localparam gpu_pkg::word_t INFO_MEM_IMEM_MASK = INFO_FIELD_MASK << INFO_MEM_IMEM_LSB;
-    (* host *) localparam gpu_pkg::word_t INFO_MEM_DMEM_MASK = INFO_FIELD_MASK;
+    (* host *) localparam gpu_pkg::word_t INFO_MEM_SMEM_MASK = INFO_FIELD_MASK;
 
     //! FAULT_INFO: [cause], [kinds] (bit k-1 = some lane got ST code k) and
     //! [fatal] (the subsystem's mem_fatal_t)

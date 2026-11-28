@@ -101,7 +101,7 @@ def prepare_cases(args, runtime: Path) -> int:
         dest = cases / program.parent.name
         dest.mkdir(exist_ok=True)
         shutil.copy2(program, dest / "program.asm")
-        seed = program.with_name("dmem_seed.mem")
+        seed = program.with_name("smem_seed.mem")
         if seed.exists():
             shutil.copy2(seed, dest / seed.name)
     directed = cases / f"test{len(existing)+1}"

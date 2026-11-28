@@ -15,7 +15,7 @@ except ImportError as exc:
     ) from exc
 
 
-DEFAULT_INPUT = Path("data.csv")
+DEFAULT_INPUT = Path("differences.txt")  # the host program's output with "csv"
 DEFAULT_OUTPUT = Path("adjacent_differences.png")
 
 
@@ -24,8 +24,20 @@ def parse_int(value: str) -> int:
 
 
 def load_rows(path: Path) -> list[dict[str, str]]:
-    with path.open(newline="") as f:
-        return list(csv.DictReader(f))
+    """The CSV that the host program prints with its "csv" argument.
+
+    The file may be the program's whole output: lines before the CSV header
+    and after the last row (the program's messages) are skipped."""
+    lines = path.read_text().splitlines()
+    header = next((i for i, line in enumerate(lines) if line.strip().startswith("call,index,")), None)
+    if header is None:
+        return []
+    body = [lines[header]]
+    for line in lines[header + 1:]:
+        if line.count(",") != lines[header].count(","):
+            break
+        body.append(line)
+    return list(csv.DictReader(body))
 
 
 def available_calls(rows: list[dict[str, str]]) -> list[int]:

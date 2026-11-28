@@ -14,8 +14,8 @@ from pydantic import PositiveInt
 from gpgpu.api import GpgpuError, Step
 
 from .config import Config, Section
-from .design import (architecture, hdl_parameters, identity_path, identity_step, parse_parameters, rtl_root,
-                     rtl_sources)
+from .design import (architecture, config_package_step, hdl_parameters, identity_path, identity_step, parse_parameters,
+                     rtl_constants_path, rtl_root, rtl_sources)
 from .tools import run
 
 _FAILURE_MARKERS = ("[FAIL]", "[Error]", "[ERROR]")
@@ -162,12 +162,15 @@ class VerilatorFlow:
         self._repo = config.repo_root
         self._tests = self._repo / "tests/hardware/rtl"
         self._build = config.build_root / "tests/rtl"
-        self._rtl_constants = self._build / "rtl_constants.txt"
+        self._rtl_constants = rtl_constants_path(config)
         self._python = config.tool("python")
         self._viewer = config.tool("surfer")
 
     def identity(self) -> Step:
         return identity_step(self._config)
+
+    def config(self) -> Step:
+        return config_package_step(self._config)
 
     def constants(self) -> Step:
         # The model takes its constants from the production RTL: the hardware under test.
@@ -177,7 +180,7 @@ class VerilatorFlow:
 
     def generate(self) -> Step:
         cases = _test_cases(self._tests / "cases")
-        seeds = [case / seed for case in cases for seed in ("dmem_seed.mem", "ddr_seed.mem") if (case / seed).is_file()]
+        seeds = [case / seed for case in cases for seed in ("smem_seed.mem", "ddr_seed.mem") if (case / seed).is_file()]
         outputs = [output for case in cases for output in (
             case / "program.mem", case / "data.mem", *(case / f"regfile_c{core}.mem" for core in range(self._cores)))]
         assembler, generator = _MODEL / "assembler.py", _MODEL / "expected_generator.py"

@@ -1,33 +1,24 @@
-#define CORES GPGPU_NUM_CORES
+/*
+ * stacktest: every lane reports its stack pointer and keeps a value on its
+ * own stack, so the host can check that the lanes' stacks are apart
+ * (docs/runtime-spec.md, section 3.3: GPGPU_STACK_STRIDE bytes per lane, at
+ * the top of shared memory). The host passes the two arrays, stack_pointers
+ * and stack_values, as parameters.
+ */
+#include "gpgpu_device.h"
 
-#ifdef __riscv
+GPGPU_DEVICE unsigned int stack_pointers[GPGPU_NUM_CORES];
+GPGPU_DEVICE unsigned int stack_values[GPGPU_NUM_CORES];
 
-#include "../gpgpu_runtime.h"
-
-__attribute__((noinline, used, patchable_function_entry(1, 0))) // patchable adds nop
-void main(void)
+GPGPU_GLOBAL void stacktest(unsigned int *pointers, unsigned int *values, unsigned int seed)
 {
-    unsigned int tid = gpgpu_thread_id();
+    unsigned int tid = gpgpu_thread_idx();
+    unsigned int sp;
 
-    volatile int local = 0;
+    /* volatile: the value goes through this lane's stack, not a register. */
+    volatile unsigned int local = seed + tid;
+    __asm__ volatile("mv %0, sp" : "=r"(sp));
 
-    unsigned int sp_value;
-    __asm__ volatile("mv %0, x2" : "=r"(sp_value));
-
-    local = sp_value;
-
-    return;
+    pointers[tid] = sp;
+    values[tid] = local;
 }
-
-GPGPU_START(main)
-
-#else
-
-#include <stdio.h>
-
-int main(void)
-{
-    return 0;
-}
-
-#endif

@@ -12,7 +12,9 @@ def tasks(backend: Backends) -> list[Task]:
     rtl = backend(RtlFlow)
     result = [
         Task("rtl:identity", "Record the last commit and uncommitted changes of the RTL for BUILD_ID.", rtl.identity()),  # also vivado:_identity
-        Task("rtl:constants", "Elaborate the RTL packages and write every constant for the GPGPU model.", rtl.constants()),
+        Task("rtl:config", "Regenerate the memory-size package of the RTL from architecture.memory.", rtl.config()),
+        Task("rtl:constants", "Elaborate the RTL packages and write every constant for the GPGPU model.", rtl.constants(),
+             needs=("rtl:config",)),
         Task("rtl:generate", "Assemble the cases and run them on the GPGPU model for the expected results.",
              rtl.generate(), needs=("rtl:constants",)),
         Task("rtl:random", "Generate and run reproducible random programs on the SMX bench.",
@@ -23,7 +25,7 @@ def tasks(backend: Backends) -> list[Task]:
     ]
     for suite, description in SUITES.items():
         result += [
-            Task(f"rtl:{suite}:build", f"Build {description}.", rtl.build_suite(suite), needs=("rtl:identity",)),
+            Task(f"rtl:{suite}:build", f"Build {description}.", rtl.build_suite(suite), needs=("rtl:config", "rtl:identity")),
             Task(f"rtl:{suite}:run", f"Run {description}.", rtl.run_suite(suite),
                  needs=("rtl:generate", f"rtl:{suite}:build")),
             Task(f"rtl:{suite}:all", f"Generate, build and run {description}.", needs=(f"rtl:{suite}:run",)),

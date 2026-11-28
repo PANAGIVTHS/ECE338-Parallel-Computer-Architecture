@@ -1,6 +1,6 @@
 # DDR: 16 framebuffer rows of a 1280-pixel FB0 in a loop. Each row is one
 # group (one burst); rows are 5120 B apart.
-lui  x5, 0x18000
+lui  x5, 0x04000
 slli x6, x31, 2
 add  x5, x5, x6         # pixel (0, lane)
 lui  x9, 0x1

@@ -62,7 +62,7 @@ def test_the_real_graph_loads_with_valid_categories():
     catalog = workspace._catalog
     assert not catalog.failures and not catalog.unavailable
     assert {"fpga", "rtl", "software", "vitis", "vivado"} <= {task.category for task in catalog.tasks.values()}
-    assert {"vivado:ip:create", "rtl:identity", "fpga:programs:simple:all"} <= catalog.tasks.keys()
+    assert {"vivado:ip:create", "rtl:identity", "fpga:programs:simple:run"} <= catalog.tasks.keys()
     assert workspace.projects() == ["ip", "system"]
     assert [task.command for task in workspace.tasks("vivado")] == [
         "ip:create", "ip:build", "system:create", "system:synthesis", "system:implementation", "system:bitstream", "system:build"]
@@ -307,7 +307,8 @@ package Perf;
 endpackage
 """)
     header = tmp_path / "platform.h"
-    settings = {"export_attribute": "host", "define_prefix": "GPGPU_", "interface_version": 3, "use_irq": True, "irq_id": 61}
+    settings = {"export_attribute": "host", "define_prefix": "GPGPU_", "interface_version": 3, "use_irq": True, "irq_id": 61,
+                "host_map": {"monitor_base": 0x100000, "monitor_bytes": 0x100000, "boot_record_bytes": 0x1000}}
     _write_platform([package], tmp_path, settings, header)
     lines = {line.split()[1]: line.split(None, 2)[2] for line in header.read_text().splitlines()
              if line.startswith("#define GPGPU_")}

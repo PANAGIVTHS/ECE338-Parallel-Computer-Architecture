@@ -1,7 +1,7 @@
 # DDR loads from GMEM: each lane reads its own word (one burst), a
 # word at a 16-byte stride (four bursts) and the first word (every lane the
 # same word), then uses the loaded values right away.
-lui  x5, 0x18800        # GMEM_BASE
+lui  x5, 0x04800        # GMEM_BASE
 slli x6, x31, 2         # lane * 4
 add  x7, x5, x6
 lw   x8, 0(x7)          # GMEM[lane]

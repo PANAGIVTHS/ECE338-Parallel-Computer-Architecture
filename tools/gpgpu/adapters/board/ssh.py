@@ -18,10 +18,12 @@ from pydantic import AfterValidator, PositiveInt, StringConstraints
 from gpgpu.api import Step
 
 from ..config import Config, Section
-from ..design import bitstream_path, program_names, program_output, vitis_workspace
+from ..design import bitstream_path, boot_program, program_names, program_output, vitis_workspace
 from ..tools import run
 
 _NAME = r"[A-Za-z0-9_][A-Za-z0-9_.-]*"
+# How long a program may run on the board before the UART client gives up.
+_EXEC_TIMEOUT_S = 600.0
 
 
 def _no_traversal(path: str) -> str:
@@ -78,16 +80,18 @@ class SshBoard:
     def programs(self) -> list[str]:
         return program_names(self._config)
 
+    def boot_program(self) -> str | None:
+        return boot_program(self._config)
+
     def upload(self) -> Step:
         workspace = vitis_workspace(self._config)
+        # The A9 executable goes up under the monitor's name, so `fps` starts whichever it is.
+        boot = self.boot_program()
+        host = (program_output(self._config, boot, "_boot_a9.elf") if boot
+                else workspace / self._host / "build" / f"{self._host}.elf")
         files = (bitstream_path(self._config),
-                 workspace / self._platform / "export" / self._platform / "hw/sdt/ps7_init.tcl",
-                 workspace / self._host / "build" / f"{self._host}.elf")
+                 workspace / self._platform / "export" / self._platform / "hw/sdt/ps7_init.tcl", host)
         return Step(partial(self._copy, tuple(zip(files, self._names))), always_run=True)
-
-    def upload_program(self, program: str) -> Step:
-        memory = program_output(self._config, program, "_instructions.mem")
-        return Step(partial(self._copy, ((memory, memory.name),)), always_run=True)
 
     def _copy(self, files: tuple[tuple[Path, str], ...]) -> None:
         """Copy files under explicit remote names, after checking that all of them exist."""
@@ -160,20 +164,21 @@ class SshBoard:
     def program(self) -> Step:
         return Step(self._program, always_run=True)
 
-    def _uart(self, program: str, operation: str) -> None:
-        """Stream the shared UART client and driver to Python on the board's machine."""
+    def _run(self, program: str) -> None:
+        """Upload the A9 program, then load and run it through the monitor (docs/runtime-spec.md 9.2)."""
+        elf = program_output(self._config, program, "_a9.elf")
+        self._copy(((elf, elf.name),))
+        arguments = [program, *(str(argument) for argument in self._config.get("software.runtime.arguments"))]
         uart = self._s.uart
         client = (self._config.repo_root / "tools/board/xc7z020/uart.py").read_text()
         driver = Path(__file__).with_name("program_uart.py").read_text()
-        memory = str(PurePosixPath(self._s.upload.directory) / f"{program}_instructions.mem")
-        # Separate exec scopes keep __future__ imports working without rewriting the client.
+        remote_elf = str(PurePosixPath(self._s.upload.directory) / elf.name)
         payload = (f"exec({client!r}, globals())\nexec({driver!r}, globals())\n"
-                   f"remote_main({operation!r}, {memory!r}, {uart.port!r}, {uart.baud!r})\n")
+                   f"remote_run({remote_elf!r}, {uart.port!r}, {uart.baud!r}, {arguments!r}, {_EXEC_TIMEOUT_S!r})\n")
         remote = (["sudo", "-n"] if uart.sudo else []) + [uart.python, "-"]
-        subprocess.run(self._argv(shlex.join(remote)), cwd=self._config.repo_root, input=payload, text=True, check=True)
-
-    def load_program(self, program: str) -> Step:
-        return Step(partial(self._uart, program, "load-imem"), always_run=True)
+        status = subprocess.run(self._argv(shlex.join(remote)), cwd=self._config.repo_root, input=payload, text=True).returncode
+        if status != 0:
+            raise RuntimeError(f"{program} on the board failed (status {status})")
 
     def run_program(self, program: str) -> Step:
-        return Step(partial(self._uart, program, "run"), always_run=True)
+        return Step(partial(self._run, program), always_run=True)
